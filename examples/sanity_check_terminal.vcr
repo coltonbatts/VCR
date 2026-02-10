@@ -1,0 +1,133 @@
+version: 1
+seed: 42
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 4.0
+
+layers:
+  - id: background
+    procedural:
+      kind: solid_color
+      color: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+
+  # Terminal border - top
+  - id: border_top
+    z_index: 1
+    pos_y: 180
+    opacity: "0.001 + smoothstep(0.0, 0.4, t)"
+    procedural:
+      kind: line
+      start: { x: 0.15, y: 0.5 }
+      end: { x: 0.85, y: 0.5 }
+      thickness: 0.003
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  # Terminal border - bottom
+  - id: border_bottom
+    z_index: 1
+    pos_y: 900
+    opacity: "0.001 + smoothstep(0.0, 0.4, t)"
+    procedural:
+      kind: line
+      start: { x: 0.15, y: 0.5 }
+      end: { x: 0.85, y: 0.5 }
+      thickness: 0.003
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  # Terminal border - left
+  - id: border_left
+    z_index: 1
+    pos_x: 288
+    opacity: "0.001 + smoothstep(0.0, 0.4, t)"
+    procedural:
+      kind: line
+      start: { x: 0.5, y: 0.167 }
+      end: { x: 0.5, y: 0.833 }
+      thickness: 0.003
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  # Terminal border - right
+  - id: border_right
+    z_index: 1
+    pos_x: 1632
+    opacity: "0.001 + smoothstep(0.0, 0.4, t)"
+    procedural:
+      kind: line
+      start: { x: 0.5, y: 0.167 }
+      end: { x: 0.5, y: 0.833 }
+      thickness: 0.003
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  # Terminal prompt
+  - id: prompt
+    z_index: 2
+    pos_x: 340
+    pos_y: 240
+    opacity: "0.001 + smoothstep(0.4, 0.8, t)"
+    text:
+      content: "> vcr build sanity_check.vcr"
+      font_family: "GeistPixel-Line"
+      font_size: 56
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 0.7 }
+
+  # Main title
+  - id: title
+    anchor: center
+    pos_x: 960
+    pos_y: "420 + 40 - 40 * smoothstep(0.8, 1.4, t)"
+    opacity: "0.001 + smoothstep(0.8, 1.4, t)"
+    text:
+      content: "SANITY CHECK"
+      font_family: "GeistPixel-Line"
+      font_size: 160
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  # Stats line
+  - id: stats
+    anchor: center
+    pos_x: 960
+    pos_y: "580 + 30 - 30 * smoothstep(1.2, 1.8, t)"
+    opacity: "0.001 + smoothstep(1.2, 1.8, t)"
+    text:
+      content: "RENDERED IN ~40MS"
+      font_family: "GeistPixel-Line"
+      font_size: 64
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 0.8 }
+
+  # Output format
+  - id: format
+    anchor: center
+    pos_x: 960
+    pos_y: "680 + 30 - 30 * smoothstep(1.6, 2.2, t)"
+    opacity: "0.001 + smoothstep(1.6, 2.2, t)"
+    text:
+      content: "PRORES 4444 + ALPHA"
+      font_family: "GeistPixel-Line"
+      font_size: 64
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 0.8 }
+
+  # Success message
+  - id: success
+    z_index: 2
+    pos_x: 340
+    pos_y: 820
+    opacity: "0.001 + smoothstep(2.0, 2.6, t)"
+    text:
+      content: "[OK] Wrote output.mov"
+      font_family: "GeistPixel-Line"
+      font_size: 56
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 0.9 }
+
+  # Blinking cursor
+  - id: cursor
+    z_index: 3
+    pos_x: 340
+    pos_y: 820
+    opacity: "0.001 + smoothstep(2.6, 3.0, t) * step(0.5, fract(t * 2.0))"
+    procedural:
+      kind: rounded_rect
+      center: { x: 0.5, y: 0.5 }
+      size: { x: 0.008, y: 0.04 }
+      corner_radius: 0.001
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
