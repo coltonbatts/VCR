@@ -98,7 +98,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 "#;
 
 const EPSILON: f32 = 0.0001;
-const NO_GPU_ADAPTER_ERR: &str = "no suitable GPU adapter found (hardware or fallback)";
+const NO_GPU_ADAPTER_ERR: &str = "no suitable GPU adapter found";
 
 #[derive(Debug, Clone, Default)]
 pub struct RenderSceneData {
@@ -276,6 +276,8 @@ struct ProceduralGpu {
 }
 
 struct GpuRenderer {
+    adapter_name: String,
+    adapter_backend: wgpu::Backend,
     device: wgpu::Device,
     queue: wgpu::Queue,
     width: u32,
@@ -292,6 +294,65 @@ struct GpuRenderer {
     blend_pipeline: wgpu::RenderPipeline,
     procedural_pipeline: wgpu::RenderPipeline,
     layers: Vec<GpuLayer>,
+}
+
+#[cfg(target_os = "macos")]
+const PREFERRED_BACKENDS: wgpu::Backends = wgpu::Backends::METAL;
+
+#[cfg(not(target_os = "macos"))]
+const PREFERRED_BACKENDS: wgpu::Backends = wgpu::Backends::PRIMARY;
+
+async fn request_best_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter> {
+    if let Some(adapter) = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        })
+        .await
+    {
+        return Ok(adapter);
+    }
+
+    if let Some(adapter) = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        })
+        .await
+    {
+        return Ok(adapter);
+    }
+
+    if let Some(adapter) = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            force_fallback_adapter: true,
+            compatible_surface: None,
+        })
+        .await
+    {
+        return Ok(adapter);
+    }
+
+    let enumerated = instance
+        .enumerate_adapters(wgpu::Backends::all())
+        .into_iter()
+        .map(|adapter| {
+            let info = adapter.get_info();
+            format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type)
+        })
+        .collect::<Vec<_>>();
+
+    if enumerated.is_empty() {
+        bail!("{NO_GPU_ADAPTER_ERR}; enumerate_adapters() returned none");
+    }
+
+    bail!(
+        "{NO_GPU_ADAPTER_ERR}; enumerate_adapters() saw: {}",
+        enumerated.join(", ")
+    );
 }
 
 pub struct Renderer {
@@ -351,26 +412,12 @@ impl GpuRenderer {
             .map(|group| (group.id.clone(), group))
             .collect::<BTreeMap<_, _>>();
 
-        let instance = wgpu::Instance::default();
-        let adapter = if let Some(adapter) = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                force_fallback_adapter: false,
-                compatible_surface: None,
-            })
-            .await
-        {
-            adapter
-        } else {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    force_fallback_adapter: true,
-                    compatible_surface: None,
-                })
-                .await
-                .ok_or_else(|| anyhow!(NO_GPU_ADAPTER_ERR))?
-        };
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: PREFERRED_BACKENDS,
+            ..Default::default()
+        });
+        let adapter = request_best_adapter(&instance).await?;
+        let adapter_info = adapter.get_info();
 
         let (device, queue) = adapter
             .request_device(
@@ -582,6 +629,8 @@ impl GpuRenderer {
         gpu_layers.sort_by_key(|layer| layer.z_index);
 
         Ok(Self {
+            adapter_name: adapter_info.name,
+            adapter_backend: adapter_info.backend,
             device,
             queue,
             width,
@@ -774,8 +823,11 @@ impl Renderer {
     ) -> Result<Self> {
         match GpuRenderer::new(environment, layers, &scene).await {
             Ok(gpu) => Ok(Self {
+                backend_reason: format!(
+                    "adapter '{}' ({:?})",
+                    gpu.adapter_name, gpu.adapter_backend
+                ),
                 backend: RendererBackend::Gpu(gpu),
-                backend_reason: "wgpu adapter available".to_owned(),
             }),
             Err(error) if error.to_string().contains(NO_GPU_ADAPTER_ERR) => {
                 let software = SoftwareRenderer::new(environment, layers, &scene)

@@ -14,4 +14,4 @@ pollster = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 tiny-skia = "0.11"
-wgpu = "0.20"
+wgpu = { version = "0.20", default-features = false, features = ["metal", "wgsl"] }
