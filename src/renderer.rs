@@ -4,17 +4,23 @@ use std::sync::mpsc;
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
 use image::ImageReader;
+use tiny_skia::{
+    BlendMode, Color, FilterQuality, GradientStop, LinearGradient, Paint, Pixmap, PixmapPaint,
+    Point, Rect, SpreadMode, Transform,
+};
 use wgpu::util::DeviceExt;
 
 use crate::schema::{
-    AssetLayer, Environment, GradientDirection, Layer, LayerCommon, ProceduralLayer,
+    AssetLayer, ColorRgba, Environment, GradientDirection, Layer, LayerCommon, ProceduralLayer,
     ProceduralSource, PropertyValue, ScalarProperty, Vec2,
 };
 
 const BLEND_SHADER: &str = r#"
 struct LayerUniform {
   opacity: f32,
-  _pad0: vec3<f32>,
+  _pad0: f32,
+  _pad1: f32,
+  _pad2: f32,
 }
 
 @group(0) @binding(0) var layer_tex: texture_2d<f32>;
@@ -90,6 +96,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 "#;
 
 const EPSILON: f32 = 0.0001;
+const NO_GPU_ADAPTER_ERR: &str = "no suitable GPU adapter found (hardware or fallback)";
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -102,7 +109,7 @@ struct Vertex {
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct LayerUniform {
     opacity: f32,
-    _padding: [f32; 3],
+    _pad: [f32; 3],
 }
 
 #[repr(C)]
@@ -120,6 +127,8 @@ struct GpuLayer {
     width: u32,
     height: u32,
     position: PropertyValue<Vec2>,
+    position_x: Option<ScalarProperty>,
+    position_y: Option<ScalarProperty>,
     scale: PropertyValue<Vec2>,
     rotation_degrees: ScalarProperty,
     opacity: ScalarProperty,
@@ -159,7 +168,7 @@ struct ProceduralGpu {
     last_uniform: Option<ProceduralUniform>,
 }
 
-pub struct Renderer {
+struct GpuRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     width: u32,
@@ -174,25 +183,69 @@ pub struct Renderer {
     layers: Vec<GpuLayer>,
 }
 
-impl Renderer {
+pub struct Renderer {
+    backend: RendererBackend,
+}
+
+enum RendererBackend {
+    Gpu(GpuRenderer),
+    Software(SoftwareRenderer),
+}
+
+struct SoftwareRenderer {
+    width: u32,
+    height: u32,
+    layers: Vec<SoftwareLayer>,
+}
+
+struct SoftwareLayer {
+    z_index: i32,
+    width: u32,
+    height: u32,
+    position: PropertyValue<Vec2>,
+    position_x: Option<ScalarProperty>,
+    position_y: Option<ScalarProperty>,
+    scale: PropertyValue<Vec2>,
+    rotation_degrees: ScalarProperty,
+    opacity: ScalarProperty,
+    source: SoftwareLayerSource,
+}
+
+enum SoftwareLayerSource {
+    Asset { pixmap: Pixmap },
+    Procedural(ProceduralSource),
+}
+
+impl GpuRenderer {
     pub async fn new(environment: &Environment, layers: &[Layer]) -> Result<Self> {
         let width = environment.resolution.width;
         let height = environment.resolution.height;
 
         let instance = wgpu::Instance::default();
-        let adapter = instance
+        let adapter = if let Some(adapter) = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 force_fallback_adapter: false,
                 compatible_surface: None,
             })
             .await
-            .ok_or_else(|| anyhow!("no suitable GPU adapter found"))?;
+        {
+            adapter
+        } else {
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    force_fallback_adapter: true,
+                    compatible_surface: None,
+                })
+                .await
+                .ok_or_else(|| anyhow!(NO_GPU_ADAPTER_ERR))?
+        };
 
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    label: Some("ftc-device"),
+                    label: Some("vcr-device"),
                     required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::default(),
                 },
@@ -202,7 +255,7 @@ impl Renderer {
             .context("failed to request wgpu device")?;
 
         let output_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("ftc-render-target"),
+            label: Some("vcr-render-target"),
             size: wgpu::Extent3d {
                 width,
                 height,
@@ -224,7 +277,7 @@ impl Renderer {
             align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let readback_size = u64::from(padded_bytes_per_row) * u64::from(height);
         let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ftc-readback-buffer"),
+            label: Some("vcr-readback-buffer"),
             size: readback_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
@@ -232,7 +285,7 @@ impl Renderer {
 
         let blend_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("ftc-layer-bind-group-layout"),
+                label: Some("vcr-layer-bind-group-layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -267,7 +320,7 @@ impl Renderer {
 
         let procedural_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("ftc-procedural-bind-group-layout"),
+                label: Some("vcr-procedural-bind-group-layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -283,23 +336,23 @@ impl Renderer {
             });
 
         let blend_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ftc-blend-shader"),
+            label: Some("vcr-blend-shader"),
             source: wgpu::ShaderSource::Wgsl(BLEND_SHADER.into()),
         });
         let procedural_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ftc-procedural-shader"),
+            label: Some("vcr-procedural-shader"),
             source: wgpu::ShaderSource::Wgsl(PROCEDURAL_SHADER.into()),
         });
 
         let blend_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("ftc-blend-pipeline-layout"),
+                label: Some("vcr-blend-pipeline-layout"),
                 bind_group_layouts: &[&blend_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
         let blend_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("ftc-layer-pipeline"),
+            label: Some("vcr-layer-pipeline"),
             layout: Some(&blend_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &blend_shader,
@@ -329,13 +382,13 @@ impl Renderer {
 
         let procedural_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("ftc-procedural-pipeline-layout"),
+                label: Some("vcr-procedural-pipeline-layout"),
                 bind_group_layouts: &[&procedural_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
         let procedural_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("ftc-procedural-pipeline"),
+            label: Some("vcr-procedural-pipeline"),
             layout: Some(&procedural_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &procedural_shader,
@@ -360,7 +413,7 @@ impl Renderer {
         });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("ftc-layer-sampler"),
+            label: Some("vcr-layer-sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Nearest,
@@ -414,14 +467,14 @@ impl Renderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("ftc-render-encoder"),
+                label: Some("vcr-render-encoder"),
             });
 
         self.prepare_procedural_layers(frame_index, &mut encoder)?;
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ftc-render-pass"),
+                label: Some("vcr-render-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.output_view,
                     resolve_target: None,
@@ -501,18 +554,12 @@ impl Renderer {
             .context("GPU buffer mapping failed")?;
 
         let mapped = buffer_slice.get_mapped_range();
-        let mut frame = vec![0_u8; (self.unpadded_bytes_per_row * self.height) as usize];
-
-        for (row_index, chunk) in mapped
-            .chunks(self.padded_bytes_per_row as usize)
-            .take(self.height as usize)
-            .enumerate()
-        {
-            let dst_start = row_index * self.unpadded_bytes_per_row as usize;
-            let dst_end = dst_start + self.unpadded_bytes_per_row as usize;
-            frame[dst_start..dst_end]
-                .copy_from_slice(&chunk[..self.unpadded_bytes_per_row as usize]);
-        }
+        let frame = copy_tight_rows(
+            &mapped,
+            self.unpadded_bytes_per_row,
+            self.padded_bytes_per_row,
+            self.height,
+        )?;
 
         drop(mapped);
         self.readback_buffer.unmap();
@@ -551,7 +598,7 @@ impl Renderer {
 
             {
                 let mut procedural_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("ftc-procedural-pass"),
+                    label: Some("vcr-procedural-pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &procedural.view,
                         resolve_target: None,
@@ -577,6 +624,134 @@ impl Renderer {
     }
 }
 
+impl Renderer {
+    pub async fn new(environment: &Environment, layers: &[Layer]) -> Result<Self> {
+        match GpuRenderer::new(environment, layers).await {
+            Ok(gpu) => Ok(Self {
+                backend: RendererBackend::Gpu(gpu),
+            }),
+            Err(error) if error.to_string().contains(NO_GPU_ADAPTER_ERR) => {
+                let software = SoftwareRenderer::new(environment, layers)
+                    .context("failed to initialize software renderer fallback")?;
+                Ok(Self {
+                    backend: RendererBackend::Software(software),
+                })
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn using_software(&self) -> bool {
+        matches!(self.backend, RendererBackend::Software(_))
+    }
+
+    pub fn render_frame_rgba(&mut self, frame_index: u32) -> Result<Vec<u8>> {
+        match &mut self.backend {
+            RendererBackend::Gpu(renderer) => renderer.render_frame_rgba(frame_index),
+            RendererBackend::Software(renderer) => renderer.render_frame_rgba(frame_index),
+        }
+    }
+}
+
+impl SoftwareRenderer {
+    fn new(environment: &Environment, layers: &[Layer]) -> Result<Self> {
+        let width = environment.resolution.width;
+        let height = environment.resolution.height;
+        let mut software_layers = Vec::with_capacity(layers.len());
+
+        for layer in layers {
+            let common = layer.common();
+            let source = match layer {
+                Layer::Asset(asset_layer) => SoftwareLayerSource::Asset {
+                    pixmap: load_asset_pixmap(asset_layer)?,
+                },
+                Layer::Procedural(procedural_layer) => {
+                    SoftwareLayerSource::Procedural(procedural_layer.procedural.clone())
+                }
+            };
+
+            let (layer_width, layer_height) = match &source {
+                SoftwareLayerSource::Asset { pixmap } => (pixmap.width(), pixmap.height()),
+                SoftwareLayerSource::Procedural(_) => (width, height),
+            };
+
+            software_layers.push(SoftwareLayer {
+                z_index: common.z_index,
+                width: layer_width,
+                height: layer_height,
+                position: common.position.clone(),
+                position_x: common.pos_x.clone(),
+                position_y: common.pos_y.clone(),
+                scale: common.scale.clone(),
+                rotation_degrees: common.rotation_degrees.clone(),
+                opacity: common.opacity.clone(),
+                source,
+            });
+        }
+        software_layers.sort_by_key(|layer| layer.z_index);
+
+        Ok(Self {
+            width,
+            height,
+            layers: software_layers,
+        })
+    }
+
+    fn render_frame_rgba(&mut self, frame_index: u32) -> Result<Vec<u8>> {
+        let mut output = Pixmap::new(self.width, self.height)
+            .ok_or_else(|| anyhow!("failed to allocate software output pixmap"))?;
+        output.fill(Color::from_rgba8(0, 0, 0, 0));
+
+        for layer in &self.layers {
+            self.render_layer(&mut output, layer, frame_index)?;
+        }
+
+        let mut frame = output.data().to_vec();
+        unpremultiply_rgba_in_place(&mut frame);
+        Ok(frame)
+    }
+
+    fn render_layer(
+        &self,
+        output: &mut Pixmap,
+        layer: &SoftwareLayer,
+        frame_index: u32,
+    ) -> Result<()> {
+        let opacity = layer.opacity.evaluate(frame_index)?.clamp(0.0, 1.0);
+        if opacity <= 0.0 {
+            return Ok(());
+        }
+
+        let position = sample_position(
+            &layer.position,
+            layer.position_x.as_ref(),
+            layer.position_y.as_ref(),
+            frame_index,
+        )?;
+        let scale = layer.scale.sample(frame_index);
+        let rotation = layer.rotation_degrees.evaluate(frame_index)?;
+        let transform = layer_transform(
+            position,
+            scale,
+            rotation,
+            layer.width as f32,
+            layer.height as f32,
+        );
+
+        match &layer.source {
+            SoftwareLayerSource::Asset { pixmap } => {
+                draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
+            }
+            SoftwareLayerSource::Procedural(source) => {
+                let procedural = render_procedural_pixmap(source, self.width, self.height)?;
+                draw_layer_pixmap(output, procedural.as_ref(), opacity, transform);
+            }
+        }
+
+        Ok(())
+    }
+}
+
 fn build_asset_layer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -594,7 +769,7 @@ fn build_asset_layer(
     let (layer_width, layer_height) = image.dimensions();
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(&format!("ftc-layer-{}", layer.common.id)),
+        label: Some(&format!("vcr-layer-{}", layer.common.id)),
         size: wgpu::Extent3d {
             width: layer_width,
             height: layer_height,
@@ -662,6 +837,8 @@ fn build_asset_layer(
         width: layer_width,
         height: layer_height,
         position: layer.common.position.clone(),
+        position_x: layer.common.pos_x.clone(),
+        position_y: layer.common.pos_y.clone(),
         scale: layer.common.scale.clone(),
         rotation_degrees: layer.common.rotation_degrees.clone(),
         opacity: layer.common.opacity.clone(),
@@ -686,7 +863,7 @@ fn build_procedural_layer(
     sampler: &wgpu::Sampler,
 ) -> Result<GpuLayer> {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(&format!("ftc-procedural-layer-{}", layer.common.id)),
+        label: Some(&format!("vcr-procedural-layer-{}", layer.common.id)),
         size: wgpu::Extent3d {
             width: frame_width,
             height: frame_height,
@@ -703,13 +880,13 @@ fn build_procedural_layer(
 
     let uniform = procedural_uniform(&layer.procedural);
     let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(&format!("ftc-procedural-uniform-{}", layer.common.id)),
+        label: Some(&format!("vcr-procedural-uniform-{}", layer.common.id)),
         contents: bytemuck::bytes_of(&uniform),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some(&format!("ftc-procedural-bind-group-{}", layer.common.id)),
+        label: Some(&format!("vcr-procedural-bind-group-{}", layer.common.id)),
         layout: procedural_bind_group_layout,
         entries: &[wgpu::BindGroupEntry {
             binding: 0,
@@ -746,6 +923,8 @@ fn build_procedural_layer(
         width: frame_width,
         height: frame_height,
         position: layer.common.position.clone(),
+        position_x: layer.common.pos_x.clone(),
+        position_y: layer.common.pos_y.clone(),
         scale: layer.common.scale.clone(),
         rotation_degrees: layer.common.rotation_degrees.clone(),
         opacity: layer.common.opacity.clone(),
@@ -782,16 +961,16 @@ fn build_layer_draw_resources(
     let opacity = common.opacity.evaluate(0)?.clamp(0.0, 1.0);
     let uniform = LayerUniform {
         opacity,
-        _padding: [0.0; 3],
+        _pad: [0.0; 3],
     };
     let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(&format!("ftc-layer-uniform-{}", common.id)),
+        label: Some(&format!("vcr-layer-uniform-{}", common.id)),
         contents: bytemuck::bytes_of(&uniform),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
     let blend_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some(&format!("ftc-layer-bind-group-{}", common.id)),
+        label: Some(&format!("vcr-layer-bind-group-{}", common.id)),
         layout: blend_bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {
@@ -810,7 +989,7 @@ fn build_layer_draw_resources(
     });
 
     let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(&format!("ftc-layer-vertex-buffer-{}", common.id)),
+        label: Some(&format!("vcr-layer-vertex-buffer-{}", common.id)),
         size: std::mem::size_of::<[Vertex; 6]>() as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
@@ -821,7 +1000,7 @@ fn build_layer_draw_resources(
         frame_height,
         layer_width,
         layer_height,
-        common.position.sample(0),
+        common.sample_position(0)?,
         common.scale.sample(0),
         common.rotation_degrees.evaluate(0)?,
     );
@@ -850,18 +1029,24 @@ fn refresh_layer_draw_state(
     {
         let uniform = LayerUniform {
             opacity,
-            _padding: [0.0; 3],
+            _pad: [0.0; 3],
         };
         queue.write_buffer(&layer.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
         layer.last_opacity = Some(opacity);
     }
 
+    let position = sample_position(
+        &layer.position,
+        layer.position_x.as_ref(),
+        layer.position_y.as_ref(),
+        frame_index,
+    )?;
     let vertices = build_layer_quad(
         frame_width,
         frame_height,
         layer.width,
         layer.height,
-        layer.position.sample(frame_index),
+        position,
         layer.scale.sample(frame_index),
         layer.rotation_degrees.evaluate(frame_index)?,
     );
@@ -905,6 +1090,22 @@ fn procedural_uniform(source: &ProceduralSource) -> ProceduralUniform {
             }
         }
     }
+}
+
+fn sample_position(
+    position: &PropertyValue<Vec2>,
+    position_x: Option<&ScalarProperty>,
+    position_y: Option<&ScalarProperty>,
+    frame_index: u32,
+) -> Result<Vec2> {
+    let mut sampled = position.sample(frame_index);
+    if let Some(x) = position_x {
+        sampled.x = x.evaluate(frame_index)?;
+    }
+    if let Some(y) = position_y {
+        sampled.y = y.evaluate(frame_index)?;
+    }
+    Ok(sampled)
 }
 
 fn vertices_approx_eq(left: &[Vertex; 6], right: &[Vertex; 6]) -> bool {
@@ -1004,4 +1205,200 @@ fn to_clip(x: f32, y: f32, width: u32, height: u32) -> [f32; 2] {
 fn align_to(value: u32, alignment: u32) -> u32 {
     let mask = alignment - 1;
     (value + mask) & !mask
+}
+
+fn copy_tight_rows(
+    mapped: &[u8],
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+    height: u32,
+) -> Result<Vec<u8>> {
+    let required_len = padded_bytes_per_row as usize * height as usize;
+    if mapped.len() < required_len {
+        return Err(anyhow!(
+            "mapped frame too small: expected at least {} bytes, got {}",
+            required_len,
+            mapped.len()
+        ));
+    }
+
+    let mut frame = vec![0_u8; (unpadded_bytes_per_row * height) as usize];
+    for row_index in 0..height as usize {
+        let src_start = row_index * padded_bytes_per_row as usize;
+        let src_end = src_start + unpadded_bytes_per_row as usize;
+        let dst_start = row_index * unpadded_bytes_per_row as usize;
+        let dst_end = dst_start + unpadded_bytes_per_row as usize;
+        frame[dst_start..dst_end].copy_from_slice(&mapped[src_start..src_end]);
+    }
+
+    Ok(frame)
+}
+
+fn load_asset_pixmap(layer: &AssetLayer) -> Result<Pixmap> {
+    let image = ImageReader::open(&layer.source_path)
+        .with_context(|| format!("failed opening {}", layer.source_path.display()))?
+        .decode()
+        .with_context(|| format!("failed decoding {}", layer.source_path.display()))?
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+
+    let mut rgba = image.into_raw();
+    premultiply_rgba_in_place(&mut rgba);
+
+    let mut pixmap = Pixmap::new(width, height).ok_or_else(|| {
+        anyhow!(
+            "failed to allocate software pixmap for '{}'",
+            layer.common.id
+        )
+    })?;
+    pixmap.data_mut().copy_from_slice(&rgba);
+    Ok(pixmap)
+}
+
+fn draw_layer_pixmap(
+    output: &mut Pixmap,
+    source: tiny_skia::PixmapRef<'_>,
+    opacity: f32,
+    transform: Transform,
+) {
+    let mut paint = PixmapPaint::default();
+    paint.opacity = opacity;
+    paint.quality = FilterQuality::Bilinear;
+    paint.blend_mode = BlendMode::SourceOver;
+    output.draw_pixmap(0, 0, source, &paint, transform, None);
+}
+
+fn layer_transform(
+    position: Vec2,
+    scale: Vec2,
+    rotation_degrees: f32,
+    width: f32,
+    height: f32,
+) -> Transform {
+    let scale_x = scale.x.max(0.0);
+    let scale_y = scale.y.max(0.0);
+    let radians = rotation_degrees.to_radians();
+    let cos_theta = radians.cos();
+    let sin_theta = radians.sin();
+
+    let a = cos_theta * scale_x;
+    let b = sin_theta * scale_x;
+    let c = -sin_theta * scale_y;
+    let d = cos_theta * scale_y;
+
+    let half_w = width * 0.5;
+    let half_h = height * 0.5;
+    let center_world_x = position.x + (width * scale_x * 0.5);
+    let center_world_y = position.y + (height * scale_y * 0.5);
+
+    let tx = center_world_x - (a * half_w + c * half_h);
+    let ty = center_world_y - (b * half_w + d * half_h);
+
+    Transform::from_row(a, b, c, d, tx, ty)
+}
+
+fn render_procedural_pixmap(source: &ProceduralSource, width: u32, height: u32) -> Result<Pixmap> {
+    let mut pixmap = Pixmap::new(width, height)
+        .ok_or_else(|| anyhow!("failed to allocate procedural software pixmap"))?;
+
+    match source {
+        ProceduralSource::SolidColor { color } => {
+            pixmap.fill(color_to_skia(*color));
+        }
+        ProceduralSource::Gradient {
+            start_color,
+            end_color,
+            direction,
+        } => {
+            let (start, end) = match direction {
+                GradientDirection::Horizontal => {
+                    (Point::from_xy(0.0, 0.0), Point::from_xy(width as f32, 0.0))
+                }
+                GradientDirection::Vertical => {
+                    (Point::from_xy(0.0, 0.0), Point::from_xy(0.0, height as f32))
+                }
+            };
+            let shader = LinearGradient::new(
+                start,
+                end,
+                vec![
+                    GradientStop::new(0.0, color_to_skia(*start_color)),
+                    GradientStop::new(1.0, color_to_skia(*end_color)),
+                ],
+                SpreadMode::Pad,
+                Transform::identity(),
+            )
+            .ok_or_else(|| anyhow!("failed to create procedural gradient shader"))?;
+
+            let mut paint = Paint::default();
+            paint.shader = shader;
+            let rect = Rect::from_xywh(0.0, 0.0, width as f32, height as f32)
+                .ok_or_else(|| anyhow!("invalid procedural gradient bounds"))?;
+            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        }
+    }
+
+    Ok(pixmap)
+}
+
+fn color_to_skia(color: ColorRgba) -> Color {
+    Color::from_rgba8(
+        f32_to_channel(color.r),
+        f32_to_channel(color.g),
+        f32_to_channel(color.b),
+        f32_to_channel(color.a),
+    )
+}
+
+fn f32_to_channel(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn premultiply_rgba_in_place(bytes: &mut [u8]) {
+    for pixel in bytes.chunks_exact_mut(4) {
+        let alpha = pixel[3] as u16;
+        pixel[0] = ((pixel[0] as u16 * alpha + 127) / 255) as u8;
+        pixel[1] = ((pixel[1] as u16 * alpha + 127) / 255) as u8;
+        pixel[2] = ((pixel[2] as u16 * alpha + 127) / 255) as u8;
+    }
+}
+
+fn unpremultiply_rgba_in_place(bytes: &mut [u8]) {
+    for pixel in bytes.chunks_exact_mut(4) {
+        let alpha = pixel[3];
+        if alpha == 0 {
+            pixel[0] = 0;
+            pixel[1] = 0;
+            pixel[2] = 0;
+            continue;
+        }
+
+        let alpha_u16 = alpha as u16;
+        pixel[0] = ((pixel[0] as u16 * 255 + (alpha_u16 / 2)) / alpha_u16).min(255) as u8;
+        pixel[1] = ((pixel[1] as u16 * 255 + (alpha_u16 / 2)) / alpha_u16).min(255) as u8;
+        pixel[2] = ((pixel[2] as u16 * 255 + (alpha_u16 / 2)) / alpha_u16).min(255) as u8;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_tight_rows;
+
+    #[test]
+    fn copy_tight_rows_strips_padding() {
+        let mapped = vec![
+            1, 2, 3, 4, 99, 99, 99, 99, // row 1: 4 bytes + 4 bytes pad
+            5, 6, 7, 8, 88, 88, 88, 88, // row 2: 4 bytes + 4 bytes pad
+        ];
+
+        let tight = copy_tight_rows(&mapped, 4, 8, 2).expect("expected tight copy");
+        assert_eq!(tight, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn copy_tight_rows_handles_already_tight_rows() {
+        let mapped = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let tight = copy_tight_rows(&mapped, 4, 4, 2).expect("expected tight copy");
+        assert_eq!(tight, mapped);
+    }
 }

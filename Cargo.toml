@@ -1,8 +1,8 @@
 [package]
-name = "ftc"
+name = "vcr"
 version = "0.1.0"
 edition = "2021"
-description = "Film Transform Compiler: headless, local-first motion graphics compiler"
+description = "VCR (Video Component Renderer): headless, local-first motion graphics compiler"
 license = "MIT"
 
 [dependencies]
@@ -13,4 +13,5 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 pollster = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
+tiny-skia = "0.11"
 wgpu = "0.20"

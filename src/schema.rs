@@ -99,6 +99,10 @@ pub struct LayerCommon {
     pub z_index: i32,
     #[serde(default)]
     pub position: PropertyValue<Vec2>,
+    #[serde(default, alias = "position_x")]
+    pub pos_x: Option<ScalarProperty>,
+    #[serde(default, alias = "position_y")]
+    pub pos_y: Option<ScalarProperty>,
     #[serde(default = "default_scale")]
     pub scale: PropertyValue<Vec2>,
     #[serde(default)]
@@ -116,6 +120,16 @@ impl LayerCommon {
         self.position
             .validate("position")
             .map_err(|error| anyhow::anyhow!("layer '{}': {error}", self.id))?;
+        if let Some(position_x) = &self.pos_x {
+            position_x
+                .validate("pos_x")
+                .map_err(|error| anyhow::anyhow!("layer '{}': {error}", self.id))?;
+        }
+        if let Some(position_y) = &self.pos_y {
+            position_y
+                .validate("pos_y")
+                .map_err(|error| anyhow::anyhow!("layer '{}': {error}", self.id))?;
+        }
         self.scale
             .validate("scale")
             .map_err(|error| anyhow::anyhow!("layer '{}': {error}", self.id))?;
@@ -131,9 +145,22 @@ impl LayerCommon {
 
     pub fn has_static_properties(&self) -> bool {
         self.position.is_static()
+            && self.pos_x.as_ref().map_or(true, ScalarProperty::is_static)
+            && self.pos_y.as_ref().map_or(true, ScalarProperty::is_static)
             && self.scale.is_static()
             && self.rotation_degrees.is_static()
             && self.opacity.is_static()
+    }
+
+    pub fn sample_position(&self, frame: u32) -> Result<Vec2> {
+        let mut position = self.position.sample(frame);
+        if let Some(pos_x) = &self.pos_x {
+            position.x = pos_x.evaluate(frame)?;
+        }
+        if let Some(pos_y) = &self.pos_y {
+            position.y = pos_y.evaluate(frame)?;
+        }
+        Ok(position)
     }
 }
 
@@ -266,11 +293,49 @@ fn default_alpha() -> f32 {
     1.0
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Vec2 {
     pub x: f32,
     pub y: f32,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Vec2Object {
+    x: f32,
+    y: f32,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(untagged)]
+enum Vec2Repr {
+    Object(Vec2Object),
+    Array([f32; 2]),
+}
+
+impl<'de> Deserialize<'de> for Vec2 {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Vec2Repr::deserialize(deserializer)?;
+        let vec = match value {
+            Vec2Repr::Object(object) => Self {
+                x: object.x,
+                y: object.y,
+            },
+            Vec2Repr::Array([x, y]) => Self { x, y },
+        };
+
+        if !vec.x.is_finite() {
+            return Err(D::Error::custom("position.x must be finite"));
+        }
+        if !vec.y.is_finite() {
+            return Err(D::Error::custom("position.y must be finite"));
+        }
+
+        Ok(vec)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

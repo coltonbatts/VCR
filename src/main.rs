@@ -14,8 +14,8 @@ use crate::manifest::load_and_validate_manifest;
 use crate::renderer::Renderer;
 
 #[derive(Debug, Parser)]
-#[command(name = "ftc")]
-#[command(about = "Film Transform Compiler")]
+#[command(name = "vcr")]
+#[command(about = "VCR (Video Component Renderer)")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -63,6 +63,9 @@ fn run_build(manifest_path: &Path, output_path: &Path) -> Result<()> {
     let total_frames = manifest.environment.total_frames();
 
     let mut renderer = pollster::block_on(Renderer::new(&manifest.environment, &manifest.layers))?;
+    if renderer.using_software() {
+        eprintln!("[VCR] Warning: No GPU found. Falling back to CPU rendering (Slow).");
+    }
     let ffmpeg = FfmpegPipe::spawn(&manifest.environment, output_path)?;
 
     for frame_index in 0..total_frames {

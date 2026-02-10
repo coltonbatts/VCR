@@ -24,7 +24,7 @@ impl FfmpegPipe {
         let (sender, receiver) = mpsc::sync_channel::<Vec<u8>>(4);
 
         let worker = thread::Builder::new()
-            .name("ftc-ffmpeg-encoder".to_owned())
+            .name("vcr-ffmpeg-encoder".to_owned())
             .spawn(move || encoding_worker(receiver, size, fps, &output_path))
             .context("failed to spawn ffmpeg writer thread")?;
 
