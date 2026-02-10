@@ -9,16 +9,26 @@ use crate::workflow::types::{LocalAssetPaths, ManifestOutput, ProductCardData};
 const DEFAULT_MODEL: &str = "claude-3-5-sonnet-latest";
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_API_VERSION: &str = "2023-06-01";
+const OUTPUT_WIDTH: f32 = 2560.0;
+const OUTPUT_HEIGHT: f32 = 1440.0;
+const FIGMA_EXPORT_SCALE: f32 = 2.0;
+const TEXT_PADDING_PX: f32 = 12.0;
 
 #[derive(Debug, Clone)]
 pub struct ManifestGenerator {
     http: Client,
     anthropic_api_key: Option<String>,
     model: String,
+    verbose: bool,
 }
 
 impl ManifestGenerator {
-    pub fn new(http: Client, anthropic_api_key: Option<String>, model: Option<String>) -> Self {
+    pub fn new(
+        http: Client,
+        anthropic_api_key: Option<String>,
+        model: Option<String>,
+        verbose: bool,
+    ) -> Self {
         let selected_model = model
             .and_then(|value| (!value.trim().is_empty()).then_some(value))
             .unwrap_or_else(|| DEFAULT_MODEL.to_owned());
@@ -26,6 +36,7 @@ impl ManifestGenerator {
             http,
             anthropic_api_key,
             model: selected_model,
+            verbose,
         }
     }
 
@@ -50,6 +61,11 @@ impl ManifestGenerator {
                 }
                 Err(error) => {
                     let fallback = generate_fallback_manifest(data, assets)?;
+                    if self.verbose {
+                        eprintln!(
+                            "[DEBUG] Claude manifest generation failed; using fallback template: {error:#}"
+                        );
+                    }
                     return Ok(ManifestOutput {
                         yaml: fallback,
                         used_claude: false,
@@ -186,6 +202,7 @@ fn generate_fallback_manifest(data: &ProductCardData, assets: &LocalAssetPaths) 
         .text
         .clone()
         .unwrap_or_else(|| "#FFFFFF".to_owned());
+    let layout = compute_fallback_layout(data);
 
     let mut yaml = String::new();
     yaml.push_str("version: 1\n");
@@ -200,36 +217,66 @@ fn generate_fallback_manifest(data: &ProductCardData, assets: &LocalAssetPaths) 
     yaml.push_str("modulators: {}\n");
     yaml.push_str("groups: []\n");
     yaml.push_str("layers:\n");
+
+    let image_start_x = layout
+        .as_ref()
+        .map(|value| value.product_image_start_x)
+        .unwrap_or(-920);
+    let image_end_x = layout
+        .as_ref()
+        .map(|value| value.product_image_end_x)
+        .unwrap_or(180);
+    let image_y = layout
+        .as_ref()
+        .map(|value| value.product_image_y)
+        .unwrap_or(220);
+    let product_name_x = layout
+        .as_ref()
+        .map(|value| value.product_name_x)
+        .unwrap_or(1320);
+    let product_name_y = layout
+        .as_ref()
+        .map(|value| value.product_name_y)
+        .unwrap_or(430);
+    let price_x = layout.as_ref().map(|value| value.price_x).unwrap_or(1320);
+    let price_y = layout.as_ref().map(|value| value.price_y).unwrap_or(590);
+
     yaml.push_str("  - id: product_image\n");
     yaml.push_str("    z_index: 1\n");
-    yaml.push_str("    pos_x: \"lerp(-920, 180, smoothstep(0, 22, t))\"\n");
-    yaml.push_str("    pos_y: 220\n");
+    yaml.push_str(&format!(
+        "    pos_x: \"lerp({image_start_x}, {image_end_x}, smoothstep(0, 22, t))\"\n"
+    ));
+    yaml.push_str(&format!("    pos_y: {image_y}\n"));
     yaml.push_str("    opacity: \"smoothstep(0, 14, t) * (1.0 - smoothstep(86, 96, t))\"\n");
     yaml.push_str("    image:\n");
     yaml.push_str(&format!("      path: \"{image_path}\"\n"));
     yaml.push('\n');
     yaml.push_str("  - id: product_name\n");
     yaml.push_str("    z_index: 2\n");
-    yaml.push_str("    pos_x: 1320\n");
-    yaml.push_str("    pos_y: 430\n");
+    yaml.push_str(&format!("    pos_x: {product_name_x}\n"));
+    yaml.push_str(&format!("    pos_y: {product_name_y}\n"));
     yaml.push_str("    opacity: \"smoothstep(18, 34, t) * (1.0 - smoothstep(86, 96, t))\"\n");
     yaml.push_str("    image:\n");
     yaml.push_str(&format!("      path: \"{name_path}\"\n"));
     yaml.push('\n');
     yaml.push_str("  - id: price\n");
     yaml.push_str("    z_index: 3\n");
-    yaml.push_str("    pos_x: 1320\n");
-    yaml.push_str("    pos_y: 590\n");
+    yaml.push_str(&format!("    pos_x: {price_x}\n"));
+    yaml.push_str(&format!("    pos_y: {price_y}\n"));
     yaml.push_str("    opacity: \"smoothstep(24, 40, t) * (1.0 - smoothstep(86, 96, t))\"\n");
     yaml.push_str("    image:\n");
     yaml.push_str(&format!("      path: \"{price_path}\"\n"));
 
     if let Some(path) = description_path {
+        let (description_x, description_y) = layout
+            .as_ref()
+            .and_then(|value| value.description_xy)
+            .unwrap_or((1320, 730));
         yaml.push('\n');
         yaml.push_str("  - id: description\n");
         yaml.push_str("    z_index: 4\n");
-        yaml.push_str("    pos_x: 1320\n");
-        yaml.push_str("    pos_y: 730\n");
+        yaml.push_str(&format!("    pos_x: {description_x}\n"));
+        yaml.push_str(&format!("    pos_y: {description_y}\n"));
         yaml.push_str("    opacity: \"smoothstep(30, 48, t) * (1.0 - smoothstep(86, 96, t))\"\n");
         yaml.push_str("    image:\n");
         yaml.push_str(&format!("      path: \"{path}\"\n"));
@@ -242,6 +289,61 @@ fn generate_fallback_manifest(data: &ProductCardData, assets: &LocalAssetPaths) 
 
     validate_manifest_yaml(&yaml)?;
     Ok(yaml)
+}
+
+#[derive(Debug, Clone)]
+struct FallbackLayout {
+    product_image_start_x: i32,
+    product_image_end_x: i32,
+    product_image_y: i32,
+    product_name_x: i32,
+    product_name_y: i32,
+    price_x: i32,
+    price_y: i32,
+    description_xy: Option<(i32, i32)>,
+}
+
+fn compute_fallback_layout(data: &ProductCardData) -> Option<FallbackLayout> {
+    let card = data.layout.card.as_ref()?;
+    let image = data.layout.product_image.as_ref()?;
+    let name = data.layout.product_name.as_ref()?;
+    let price = data.layout.price.as_ref()?;
+
+    let card_width = card.width * FIGMA_EXPORT_SCALE;
+    let card_height = card.height * FIGMA_EXPORT_SCALE;
+    if card_width <= 0.0 || card_height <= 0.0 {
+        return None;
+    }
+
+    let card_anchor_x = ((OUTPUT_WIDTH - card_width) * 0.1).max(60.0);
+    let card_anchor_y = ((OUTPUT_HEIGHT - card_height) * 0.5).max(60.0);
+    let card_start_x = (-card_width - 180.0).round() as i32;
+
+    let product_image_end_x = card_anchor_x + (image.x - card.x) * FIGMA_EXPORT_SCALE;
+    let product_image_y = card_anchor_y + (image.y - card.y) * FIGMA_EXPORT_SCALE;
+    let product_name_x = card_anchor_x + (name.x - card.x) * FIGMA_EXPORT_SCALE - TEXT_PADDING_PX;
+    let product_name_y = card_anchor_y + (name.y - card.y) * FIGMA_EXPORT_SCALE - TEXT_PADDING_PX;
+    let price_x = card_anchor_x + (price.x - card.x) * FIGMA_EXPORT_SCALE - TEXT_PADDING_PX;
+    let price_y = card_anchor_y + (price.y - card.y) * FIGMA_EXPORT_SCALE - TEXT_PADDING_PX;
+    let description_xy = data.layout.description.as_ref().map(|description| {
+        (
+            (card_anchor_x + (description.x - card.x) * FIGMA_EXPORT_SCALE - TEXT_PADDING_PX)
+                .round() as i32,
+            (card_anchor_y + (description.y - card.y) * FIGMA_EXPORT_SCALE - TEXT_PADDING_PX)
+                .round() as i32,
+        )
+    });
+
+    Some(FallbackLayout {
+        product_image_start_x: card_start_x,
+        product_image_end_x: product_image_end_x.round() as i32,
+        product_image_y: product_image_y.round() as i32,
+        product_name_x: product_name_x.round() as i32,
+        product_name_y: product_name_y.round() as i32,
+        price_x: price_x.round() as i32,
+        price_y: price_y.round() as i32,
+        description_xy,
+    })
 }
 
 fn validate_manifest_yaml(yaml: &str) -> Result<()> {
@@ -294,8 +396,8 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::workflow::types::{
-        LocalAssetPaths, ProductCardAssetUrls, ProductCardColors, ProductCardData,
-        ProductCardFonts, ProductCardNodeIds,
+        LocalAssetPaths, NodeBounds, ProductCardAssetUrls, ProductCardColors, ProductCardData,
+        ProductCardFonts, ProductCardLayout, ProductCardNodeIds,
     };
 
     use super::generate_fallback_manifest;
@@ -319,6 +421,7 @@ mod tests {
                 price: None,
                 description: None,
             },
+            layout: ProductCardLayout::default(),
             node_ids: ProductCardNodeIds {
                 product_image: "1:3".to_owned(),
                 product_name: "1:4".to_owned(),
@@ -343,5 +446,77 @@ mod tests {
         let yaml = generate_fallback_manifest(&data, &assets).expect("fallback manifest");
         let parsed: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("valid YAML");
         assert!(parsed.get("layers").is_some());
+    }
+
+    #[test]
+    fn fallback_manifest_uses_bounds_layout_when_available() {
+        let data = ProductCardData {
+            figma_file_key: "abc".to_owned(),
+            card_node_id: "1:2".to_owned(),
+            card_name: "Card-1".to_owned(),
+            product_name: "Pink Skirt".to_owned(),
+            price: "$29.99".to_owned(),
+            description: None,
+            colors: ProductCardColors {
+                background: Some("#101010".to_owned()),
+                accent: Some("#FF00FF".to_owned()),
+                text: Some("#FFFFFF".to_owned()),
+            },
+            fonts: ProductCardFonts {
+                product_name: None,
+                price: None,
+                description: None,
+            },
+            layout: ProductCardLayout {
+                card: Some(NodeBounds {
+                    x: 700.0,
+                    y: 900.0,
+                    width: 390.0,
+                    height: 571.0,
+                }),
+                product_image: Some(NodeBounds {
+                    x: 717.0,
+                    y: 900.0,
+                    width: 173.0,
+                    height: 206.0,
+                }),
+                product_name: Some(NodeBounds {
+                    x: 721.0,
+                    y: 1114.0,
+                    width: 165.0,
+                    height: 39.0,
+                }),
+                price: Some(NodeBounds {
+                    x: 755.0,
+                    y: 916.0,
+                    width: 25.0,
+                    height: 20.0,
+                }),
+                description: None,
+            },
+            node_ids: ProductCardNodeIds {
+                product_image: "1:3".to_owned(),
+                product_name: "1:4".to_owned(),
+                price: "1:5".to_owned(),
+                description: None,
+                background: Some("1:7".to_owned()),
+            },
+            asset_urls: ProductCardAssetUrls {
+                product_image: "https://example.com/image.png".to_owned(),
+                product_name: "https://example.com/name.png".to_owned(),
+                price: "https://example.com/price.png".to_owned(),
+                description: None,
+            },
+        };
+        let assets = LocalAssetPaths {
+            product_image: PathBuf::from("/tmp/run/product_image.png"),
+            product_name: PathBuf::from("/tmp/run/product_name.png"),
+            price: PathBuf::from("/tmp/run/price.png"),
+            description: None,
+        };
+
+        let yaml = generate_fallback_manifest(&data, &assets).expect("fallback manifest");
+        assert!(yaml.contains("pos_x: \"lerp(-960, 212, smoothstep(0, 22, t))\""));
+        assert!(yaml.contains("pos_y: 149"));
     }
 }

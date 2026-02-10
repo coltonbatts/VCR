@@ -29,6 +29,8 @@ struct Cli {
     skip_render: bool,
     #[arg(long = "render-timeout-seconds", default_value_t = 30)]
     render_timeout_seconds: u64,
+    #[arg(long = "verbose", default_value_t = false)]
+    verbose: bool,
 }
 
 #[tokio::main]
@@ -61,9 +63,9 @@ async fn main() -> Result<()> {
         .context("failed to create HTTP client")?;
 
     println!("1/5 Extracting product card data from Figma...");
-    let figma_client = FigmaClient::new(http.clone(), figma_token);
+    let figma_client = FigmaClient::new(http.clone(), figma_token, cli.verbose);
     let card_data = figma_client
-        .extract_product_card_data(&cli.figma_file)
+        .extract_product_card_data(&cli.figma_file, &cli.description)
         .await
         .context("Figma extraction failed")?;
     let extracted_json_path = run_folder.join("product_card_data.json");
@@ -74,12 +76,12 @@ async fn main() -> Result<()> {
     .with_context(|| format!("failed to write {}", extracted_json_path.display()))?;
 
     println!("2/5 Downloading Figma-exported node assets...");
-    let local_assets = download_product_card_assets(&http, &card_data, &run_folder)
+    let local_assets = download_product_card_assets(&http, &card_data, &run_folder, cli.verbose)
         .await
         .context("failed downloading Figma assets")?;
 
     println!("3/5 Generating VCR manifest...");
-    let generator = ManifestGenerator::new(http, anthropic_api_key, anthropic_model);
+    let generator = ManifestGenerator::new(http, anthropic_api_key, anthropic_model, cli.verbose);
     let manifest_output = generator
         .generate_manifest(&card_data, &local_assets, &cli.description)
         .await

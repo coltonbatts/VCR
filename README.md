@@ -131,6 +131,11 @@ Optional:
 - `--frame-project "prj_xxxxx"` to request Frame.io upload (currently a non-blocking MVP placeholder)
 - `--skip-render` to only extract data + generate manifest
 - `--render-timeout-seconds 30` to cap render duration
+- `--verbose` to print layer selection, extracted text, and layout debugging details
+
+Recent quality polish notes:
+
+- `docs/figma-vcr-output-quality-polish-2026-02-10.md`
 
 Required environment variables:
 

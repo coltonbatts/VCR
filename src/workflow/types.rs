@@ -12,6 +12,8 @@ pub struct ProductCardData {
     pub description: Option<String>,
     pub colors: ProductCardColors,
     pub fonts: ProductCardFonts,
+    #[serde(default)]
+    pub layout: ProductCardLayout,
     pub node_ids: ProductCardNodeIds,
     pub asset_urls: ProductCardAssetUrls,
 }
@@ -36,6 +38,23 @@ pub struct TextStyleSpec {
     pub size: Option<f32>,
     pub weight: Option<u32>,
     pub line_height: Option<f32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProductCardLayout {
+    pub card: Option<NodeBounds>,
+    pub product_image: Option<NodeBounds>,
+    pub product_name: Option<NodeBounds>,
+    pub price: Option<NodeBounds>,
+    pub description: Option<NodeBounds>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeBounds {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
