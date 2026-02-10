@@ -55,6 +55,7 @@ async fn main() -> Result<()> {
         .with_context(|| format!("failed to create run folder {}", run_folder.display()))?;
 
     let http = Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(25))
         .build()
         .context("failed to create HTTP client")?;
