@@ -518,6 +518,7 @@ pub enum Layer {
     Asset(AssetLayer),
     Image(ImageLayer),
     Procedural(ProceduralLayer),
+    Text(TextLayer),
 }
 
 impl Layer {
@@ -534,6 +535,7 @@ impl Layer {
             Self::Asset(layer) => &layer.common,
             Self::Image(layer) => &layer.common,
             Self::Procedural(layer) => &layer.common,
+            Self::Text(layer) => &layer.common,
         }
     }
 
@@ -549,7 +551,57 @@ impl Layer {
             Self::Asset(layer) => layer.validate(),
             Self::Image(layer) => layer.validate(),
             Self::Procedural(layer) => layer.validate(),
+            Self::Text(layer) => layer.validate(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextLayer {
+    #[serde(flatten)]
+    pub common: LayerCommon,
+    pub text: TextSource,
+}
+
+impl TextLayer {
+    fn validate(&self) -> Result<()> {
+        if self.text.content.is_empty() {
+            bail!("layer '{}' text.content cannot be empty", self.common.id);
+        }
+        self.text.color.validate("text.color")?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextSource {
+    pub content: String,
+    #[serde(default = "default_font_family")]
+    pub font_family: String,
+    #[serde(default = "default_font_size")]
+    pub font_size: f32,
+    #[serde(default)]
+    pub letter_spacing: f32,
+    #[serde(default = "default_text_color")]
+    pub color: ColorRgba,
+}
+
+fn default_font_family() -> String {
+    "GeistPixel-Line".to_owned()
+}
+
+fn default_font_size() -> f32 {
+    48.0
+}
+
+fn default_text_color() -> ColorRgba {
+    ColorRgba {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
     }
 }
 
@@ -621,6 +673,12 @@ pub enum ProceduralSource {
         #[serde(default)]
         direction: GradientDirection,
     },
+    Triangle {
+        p0: Vec2,
+        p1: Vec2,
+        p2: Vec2,
+        color: ColorRgba,
+    },
 }
 
 impl ProceduralSource {
@@ -635,6 +693,7 @@ impl ProceduralSource {
                 start_color.validate("start_color")?;
                 end_color.validate("end_color")
             }
+            Self::Triangle { color, .. } => color.validate("color"),
         }
     }
 }
@@ -1315,6 +1374,59 @@ fn evaluate_function(
         "easeinout" => {
             expect_arity(name, &evaluated, 1)?;
             Ok(EasingCurve::EaseInOut.apply(evaluated[0].clamp(0.0, 1.0)))
+        }
+        "step" => {
+            expect_arity(name, &evaluated, 2)?;
+            Ok(if evaluated[1] >= evaluated[0] { 1.0 } else { 0.0 })
+        }
+        "fract" => {
+            expect_arity(name, &evaluated, 1)?;
+            Ok(evaluated[0] - evaluated[0].floor())
+        }
+        "floor" => {
+            expect_arity(name, &evaluated, 1)?;
+            Ok(evaluated[0].floor())
+        }
+        "ceil" => {
+            expect_arity(name, &evaluated, 1)?;
+            Ok(evaluated[0].ceil())
+        }
+        "round" => {
+            expect_arity(name, &evaluated, 1)?;
+            Ok(evaluated[0].round())
+        }
+        "saw" => {
+            if evaluated.is_empty() || evaluated.len() > 2 {
+                bail!("function {name} expects 1 or 2 arguments");
+            }
+            let frequency = evaluated.get(1).copied().unwrap_or(1.0);
+            let t = evaluated[0] * frequency;
+            Ok(t - t.floor())
+        }
+        "tri" => {
+            if evaluated.is_empty() || evaluated.len() > 2 {
+                bail!("function {name} expects 1 or 2 arguments");
+            }
+            let frequency = evaluated.get(1).copied().unwrap_or(1.0);
+            let t = evaluated[0] * frequency;
+            Ok(2.0 * (t - (t + 0.5).floor()).abs())
+        }
+        "random" => {
+            expect_arity(name, &evaluated, 1)?;
+            Ok(hash_to_unit_range(evaluated[0] as i64, context.seed))
+        }
+        "glitch" => {
+            if evaluated.is_empty() || evaluated.len() > 2 {
+                bail!("function {name} expects 1 or 2 arguments");
+            }
+            let t = evaluated[0];
+            let intensity = evaluated.get(1).copied().unwrap_or(1.0);
+            let n = noise_1d(t * 10.0, context.seed);
+            if n > 0.8 / intensity.max(0.1) {
+                Ok(noise_1d(t * 100.0, context.seed.wrapping_add(1)))
+            } else {
+                Ok(0.0)
+            }
         }
         "sin" => {
             expect_arity(name, &evaluated, 1)?;

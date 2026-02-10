@@ -1,0 +1,183 @@
+version: 1
+environment:
+  resolution:
+    width: 2560
+    height: 1440
+  fps: 24
+  duration:
+    frames: 96
+
+seed: 4242
+params:
+  pixelate_start: 42
+
+layers:
+  - id: intro_text
+    z_index: 10
+    pos_x: 180
+    pos_y: 530
+    scale: [1.0, 1.0]
+    rotation_degrees: 0
+    opacity: "smoothstep(0, 10, t) * (1.0 - smoothstep(pixelate_start, pixelate_start + 7, t))"
+    image:
+      path: "../assets/fuck_yeah_intro_text.png"
+
+  - id: px_01
+    z_index: 20
+    pos_x: "1260 + smoothstep(pixelate_start + 0, pixelate_start + 10, t) * -1160"
+    pos_y: "700 + smoothstep(pixelate_start + 0, pixelate_start + 10, t) * -520"
+    scale: [1.7, 1.7]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 0, pixelate_start + 2, t) * (1.0 - smoothstep(pixelate_start + 10, pixelate_start + 32, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_02
+    z_index: 20
+    pos_x: "1260 + smoothstep(pixelate_start + 0, pixelate_start + 10, t) * 1160"
+    pos_y: "700 + smoothstep(pixelate_start + 0, pixelate_start + 10, t) * -520"
+    scale: [1.7, 1.7]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 0, pixelate_start + 2, t) * (1.0 - smoothstep(pixelate_start + 10, pixelate_start + 32, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_03
+    z_index: 20
+    pos_x: "1260 + smoothstep(pixelate_start + 0, pixelate_start + 10, t) * -1220"
+    pos_y: "700 + smoothstep(pixelate_start + 0, pixelate_start + 10, t) * 40"
+    scale: [1.55, 1.55]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 0, pixelate_start + 2, t) * (1.0 - smoothstep(pixelate_start + 10, pixelate_start + 34, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_04
+    z_index: 20
+    pos_x: "1260 + smoothstep(pixelate_start + 0, pixelate_start + 10, t) * 1220"
+    pos_y: "700 + smoothstep(pixelate_start + 0, pixelate_start + 10, t) * 40"
+    scale: [1.55, 1.55]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 0, pixelate_start + 2, t) * (1.0 - smoothstep(pixelate_start + 10, pixelate_start + 34, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_05
+    z_index: 21
+    pos_x: "1260 + smoothstep(pixelate_start + 1, pixelate_start + 11, t) * -860"
+    pos_y: "700 + smoothstep(pixelate_start + 1, pixelate_start + 11, t) * -700"
+    scale: [1.35, 1.35]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 1, pixelate_start + 3, t) * (1.0 - smoothstep(pixelate_start + 11, pixelate_start + 33, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_06
+    z_index: 21
+    pos_x: "1260 + smoothstep(pixelate_start + 1, pixelate_start + 11, t) * 860"
+    pos_y: "700 + smoothstep(pixelate_start + 1, pixelate_start + 11, t) * -700"
+    scale: [1.35, 1.35]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 1, pixelate_start + 3, t) * (1.0 - smoothstep(pixelate_start + 11, pixelate_start + 33, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_07
+    z_index: 21
+    pos_x: "1260 + smoothstep(pixelate_start + 1, pixelate_start + 11, t) * -860"
+    pos_y: "700 + smoothstep(pixelate_start + 1, pixelate_start + 11, t) * 700"
+    scale: [1.35, 1.35]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 1, pixelate_start + 3, t) * (1.0 - smoothstep(pixelate_start + 11, pixelate_start + 33, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_08
+    z_index: 21
+    pos_x: "1260 + smoothstep(pixelate_start + 1, pixelate_start + 11, t) * 860"
+    pos_y: "700 + smoothstep(pixelate_start + 1, pixelate_start + 11, t) * 700"
+    scale: [1.35, 1.35]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 1, pixelate_start + 3, t) * (1.0 - smoothstep(pixelate_start + 11, pixelate_start + 33, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_09
+    z_index: 22
+    pos_x: "1260 + smoothstep(pixelate_start + 2, pixelate_start + 13, t) * -420"
+    pos_y: "700 + smoothstep(pixelate_start + 2, pixelate_start + 13, t) * -860"
+    scale: [1.15, 1.15]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 2, pixelate_start + 4, t) * (1.0 - smoothstep(pixelate_start + 13, pixelate_start + 36, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_10
+    z_index: 22
+    pos_x: "1260 + smoothstep(pixelate_start + 2, pixelate_start + 13, t) * 420"
+    pos_y: "700 + smoothstep(pixelate_start + 2, pixelate_start + 13, t) * -860"
+    scale: [1.15, 1.15]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 2, pixelate_start + 4, t) * (1.0 - smoothstep(pixelate_start + 13, pixelate_start + 36, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_11
+    z_index: 22
+    pos_x: "1260 + smoothstep(pixelate_start + 2, pixelate_start + 13, t) * -420"
+    pos_y: "700 + smoothstep(pixelate_start + 2, pixelate_start + 13, t) * 860"
+    scale: [1.15, 1.15]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 2, pixelate_start + 4, t) * (1.0 - smoothstep(pixelate_start + 13, pixelate_start + 36, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_12
+    z_index: 22
+    pos_x: "1260 + smoothstep(pixelate_start + 2, pixelate_start + 13, t) * 420"
+    pos_y: "700 + smoothstep(pixelate_start + 2, pixelate_start + 13, t) * 860"
+    scale: [1.15, 1.15]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 2, pixelate_start + 4, t) * (1.0 - smoothstep(pixelate_start + 13, pixelate_start + 36, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_13
+    z_index: 23
+    pos_x: "1260 + smoothstep(pixelate_start + 3, pixelate_start + 15, t) * -1340"
+    pos_y: "700 + smoothstep(pixelate_start + 3, pixelate_start + 15, t) * -160"
+    scale: [0.95, 0.95]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 3, pixelate_start + 5, t) * (1.0 - smoothstep(pixelate_start + 15, pixelate_start + 42, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_14
+    z_index: 23
+    pos_x: "1260 + smoothstep(pixelate_start + 3, pixelate_start + 15, t) * 1340"
+    pos_y: "700 + smoothstep(pixelate_start + 3, pixelate_start + 15, t) * -160"
+    scale: [0.95, 0.95]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 3, pixelate_start + 5, t) * (1.0 - smoothstep(pixelate_start + 15, pixelate_start + 42, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_15
+    z_index: 23
+    pos_x: "1260 + smoothstep(pixelate_start + 3, pixelate_start + 15, t) * -1340"
+    pos_y: "700 + smoothstep(pixelate_start + 3, pixelate_start + 15, t) * 160"
+    scale: [0.95, 0.95]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 3, pixelate_start + 5, t) * (1.0 - smoothstep(pixelate_start + 15, pixelate_start + 42, t))"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: px_16
+    z_index: 23
+    pos_x: "1260 + smoothstep(pixelate_start + 3, pixelate_start + 15, t) * 1340"
+    pos_y: "700 + smoothstep(pixelate_start + 3, pixelate_start + 15, t) * 160"
+    scale: [0.95, 0.95]
+    rotation_degrees: 0
+    opacity: "smoothstep(pixelate_start + 3, pixelate_start + 5, t) * (1.0 - smoothstep(pixelate_start + 15, pixelate_start + 42, t))"
+    image:
+      path: "../assets/pixel_block.png"

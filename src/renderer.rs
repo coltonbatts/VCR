@@ -7,8 +7,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytemuck::{Pod, Zeroable};
 use image::ImageReader;
 use tiny_skia::{
-    BlendMode, Color, FilterQuality, GradientStop, LinearGradient, Paint, Pixmap, PixmapPaint,
-    Point, Rect, SpreadMode, Transform,
+    BlendMode, Color, FillRule, FilterQuality, GradientStop, LinearGradient, Paint, PathBuilder,
+    Pixmap, PixmapPaint, Point, Rect, SpreadMode, Transform,
 };
 use wgpu::util::DeviceExt;
 
@@ -16,7 +16,7 @@ use crate::schema::{
     AssetLayer, ColorRgba, Environment, ExpressionContext, GradientDirection, Group, Layer,
     ImageLayer, LayerCommon, Manifest, ModulatorBinding, ModulatorMap, Parameters,
     ProceduralLayer,
-    ProceduralSource, PropertyValue, ScalarProperty, TimingControls, Vec2,
+    ProceduralSource, PropertyValue, ScalarProperty, TextLayer, TimingControls, Vec2,
 };
 
 const BLEND_SHADER: &str = r#"
@@ -63,6 +63,10 @@ struct ProceduralUniform {
   _pad0: vec2<u32>,
   color_a: vec4<f32>,
   color_b: vec4<f32>,
+  p0: vec2<f32>,
+  p1: vec2<f32>,
+  p2: vec2<f32>,
+  _pad1: vec2<f32>,
 }
 
 @group(0) @binding(0) var<uniform> procedural: ProceduralUniform;
@@ -87,15 +91,38 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
   return out;
 }
 
+fn sign_func(p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> f32 {
+    return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
   let uv = clamp(input.uv, vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 1.0));
+  
   if procedural.kind == 0u {
     return procedural.color_a;
   }
+  
+  if procedural.kind == 1u {
+    let amount = select(uv.y, uv.x, procedural.axis == 0u);
+    return mix(procedural.color_a, procedural.color_b, amount);
+  }
 
-  let amount = select(uv.y, uv.x, procedural.axis == 0u);
-  return mix(procedural.color_a, procedural.color_b, amount);
+  if procedural.kind == 2u {
+    let d1 = sign_func(uv, procedural.p0, procedural.p1);
+    let d2 = sign_func(uv, procedural.p1, procedural.p2);
+    let d3 = sign_func(uv, procedural.p2, procedural.p0);
+
+    let has_neg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
+    let has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
+
+    if !(has_neg && has_pos) {
+        return procedural.color_a;
+    }
+    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+  }
+
+  return vec4<f32>(0.0, 0.0, 0.0, 1.0);
 }
 "#;
 
@@ -225,6 +252,10 @@ struct ProceduralUniform {
     _padding: [u32; 2],
     color_a: [f32; 4],
     color_b: [f32; 4],
+    p0: [f32; 2],
+    p1: [f32; 2],
+    p2: [f32; 2],
+    _pad_vertices: [f32; 2],
 }
 
 struct GpuLayer {
@@ -254,9 +285,8 @@ impl GpuLayer {
     fn source_is_cached(&self) -> bool {
         match &self.source {
             GpuLayerSource::Asset { .. } => true,
-            GpuLayerSource::Procedural(procedural) => {
-                procedural.is_static && procedural.has_rendered
-            }
+            GpuLayerSource::Procedural(gpu) => gpu.has_rendered,
+            GpuLayerSource::Text { .. } => true,
         }
     }
 }
@@ -264,6 +294,7 @@ impl GpuLayer {
 enum GpuLayerSource {
     Asset { _texture: wgpu::Texture },
     Procedural(ProceduralGpu),
+    Text { _texture: wgpu::Texture },
 }
 
 struct ProceduralGpu {
@@ -397,6 +428,7 @@ struct SoftwareLayer {
 enum SoftwareLayerSource {
     Asset { pixmap: Pixmap },
     Procedural(ProceduralSource),
+    Text { pixmap: Pixmap },
 }
 
 impl GpuRenderer {
@@ -633,6 +665,16 @@ impl GpuRenderer {
                     group_chain,
                     &blend_bind_group_layout,
                     &procedural_bind_group_layout,
+                    &sampler,
+                )?,
+                Layer::Text(text_layer) => build_text_layer(
+                    &device,
+                    &queue,
+                    width,
+                    height,
+                    text_layer,
+                    group_chain,
+                    &blend_bind_group_layout,
                     &sampler,
                 )?,
             };
@@ -897,11 +939,15 @@ impl SoftwareRenderer {
                 Layer::Procedural(procedural_layer) => {
                     SoftwareLayerSource::Procedural(procedural_layer.procedural.clone())
                 }
+                Layer::Text(text_layer) => SoftwareLayerSource::Text {
+                    pixmap: render_text_to_pixmap(text_layer)?,
+                },
             };
 
             let (layer_width, layer_height) = match &source {
                 SoftwareLayerSource::Asset { pixmap } => (pixmap.width(), pixmap.height()),
                 SoftwareLayerSource::Procedural(_) => (width, height),
+                SoftwareLayerSource::Text { pixmap } => (pixmap.width(), pixmap.height()),
             };
 
             software_layers.push(SoftwareLayer {
@@ -993,6 +1039,9 @@ impl SoftwareRenderer {
             SoftwareLayerSource::Procedural(source) => {
                 let procedural = render_procedural_pixmap(source, self.width, self.height)?;
                 draw_layer_pixmap(output, procedural.as_ref(), opacity, transform);
+            }
+            SoftwareLayerSource::Text { pixmap } => {
+                draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
             }
         }
 
@@ -1389,6 +1438,10 @@ fn procedural_uniform(source: &ProceduralSource) -> ProceduralUniform {
             _padding: [0; 2],
             color_a: color.as_array(),
             color_b: color.as_array(),
+            p0: [0.0; 2],
+            p1: [0.0; 2],
+            p2: [0.0; 2],
+            _pad_vertices: [0.0; 2],
         },
         ProceduralSource::Gradient {
             start_color,
@@ -1405,8 +1458,23 @@ fn procedural_uniform(source: &ProceduralSource) -> ProceduralUniform {
                 _padding: [0; 2],
                 color_a: start_color.as_array(),
                 color_b: end_color.as_array(),
+                p0: [0.0; 2],
+                p1: [0.0; 2],
+                p2: [0.0; 2],
+                _pad_vertices: [0.0; 2],
             }
         }
+        ProceduralSource::Triangle { p0, p1, p2, color } => ProceduralUniform {
+            kind: 2,
+            axis: 0,
+            _padding: [0; 2],
+            color_a: color.as_array(),
+            color_b: color.as_array(),
+            p0: [p0.x, p0.y],
+            p1: [p1.x, p1.y],
+            p2: [p2.x, p2.y],
+            _pad_vertices: [0.0; 2],
+        },
     }
 }
 
@@ -1842,6 +1910,20 @@ fn render_procedural_pixmap(source: &ProceduralSource, width: u32, height: u32) 
                 .ok_or_else(|| anyhow!("invalid procedural gradient bounds"))?;
             pixmap.fill_rect(rect, &paint, Transform::identity(), None);
         }
+        ProceduralSource::Triangle { p0, p1, p2, color } => {
+            let mut path = PathBuilder::new();
+            path.move_to(p0.x * width as f32, p0.y * height as f32);
+            path.line_to(p1.x * width as f32, p1.y * height as f32);
+            path.line_to(p2.x * width as f32, p2.y * height as f32);
+            path.close();
+
+            let path = path.finish().ok_or_else(|| anyhow!("failed to create triangle path"))?;
+            let mut paint = Paint::default();
+            paint.set_color(color_to_skia(*color));
+            paint.anti_alias = false;
+
+            pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        }
     }
 
     Ok(pixmap)
@@ -1884,6 +1966,198 @@ fn unpremultiply_rgba_in_place(bytes: &mut [u8]) {
         pixel[1] = ((pixel[1] as u16 * 255 + (alpha_u16 / 2)) / alpha_u16).min(255) as u8;
         pixel[2] = ((pixel[2] as u16 * 255 + (alpha_u16 / 2)) / alpha_u16).min(255) as u8;
     }
+}
+fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
+    let font_path = match layer.text.font_family.to_lowercase().as_str() {
+        "geistpixel-line" | "line" => "/Users/coltonbatts/Library/Fonts/GeistPixel-Line.ttf",
+        "geistpixel-square" | "square" => "/Users/coltonbatts/Library/Fonts/GeistPixel-Square.ttf",
+        "geistpixel-grid" | "grid" => "/Users/coltonbatts/Library/Fonts/GeistPixel-Grid.ttf",
+        "geistpixel-circle" | "circle" => "/Users/coltonbatts/Library/Fonts/GeistPixel-Circle.ttf",
+        "geistpixel-triangle" | "triangle" => "/Users/coltonbatts/Library/Fonts/GeistPixel-Triangle.ttf",
+        _ => "/Users/coltonbatts/Library/Fonts/GeistPixel-Line.ttf",
+    };
+
+    let font_data = std::fs::read(font_path)
+        .with_context(|| format!("failed to read font file {}", font_path))?;
+    let font = fontdue::Font::from_bytes(font_data, fontdue::FontSettings::default())
+        .map_err(|e| anyhow!("failed to parse font: {}", e))?;
+
+    let mut layout = fontdue::layout::Layout::new(fontdue::layout::CoordinateSystem::PositiveYDown);
+    layout.reset(&fontdue::layout::LayoutSettings {
+        x: 0.0,
+        y: 0.0,
+        max_width: None,
+        max_height: None,
+        horizontal_align: fontdue::layout::HorizontalAlign::Left,
+        vertical_align: fontdue::layout::VerticalAlign::Top,
+        line_height: 1.0,
+        wrap_style: fontdue::layout::WrapStyle::Letter,
+        wrap_hard_breaks: true,
+    });
+
+    layout.append(&[&font], &fontdue::layout::TextStyle::new(&layer.text.content, layer.text.font_size, 0));
+
+    let glyphs = layout.glyphs();
+    if glyphs.is_empty() {
+        return Ok(Pixmap::new(1, 1).unwrap());
+    }
+
+    let mut min_x = f32::MAX;
+    let mut min_y = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut max_y = f32::MIN;
+
+    for glyph in glyphs {
+        min_x = min_x.min(glyph.x);
+        min_y = min_y.min(glyph.y);
+        max_x = max_x.max(glyph.x + glyph.width as f32);
+        max_y = max_y.max(glyph.y + glyph.height as f32);
+    }
+
+    let width = (max_x - min_x).ceil() as u32;
+    let height = (max_y - min_y).ceil() as u32;
+
+    let mut pixmap = Pixmap::new(width.max(1), height.max(1))
+        .ok_or_else(|| anyhow!("failed to allocate pixmap for text render"))?;
+    pixmap.fill(Color::TRANSPARENT);
+
+    let color = layer.text.color;
+    let r = f32_to_channel(color.r);
+    let g = f32_to_channel(color.g);
+    let b = f32_to_channel(color.b);
+    let a_base = color.a;
+
+    for glyph in glyphs {
+        if glyph.width == 0 || glyph.height == 0 {
+            continue;
+        }
+        let (_, bitmap) = font.rasterize_config(glyph.key);
+        for row in 0..glyph.height {
+            for col in 0..glyph.width {
+                let alpha_mask = bitmap[row * glyph.width + col] as f32 / 255.0;
+                let alpha = (a_base * alpha_mask * 255.0).round() as u8;
+                if alpha == 0 { continue; }
+                
+                let x = (glyph.x - min_x) as u32 + col as u32;
+                let y = (glyph.y - min_y) as u32 + row as u32;
+                
+                if x < width && y < height {
+                    let index = (y * width + x) as usize;
+                    if let Some(pixel) = pixmap.pixels_mut().get_mut(index) {
+                        let pr = ((r as u16 * alpha as u16 + 127) / 255) as u8;
+                        let pg = ((g as u16 * alpha as u16 + 127) / 255) as u8;
+                        let pb = ((b as u16 * alpha as u16 + 127) / 255) as u8;
+
+                        // Simple alpha blend (over)
+                        let dst_a = pixel.alpha() as f32 / 255.0;
+                        let src_a = alpha as f32 / 255.0;
+                        let out_a = src_a + dst_a * (1.0 - src_a);
+                        
+                        if out_a > 0.0 {
+                            let out_r = (pr as f32 + pixel.red() as f32 * (1.0 - src_a)).min(255.0);
+                            let out_g = (pg as f32 + pixel.green() as f32 * (1.0 - src_a)).min(255.0);
+                            let out_b = (pb as f32 + pixel.blue() as f32 * (1.0 - src_a)).min(255.0);
+                            *pixel = tiny_skia::PremultipliedColorU8::from_rgba(
+                                out_r as u8,
+                                out_g as u8,
+                                out_b as u8,
+                                (out_a * 255.0).round() as u8,
+                            ).expect("premultiplied color should be valid");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(pixmap)
+}
+
+fn build_text_layer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame_width: u32,
+    frame_height: u32,
+    layer: &TextLayer,
+    group_chain: Vec<Group>,
+    blend_bind_group_layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+) -> Result<GpuLayer> {
+    let pixmap = render_text_to_pixmap(layer)?;
+    let (layer_width, layer_height) = (pixmap.width(), pixmap.height());
+
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(&format!("vcr-text-layer-{}", layer.common.id)),
+        size: wgpu::Extent3d {
+            width: layer_width,
+            height: layer_height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        pixmap.data(),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(layer_width * 4),
+            rows_per_image: Some(layer_height),
+        },
+        wgpu::Extent3d {
+            width: layer_width,
+            height: layer_height,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let draw_resources = build_layer_draw_resources(
+        device,
+        queue,
+        frame_width,
+        frame_height,
+        &layer.common,
+        layer_width,
+        layer_height,
+        &texture_view,
+        blend_bind_group_layout,
+        sampler,
+    )?;
+
+    Ok(GpuLayer {
+        id: layer.common.id.clone(),
+        z_index: layer.common.z_index,
+        width: layer_width,
+        height: layer_height,
+        position: layer.common.position.clone(),
+        position_x: layer.common.pos_x.clone(),
+        position_y: layer.common.pos_y.clone(),
+        scale: layer.common.scale.clone(),
+        rotation_degrees: layer.common.rotation_degrees.clone(),
+        opacity: layer.common.opacity.clone(),
+        timing: layer.common.timing_controls(),
+        modulators: layer.common.modulators.clone(),
+        all_properties_static: layer.common.has_static_properties()
+            && group_chain.iter().all(Group::has_static_properties),
+        group_chain,
+        uniform_buffer: draw_resources.uniform_buffer,
+        blend_bind_group: draw_resources.blend_bind_group,
+        vertex_buffer: draw_resources.vertex_buffer,
+        last_vertices: Some(draw_resources.initial_vertices),
+        last_opacity: Some(draw_resources.initial_opacity),
+        source: GpuLayerSource::Text { _texture: texture },
+    })
 }
 
 #[cfg(test)]

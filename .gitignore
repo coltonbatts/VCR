@@ -1,4 +1,6 @@
 /target
 .DS_Store
-
-test.mov
+/exports
+*.mov
+*.png
+!assets/*.png

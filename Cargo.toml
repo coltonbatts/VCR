@@ -20,3 +20,4 @@ tokio = { version = "1", features = ["full"] }
 tiny-skia = "0.11"
 url = "2.5"
 wgpu = { version = "0.20", default-features = false, features = ["metal", "wgsl"] }
+fontdue = "0.9"

@@ -83,6 +83,7 @@ fn validate_manifest(manifest: &mut Manifest, manifest_path: &Path) -> Result<()
                 image_layer.image.path = resolved;
             }
             Layer::Procedural(_) => {}
+            Layer::Text(_) => {}
         }
     }
 
