@@ -399,6 +399,14 @@ impl Group {
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Anchor {
+    #[default]
+    TopLeft,
+    Center,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LayerCommon {
@@ -433,6 +441,8 @@ pub struct LayerCommon {
     pub time_scale: f32,
     #[serde(default)]
     pub modulators: Vec<ModulatorBinding>,
+    #[serde(default)]
+    pub anchor: Anchor,
 }
 
 impl LayerCommon {
@@ -679,6 +689,11 @@ pub enum ProceduralSource {
         p2: Vec2,
         color: ColorRgba,
     },
+    Circle {
+        center: Vec2,
+        radius: f32,
+        color: ColorRgba,
+    },
 }
 
 impl ProceduralSource {
@@ -694,6 +709,7 @@ impl ProceduralSource {
                 end_color.validate("end_color")
             }
             Self::Triangle { color, .. } => color.validate("color"),
+            Self::Circle { color, .. } => color.validate("color"),
         }
     }
 }

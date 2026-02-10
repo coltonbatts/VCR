@@ -13,7 +13,7 @@ use tiny_skia::{
 use wgpu::util::DeviceExt;
 
 use crate::schema::{
-    AssetLayer, ColorRgba, Environment, ExpressionContext, GradientDirection, Group, Layer,
+    Anchor, AssetLayer, ColorRgba, Environment, ExpressionContext, GradientDirection, Group, Layer,
     ImageLayer, LayerCommon, Manifest, ModulatorBinding, ModulatorMap, Parameters,
     ProceduralLayer,
     ProceduralSource, PropertyValue, ScalarProperty, TextLayer, TimingControls, Vec2,
@@ -66,7 +66,9 @@ struct ProceduralUniform {
   p0: vec2<f32>,
   p1: vec2<f32>,
   p2: vec2<f32>,
-  _pad1: vec2<f32>,
+  radius: f32,
+  _pad1: f32,
+  _pad2: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> procedural: ProceduralUniform;
@@ -117,11 +119,20 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
 
     if !(has_neg && has_pos) {
+       // Outside the triangle, return transparent
+    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+  }
+  }
+
+  if (procedural.kind == 3u) { // Circle
+    let dist = distance(uv, procedural.p0);
+    if (dist < procedural.radius) {
         return procedural.color_a;
     }
     return vec4<f32>(0.0, 0.0, 0.0, 0.0);
   }
 
+  // Default fallback
   return vec4<f32>(0.0, 0.0, 0.0, 1.0);
 }
 "#;
@@ -252,10 +263,11 @@ struct ProceduralUniform {
     _padding: [u32; 2],
     color_a: [f32; 4],
     color_b: [f32; 4],
-    p0: [f32; 2],
+    p0: [f32; 2], // center for Circle
     p1: [f32; 2],
     p2: [f32; 2],
-    _pad_vertices: [f32; 2],
+    radius: f32,
+    _pad_radius: [f32; 5],
 }
 
 struct GpuLayer {
@@ -278,6 +290,7 @@ struct GpuLayer {
     vertex_buffer: wgpu::Buffer,
     last_vertices: Option<[Vertex; 6]>,
     last_opacity: Option<f32>,
+    anchor: Anchor,
     source: GpuLayerSource,
 }
 
@@ -422,6 +435,7 @@ struct SoftwareLayer {
     timing: TimingControls,
     modulators: Vec<ModulatorBinding>,
     group_chain: Vec<Group>,
+    anchor: Anchor,
     source: SoftwareLayerSource,
 }
 
@@ -964,6 +978,7 @@ impl SoftwareRenderer {
                 timing: common.timing_controls(),
                 modulators: common.modulators.clone(),
                 group_chain,
+                anchor: common.anchor,
                 source,
             });
         }
@@ -1030,6 +1045,7 @@ impl SoftwareRenderer {
             state.rotation_degrees,
             layer.width as f32,
             layer.height as f32,
+            layer.anchor,
         );
 
         match &layer.source {
@@ -1179,7 +1195,7 @@ fn build_bitmap_layer(
         modulators: common.modulators.clone(),
         all_properties_static: common.has_static_properties()
             && group_chain.iter().all(Group::has_static_properties),
-        group_chain,
+        group_chain, anchor: common.anchor,
         uniform_buffer: draw_resources.uniform_buffer,
         blend_bind_group: draw_resources.blend_bind_group,
         vertex_buffer: draw_resources.vertex_buffer,
@@ -1271,7 +1287,7 @@ fn build_procedural_layer(
         modulators: layer.common.modulators.clone(),
         all_properties_static: layer.common.has_static_properties()
             && group_chain.iter().all(Group::has_static_properties),
-        group_chain,
+        group_chain, anchor: layer.common.anchor,
         uniform_buffer: draw_resources.uniform_buffer,
         blend_bind_group: draw_resources.blend_bind_group,
         vertex_buffer: draw_resources.vertex_buffer,
@@ -1346,6 +1362,7 @@ fn build_layer_draw_resources(
         Vec2 { x: 0.0, y: 0.0 },
         Vec2 { x: 1.0, y: 1.0 },
         0.0,
+        common.anchor,
     );
     queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&initial_vertices));
 
@@ -1416,6 +1433,7 @@ fn refresh_layer_draw_state(
         state.position,
         state.scale,
         state.rotation_degrees,
+        layer.anchor,
     );
 
     if layer
@@ -1441,7 +1459,8 @@ fn procedural_uniform(source: &ProceduralSource) -> ProceduralUniform {
             p0: [0.0; 2],
             p1: [0.0; 2],
             p2: [0.0; 2],
-            _pad_vertices: [0.0; 2],
+            radius: 0.0,
+            _pad_radius: [0.0; 5],
         },
         ProceduralSource::Gradient {
             start_color,
@@ -1461,7 +1480,8 @@ fn procedural_uniform(source: &ProceduralSource) -> ProceduralUniform {
                 p0: [0.0; 2],
                 p1: [0.0; 2],
                 p2: [0.0; 2],
-                _pad_vertices: [0.0; 2],
+                radius: 0.0,
+                _pad_radius: [0.0; 5],
             }
         }
         ProceduralSource::Triangle { p0, p1, p2, color } => ProceduralUniform {
@@ -1473,7 +1493,20 @@ fn procedural_uniform(source: &ProceduralSource) -> ProceduralUniform {
             p0: [p0.x, p0.y],
             p1: [p1.x, p1.y],
             p2: [p2.x, p2.y],
-            _pad_vertices: [0.0; 2],
+            radius: 0.0,
+            _pad_radius: [0.0; 5],
+        },
+        ProceduralSource::Circle { center, radius, color } => ProceduralUniform {
+            kind: 3,
+            axis: 0,
+            _padding: [0; 2],
+            color_a: color.as_array(),
+            color_b: color.as_array(),
+            p0: [center.x, center.y],
+            p1: [0.0; 2],
+            p2: [0.0; 2],
+            radius: *radius,
+            _pad_radius: [0.0; 5],
         },
     }
 }
@@ -1698,14 +1731,18 @@ fn build_layer_quad(
     position: Vec2,
     scale: Vec2,
     rotation_degrees: f32,
+    anchor: Anchor,
 ) -> [Vertex; 6] {
     let scaled_width = layer_width as f32 * scale.x.max(0.0);
     let scaled_height = layer_height as f32 * scale.y.max(0.0);
 
-    let center_x = position.x + (scaled_width * 0.5);
-    let center_y = position.y + (scaled_height * 0.5);
     let half_w = scaled_width * 0.5;
     let half_h = scaled_height * 0.5;
+
+    let (center_x, center_y) = match anchor {
+        Anchor::TopLeft => (position.x + half_w, position.y + half_h),
+        Anchor::Center => (position.x, position.y),
+    };
 
     let radians = rotation_degrees.to_radians();
     let sin_theta = radians.sin();
@@ -1848,6 +1885,7 @@ fn layer_transform(
     rotation_degrees: f32,
     width: f32,
     height: f32,
+    anchor: Anchor,
 ) -> Transform {
     let scale_x = scale.x.max(0.0);
     let scale_y = scale.y.max(0.0);
@@ -1862,18 +1900,21 @@ fn layer_transform(
 
     let half_w = width * 0.5;
     let half_h = height * 0.5;
-    let center_world_x = position.x + (width * scale_x * 0.5);
-    let center_world_y = position.y + (height * scale_y * 0.5);
 
-    let tx = center_world_x - (a * half_w + c * half_h);
-    let ty = center_world_y - (b * half_w + d * half_h);
+    let (center_x, center_y) = match anchor {
+        Anchor::TopLeft => (position.x + half_w * scale_x, position.y + half_h * scale_y),
+        Anchor::Center => (position.x, position.y),
+    };
+
+    let tx = center_x - (a * half_w + c * half_h);
+    let ty = center_y - (b * half_w + d * half_h);
 
     Transform::from_row(a, b, c, d, tx, ty)
 }
 
 fn render_procedural_pixmap(source: &ProceduralSource, width: u32, height: u32) -> Result<Pixmap> {
-    let mut pixmap = Pixmap::new(width, height)
-        .ok_or_else(|| anyhow!("failed to allocate procedural software pixmap"))?;
+    let mut pixmap = Pixmap::new(width, height).unwrap();
+    pixmap.fill(Color::TRANSPARENT);
 
     match source {
         ProceduralSource::SolidColor { color } => {
@@ -1884,15 +1925,12 @@ fn render_procedural_pixmap(source: &ProceduralSource, width: u32, height: u32) 
             end_color,
             direction,
         } => {
+            let mut paint = Paint::default();
             let (start, end) = match direction {
-                GradientDirection::Horizontal => {
-                    (Point::from_xy(0.0, 0.0), Point::from_xy(width as f32, 0.0))
-                }
-                GradientDirection::Vertical => {
-                    (Point::from_xy(0.0, 0.0), Point::from_xy(0.0, height as f32))
-                }
+                GradientDirection::Horizontal => (Point::from_xy(0.0, 0.0), Point::from_xy(width as f32, 0.0)),
+                GradientDirection::Vertical => (Point::from_xy(0.0, 0.0), Point::from_xy(0.0, height as f32)),
             };
-            let shader = LinearGradient::new(
+            paint.shader = LinearGradient::new(
                 start,
                 end,
                 vec![
@@ -1902,13 +1940,13 @@ fn render_procedural_pixmap(source: &ProceduralSource, width: u32, height: u32) 
                 SpreadMode::Pad,
                 Transform::identity(),
             )
-            .ok_or_else(|| anyhow!("failed to create procedural gradient shader"))?;
-
-            let mut paint = Paint::default();
-            paint.shader = shader;
-            let rect = Rect::from_xywh(0.0, 0.0, width as f32, height as f32)
-                .ok_or_else(|| anyhow!("invalid procedural gradient bounds"))?;
-            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+            .ok_or_else(|| anyhow!("failed to create gradient"))?;
+            pixmap.fill_rect(
+                Rect::from_xywh(0.0, 0.0, width as f32, height as f32).unwrap(),
+                &paint,
+                Transform::identity(),
+                None,
+            );
         }
         ProceduralSource::Triangle { p0, p1, p2, color } => {
             let mut path = PathBuilder::new();
@@ -1918,6 +1956,17 @@ fn render_procedural_pixmap(source: &ProceduralSource, width: u32, height: u32) 
             path.close();
 
             let path = path.finish().ok_or_else(|| anyhow!("failed to create triangle path"))?;
+            let mut paint = Paint::default();
+            paint.set_color(color_to_skia(*color));
+            paint.anti_alias = false;
+
+            pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+        ProceduralSource::Circle { center, radius, color } => {
+            let mut path = PathBuilder::new();
+            path.push_circle(center.x * width as f32, center.y * height as f32, radius * width as f32);
+            
+            let path = path.finish().ok_or_else(|| anyhow!("failed to create circle path"))?;
             let mut paint = Paint::default();
             paint.set_color(color_to_skia(*color));
             paint.anti_alias = false;
@@ -2150,7 +2199,7 @@ fn build_text_layer(
         modulators: layer.common.modulators.clone(),
         all_properties_static: layer.common.has_static_properties()
             && group_chain.iter().all(Group::has_static_properties),
-        group_chain,
+        group_chain, anchor: layer.common.anchor,
         uniform_buffer: draw_resources.uniform_buffer,
         blend_bind_group: draw_resources.blend_bind_group,
         vertex_buffer: draw_resources.vertex_buffer,

@@ -3,7 +3,7 @@ seed: 42
 environment:
   resolution: { width: 1920, height: 1080 }
   fps: 24
-  duration: 3.0
+  duration: 4.0
 
 layers:
   - id: background
@@ -12,30 +12,33 @@ layers:
       color: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
 
   - id: title
-    pos_x: 360
-    pos_y: 450
-    opacity: "0.9 + glitch(t, 2.0) * 0.1"
+    anchor: center
+    pos_x: 960
+    pos_y: 540
+    opacity: "0.8 + 0.2 * tri(t, 2)"
     text:
-      content: "SANITY CHECK"
+      content: "THANK YOU FOR USING VCR"
       font_family: "GeistPixel-Square"
-      font_size: 200
+      font_size: 140
       color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
 
-  - id: subtitle
-    pos_x: 380
-    pos_y: 620
-    opacity: "step(0.5, t) * (0.6 + 0.4 * saw(t, 2))"
+  - id: smiley_face
+    anchor: center
+    pos_x: 960
+    pos_y: 720
     text:
-      content: "RENDERED FROM TERMINAL IN MILLISECONDS."
-      font_family: "GeistPixel-Line"
-      font_size: 64
-      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+      content: ":)"
+      font_family: "GeistPixel-Square"
+      font_size: 100
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.8 }
 
-  - id: accent_line
-    pos_y: "680 + glitch(t, 1.0) * 5"
-    pos_x: 0
-    opacity: 0.3
+  - id: decorative_circle
+    anchor: center
+    pos_x: "960 + 400 * cos(t * 2)"
+    pos_y: "540 + 200 * sin(t * 2.5)"
+    opacity: 0.2
     procedural:
-      kind: solid_color
+      kind: circle
+      center: { x: 0.5, y: 0.5 }
+      radius: 0.05
       color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
-    scale: [1.0, 0.002]
