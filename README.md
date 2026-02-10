@@ -1,103 +1,155 @@
 # VCR (Video Component Renderer)
 
-VCR is a headless, local-first motion graphics renderer.
-It compiles declarative scene manifests (`.vcr`) into frames or video using a GPU-first pipeline (`wgpu`) with automatic CPU fallback (`tiny-skia`).
+A headless motion graphics renderer that compiles declarative YAML scenes into broadcast-quality ProRes 4444 video with alpha transparency.
+Built in Rust, GPU-accelerated on Apple Silicon, and designed to render in seconds.
 
-Repository: [https://github.com/coltonbatts/VCR](https://github.com/coltonbatts/VCR)
+**Perfect for:** motion graphics overlays, animated lower thirds, branded graphics, procedural backgrounds, and repeatable graphics pipelines you would normally build in After Effects but want to control in code.
 
-## Features
+## Why VCR?
 
-- YAML scene manifests with stable IDs and readable animation data.
-- GPU-first rendering with deterministic CPU fallback.
-- Procedural layers (`solid_color`, `gradient`) and asset layers.
-- Expression-driven animation (`t`, params, easing/math helpers, deterministic `noise1d`, `env`).
-- Global `params`, reusable `modulators`, and inheritable `groups`.
-- Timing controls per layer/group: `start_time`, `end_time`, `time_offset`, `time_scale`.
-- Fast iteration workflows:
-  - `preview` (scaled, short, frame-window)
-  - `render-frame` (single PNG)
-  - `render-frames` (PNG sequence)
-  - `watch` (rebuild on manifest change)
-- Diagnostics:
-  - `check` for structural validation
-  - `lint` for common scene issues
-  - `dump` for resolved scene state at a frame/time
+After Effects is powerful, but it is hard to automate, hard to version cleanly, and too slow for tight iteration loops. Remotion is great for web-style video generation, but post workflows often need NLE-ready ProRes 4444 with real alpha.
+
+VCR is built for that gap: declarative manifests you can version, deterministic output (same input, same frames), and GPU-accelerated rendering that is fast enough for creative iteration. Write a manifest, render in seconds, and drop the `.mov` straight into Premiere, Resolve, or any NLE that supports alpha.
+
+VCR is not a replacement for a full motion design GUI. It is best when you want reproducibility, speed, and automation.
+
+## Feature Highlights
+
+- YAML scene manifests (`.vcr`) that are human-readable and version-controllable.
+- Metal-backed GPU rendering on Apple Silicon, with CPU fallback.
+- Deterministic rendering: same input produces the same output.
+- Expression-driven animation: `sin`, `cos`, `clamp`, `lerp`, `smoothstep`, `easeInOut`, `noise1d`, `env`.
+- Layered compositing with z-order, transforms, and alpha blending.
+- Procedural layers (`solid_color`, `gradient`) plus image assets.
+- ProRes 4444 output with transparent alpha channel.
+- CLI-first workflow: no GUI dependency, no Electron overhead.
+
+## Quick Example (Welcome to First Principles)
+
+`examples/welcome_terminal_scene.vcr` renders the lower third shown below.
+
+![Welcome to First Principles lower third render](assets/welcome_terminal_scene.gif)
+
+```yaml
+# Terminal box lower third that flashes in, reveals text, then fades out
+version: 1
+environment:
+  resolution:
+    width: 2560
+    height: 1440
+  fps: 24
+  duration:
+    frames: 120
+
+params:
+  box_flash_speed: 1.0
+  text_fade_delay: 20
+  text_fade_speed: 1.0
+  fade_out_start: 100
+
+layers:
+  - id: terminal_box
+    z_index: 1
+    pos_x: 180
+    pos_y: 360
+    opacity: "lerp((sin(t * box_flash_speed / 2) * 0.5 + 0.5), 1.0, smoothstep(10, 11, t)) * (1.0 - smoothstep(fade_out_start, fade_out_start + 20, t))"
+    image:
+      path: "../assets/terminal_box.png"
+
+  - id: welcome_text
+    z_index: 2
+    pos_x: 320
+    pos_y: 648
+    scale: [0.8, 0.8]
+    opacity: "smoothstep(text_fade_delay, text_fade_delay + 20 / text_fade_speed, t) * (1.0 - smoothstep(fade_out_start, fade_out_start + 20, t))"
+    image:
+      path: "../assets/welcome_text_geist_pixel.png"
+```
+
+**Output:** clean ProRes 4444 with alpha, ready to drop into an edit timeline.
+
+## Getting Started (Golden Path)
+
+```bash
+# Install Rust (if needed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Clone the repo
+git clone https://github.com/coltonbatts/VCR.git
+cd VCR
+
+# Build (optimized)
+cargo build --release
+
+# Validate a manifest
+cargo run --release -- check examples/welcome_terminal_scene.vcr
+
+# Preview frames (fast, FFmpeg-free)
+cargo run --release -- preview examples/welcome_terminal_scene.vcr --image-sequence -o ./preview_frames
+
+# Render to ProRes 4444 + alpha
+cargo run --release -- build examples/welcome_terminal_scene.vcr -o output.mov
+
+# Drop output.mov into Premiere/Resolve/any NLE with alpha support
+```
 
 ## Requirements
 
-- Rust stable toolchain
-- FFmpeg on `PATH` for `.mov` output (`build` and default `preview` output)
+- Rust (stable)
+- FFmpeg (required for `.mov`/ProRes encoding)
+- macOS recommended for Apple Silicon Metal acceleration
+- Linux/Windows may work, but are not officially tested in this repo
 
-If FFmpeg is missing, VCR fails with a helpful error message. Use image sequence output (`--image-sequence`) when FFmpeg is unavailable.
+## CLI Commands (Quick Reference)
 
-## Build
+- `check <manifest>`: validate and summarize a manifest
+- `lint <manifest>`: report common scene issues
+- `dump <manifest> --frame N`: print resolved state at frame `N`
+- `preview <manifest>`: render preview frames quickly (`--image-sequence` avoids FFmpeg)
+- `render-frame <manifest> --frame N -o frame.png`: render one frame
+- `render-frames <manifest> --start-frame N --frames X -o frames_dir`: render a frame range
+- `build <manifest> -o output.mov`: full ProRes 4444 render
+- `watch <manifest>`: hot-reload preview on manifest changes
 
-```bash
-cargo build
-```
+Run `cargo run --release -- --help` for full CLI options.
 
-## Golden Path
+## Manifest Format (High-Level)
 
-1. Validate your manifest:
+A `.vcr` file is structured around:
 
-```bash
-cargo run -- check sanity_check.vcr
-```
+- `environment`: resolution, fps, duration
+- `params`: global scalar controls
+- `modulators`: reusable animation drivers
+- `layers`: actual render content
 
-2. Run a fast preview (half-res, short duration):
+See [examples/](examples/) for complete, working manifests.
 
-```bash
-cargo run -- preview sanity_check.vcr --image-sequence -o preview_frames
-```
+## Performance Notes
 
-3. Iterate while editing:
+Measured on M1 Max using the repo demo scene (`2560x1440`, 5 seconds):
 
-```bash
-cargo run -- watch sanity_check.vcr --image-sequence -o preview_frames
-```
+- GPU (Metal): total pipeline about `1.39s`, wall time about `2.51s`
+- CPU fallback: total pipeline about `12.57s`, wall time about `13.06s`
+- Deterministic output: same input, same render
+- Memory profile stays comfortably below 64GB on this workload
 
-4. Build final video:
+## Roadmap
 
-```bash
-cargo run -- build sanity_check.vcr -o output.mov
-```
+- Native text rendering (today: pre-render text assets to PNG)
+- Video layer support for compositing footage
+- Blend modes and additional effects
+- More production examples and docs
 
-## CLI
+## License
 
-```bash
-cargo run -- --help
-```
+MIT
 
-Commands:
+## About
 
-- `check <manifest>`: validate and summarize the manifest.
-- `lint <manifest>`: flag common scene issues.
-- `dump <manifest> [--frame N | --time SECONDS]`: print resolved layer state.
-- `build <manifest> -o <output.mov> [--start-frame N] [--frames N | --end-frame N]`.
-- `preview <manifest> [--scale 0.5] [--frames N] [--image-sequence]`.
-- `render-frame <manifest> --frame N -o frame.png`.
-- `render-frames <manifest> --start-frame N --frames N -o frames_dir`.
-- `watch <manifest> [preview flags]`: rebuild preview when the manifest changes.
+Built by Colton Batts ([@coltonbatts](https://github.com/coltonbatts)), a creative technologist in Fort Worth, TX.
+VCR is part of a larger effort to help creatives adopt technical tools without losing their artistic voice.
 
-Every render path prints timing breakdowns: parse, layout, render, encode.
+More:
 
-## Manifest Notes
-
-- Existing manifests remain valid (defaults are additive).
-- New steerability blocks:
-  - `params`: named global scalar controls.
-  - `modulators`: reusable expression sources.
-  - `groups`: transform/timing inheritance.
-- Expressions support:
-  - `clamp`, `lerp`, `smoothstep`, `easeInOut`
-  - `sin`, `cos`, `abs`
-  - deterministic `noise1d`
-  - envelope helper `env`
-
-See `STEERABILITY.md` and the examples under `examples/`.
-
-## Included Examples
-
-- `examples/global_params_scene.vcr`
-- `examples/envelope_scene.vcr`
-- `examples/group_wobble_scene.vcr`
+- [coltonbatts.com](https://coltonbatts.com)
+- [First Principles](https://youtube.com/@firstprinciples)

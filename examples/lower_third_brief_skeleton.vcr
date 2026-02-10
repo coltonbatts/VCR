@@ -1,0 +1,34 @@
+version: 1
+environment:
+  resolution:
+    width: 2560
+    height: 1440
+  fps: 24
+  duration:
+    frames: 120
+
+params:
+  entrance_delay: 0
+  text_speed: 1.0
+  drop_distance: 560
+
+layers:
+  - id: lower_third_text
+    z_index: 2
+    # Replace with your generated text PNG asset.
+    image:
+      path: "../assets/vcr_text.png"
+    pos_x: "-1200 + smoothstep(8 + entrance_delay, 56 + entrance_delay, t * text_speed) * 1400"
+    pos_y: "420 + smoothstep(20 + entrance_delay, 76 + entrance_delay, t) * drop_distance"
+    opacity: "smoothstep(8, 28, t) * (1.0 - smoothstep(108, 120, t))"
+
+  - id: accent_bar
+    z_index: 1
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.85 }
+    # Procedural source is full-frame; scale compresses it into a thin bar.
+    scale: [0.22, 0.003]
+    pos_x: "-1080 + smoothstep(8 + entrance_delay, 56 + entrance_delay, t * text_speed) * 1400"
+    pos_y: "980 + smoothstep(20 + entrance_delay, 76 + entrance_delay, t) * drop_distance"
+    opacity: "smoothstep(12, 36, t) * (1.0 - smoothstep(108, 120, t))"

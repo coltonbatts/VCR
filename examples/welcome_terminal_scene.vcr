@@ -1,0 +1,32 @@
+version: 1
+environment:
+  resolution:
+    width: 2560
+    height: 1440
+  fps: 24
+  duration:
+    frames: 120
+
+params:
+  box_flash_speed: 1.0
+  text_fade_delay: 20
+  text_fade_speed: 1.0
+  fade_out_start: 100
+
+layers:
+  - id: terminal_box
+    z_index: 1
+    pos_x: 180
+    pos_y: 360
+    opacity: "lerp((sin(t * box_flash_speed / 2) * 0.5 + 0.5), 1.0, smoothstep(10, 11, t)) * (1.0 - smoothstep(fade_out_start, fade_out_start + 20, t))"
+    image:
+      path: "../assets/terminal_box.png"
+
+  - id: welcome_text
+    z_index: 2
+    pos_x: 320
+    pos_y: 648
+    scale: [0.8, 0.8]
+    opacity: "smoothstep(text_fade_delay, text_fade_delay + 20 / text_fade_speed, t) * (1.0 - smoothstep(fade_out_start, fade_out_start + 20, t))"
+    image:
+      path: "../assets/welcome_text_geist_pixel.png"

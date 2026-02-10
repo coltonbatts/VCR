@@ -1,0 +1,17 @@
+version: 1
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 24
+  duration:
+    frames: 120
+
+layers:
+  - id: vcr_alpha_test
+    z_index: 1
+    pos_x: 110
+    pos_y: 280
+    opacity: "smoothstep(0, 36, t) * (1.0 - smoothstep(84, 120, t))"
+    image:
+      path: "../assets/vcr_text.png"

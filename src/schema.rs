@@ -516,6 +516,7 @@ impl LayerCommon {
 #[serde(untagged)]
 pub enum Layer {
     Asset(AssetLayer),
+    Image(ImageLayer),
     Procedural(ProceduralLayer),
 }
 
@@ -531,6 +532,7 @@ impl Layer {
     pub fn common(&self) -> &LayerCommon {
         match self {
             Self::Asset(layer) => &layer.common,
+            Self::Image(layer) => &layer.common,
             Self::Procedural(layer) => &layer.common,
         }
     }
@@ -545,6 +547,7 @@ impl Layer {
             .validate_with_context(params, seed, modulators)?;
         match self {
             Self::Asset(layer) => layer.validate(),
+            Self::Image(layer) => layer.validate(),
             Self::Procedural(layer) => layer.validate(),
         }
     }
@@ -560,8 +563,34 @@ pub struct AssetLayer {
 
 impl AssetLayer {
     fn validate(&self) -> Result<()> {
+        if self.source_path.as_os_str().is_empty() {
+            bail!("layer '{}' source_path cannot be empty", self.common.id);
+        }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageLayer {
+    #[serde(flatten)]
+    pub common: LayerCommon,
+    pub image: ImageSource,
+}
+
+impl ImageLayer {
+    fn validate(&self) -> Result<()> {
+        if self.image.path.as_os_str().is_empty() {
+            bail!("layer '{}' image.path cannot be empty", self.common.id);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageSource {
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1416,8 +1445,8 @@ fn validate_number(label: &str, value: f32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_manifest_version, validate_manifest_manifest_level, ExpressionContext, Manifest,
-        ScalarExpression, ScalarProperty,
+        default_manifest_version, validate_manifest_manifest_level, ExpressionContext, Layer,
+        Manifest, ScalarExpression, ScalarProperty,
     };
 
     fn parse_expression(source: &str) -> ScalarExpression {
@@ -1520,5 +1549,44 @@ layers:
             .evaluate_with_context(&ExpressionContext::new(0.0, &params, 0))
             .expect("property should evaluate");
         assert!((value - 2.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn manifest_parses_image_layer_shape() {
+        let manifest = serde_yaml::from_str::<Manifest>(
+            r#"
+version: 1
+environment:
+  resolution: { width: 320, height: 180 }
+  fps: 24
+  duration: { frames: 12 }
+layers:
+  - id: title
+    image:
+      path: "assets/title.png"
+"#,
+        )
+        .expect("manifest should parse");
+
+        assert!(matches!(manifest.layers.first(), Some(Layer::Image(_))));
+    }
+
+    #[test]
+    fn manifest_parses_legacy_source_path_layer_shape() {
+        let manifest = serde_yaml::from_str::<Manifest>(
+            r#"
+version: 1
+environment:
+  resolution: { width: 320, height: 180 }
+  fps: 24
+  duration: { frames: 12 }
+layers:
+  - id: title
+    source_path: "assets/title.png"
+"#,
+        )
+        .expect("manifest should parse");
+
+        assert!(matches!(manifest.layers.first(), Some(Layer::Asset(_))));
     }
 }

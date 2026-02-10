@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
+use std::path::Path;
 use std::sync::mpsc;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -13,7 +14,8 @@ use wgpu::util::DeviceExt;
 
 use crate::schema::{
     AssetLayer, ColorRgba, Environment, ExpressionContext, GradientDirection, Group, Layer,
-    LayerCommon, Manifest, ModulatorBinding, ModulatorMap, Parameters, ProceduralLayer,
+    ImageLayer, LayerCommon, Manifest, ModulatorBinding, ModulatorMap, Parameters,
+    ProceduralLayer,
     ProceduralSource, PropertyValue, ScalarProperty, TimingControls, Vec2,
 };
 
@@ -612,6 +614,16 @@ impl GpuRenderer {
                     &blend_bind_group_layout,
                     &sampler,
                 )?,
+                Layer::Image(image_layer) => build_image_layer(
+                    &device,
+                    &queue,
+                    width,
+                    height,
+                    image_layer,
+                    group_chain.clone(),
+                    &blend_bind_group_layout,
+                    &sampler,
+                )?,
                 Layer::Procedural(procedural_layer) => build_procedural_layer(
                     &device,
                     &queue,
@@ -879,6 +891,9 @@ impl SoftwareRenderer {
                 Layer::Asset(asset_layer) => SoftwareLayerSource::Asset {
                     pixmap: load_asset_pixmap(asset_layer)?,
                 },
+                Layer::Image(image_layer) => SoftwareLayerSource::Asset {
+                    pixmap: load_image_pixmap(image_layer)?,
+                },
                 Layer::Procedural(procedural_layer) => {
                     SoftwareLayerSource::Procedural(procedural_layer.procedural.clone())
                 }
@@ -995,15 +1010,59 @@ fn build_asset_layer(
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
 ) -> Result<GpuLayer> {
-    let image = ImageReader::open(&layer.source_path)
-        .with_context(|| format!("failed opening {}", layer.source_path.display()))?
-        .decode()
-        .with_context(|| format!("failed decoding {}", layer.source_path.display()))?
-        .to_rgba8();
+    build_bitmap_layer(
+        device,
+        queue,
+        frame_width,
+        frame_height,
+        &layer.common,
+        &layer.source_path,
+        group_chain,
+        blend_bind_group_layout,
+        sampler,
+    )
+}
+
+fn build_image_layer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame_width: u32,
+    frame_height: u32,
+    layer: &ImageLayer,
+    group_chain: Vec<Group>,
+    blend_bind_group_layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+) -> Result<GpuLayer> {
+    build_bitmap_layer(
+        device,
+        queue,
+        frame_width,
+        frame_height,
+        &layer.common,
+        &layer.image.path,
+        group_chain,
+        blend_bind_group_layout,
+        sampler,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_bitmap_layer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame_width: u32,
+    frame_height: u32,
+    common: &LayerCommon,
+    image_path: &Path,
+    group_chain: Vec<Group>,
+    blend_bind_group_layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+) -> Result<GpuLayer> {
+    let image = load_rgba_image(image_path, &common.id)?;
     let (layer_width, layer_height) = image.dimensions();
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(&format!("vcr-layer-{}", layer.common.id)),
+        label: Some(&format!("vcr-layer-{}", common.id)),
         size: wgpu::Extent3d {
             width: layer_width,
             height: layer_height,
@@ -1017,20 +1076,10 @@ fn build_asset_layer(
         view_formats: &[],
     });
 
-    let bytes_per_row = NonZeroU32::new(layer_width.saturating_mul(4)).ok_or_else(|| {
-        anyhow!(
-            "layer '{}' has invalid width {}",
-            layer.common.id,
-            layer_width
-        )
-    })?;
-    let rows_per_image = NonZeroU32::new(layer_height).ok_or_else(|| {
-        anyhow!(
-            "layer '{}' has invalid height {}",
-            layer.common.id,
-            layer_height
-        )
-    })?;
+    let bytes_per_row = NonZeroU32::new(layer_width.saturating_mul(4))
+        .ok_or_else(|| anyhow!("layer '{}' has invalid width {}", common.id, layer_width))?;
+    let rows_per_image = NonZeroU32::new(layer_height)
+        .ok_or_else(|| anyhow!("layer '{}' has invalid height {}", common.id, layer_height))?;
 
     queue.write_texture(
         wgpu::ImageCopyTexture {
@@ -1058,7 +1107,7 @@ fn build_asset_layer(
         queue,
         frame_width,
         frame_height,
-        &layer.common,
+        common,
         layer_width,
         layer_height,
         &texture_view,
@@ -1067,19 +1116,19 @@ fn build_asset_layer(
     )?;
 
     Ok(GpuLayer {
-        id: layer.common.id.clone(),
-        z_index: layer.common.z_index,
+        id: common.id.clone(),
+        z_index: common.z_index,
         width: layer_width,
         height: layer_height,
-        position: layer.common.position.clone(),
-        position_x: layer.common.pos_x.clone(),
-        position_y: layer.common.pos_y.clone(),
-        scale: layer.common.scale.clone(),
-        rotation_degrees: layer.common.rotation_degrees.clone(),
-        opacity: layer.common.opacity.clone(),
-        timing: layer.common.timing_controls(),
-        modulators: layer.common.modulators.clone(),
-        all_properties_static: layer.common.has_static_properties()
+        position: common.position.clone(),
+        position_x: common.pos_x.clone(),
+        position_y: common.pos_y.clone(),
+        scale: common.scale.clone(),
+        rotation_degrees: common.rotation_degrees.clone(),
+        opacity: common.opacity.clone(),
+        timing: common.timing_controls(),
+        modulators: common.modulators.clone(),
+        all_properties_static: common.has_static_properties()
             && group_chain.iter().all(Group::has_static_properties),
         group_chain,
         uniform_buffer: draw_resources.uniform_buffer,
@@ -1683,23 +1732,31 @@ fn copy_tight_rows(
     Ok(frame)
 }
 
-fn load_asset_pixmap(layer: &AssetLayer) -> Result<Pixmap> {
-    let image = ImageReader::open(&layer.source_path)
-        .with_context(|| format!("failed opening {}", layer.source_path.display()))?
+fn load_rgba_image(image_path: &Path, layer_id: &str) -> Result<image::RgbaImage> {
+    let image = ImageReader::open(image_path)
+        .with_context(|| format!("layer '{layer_id}': failed opening {}", image_path.display()))?
         .decode()
-        .with_context(|| format!("failed decoding {}", layer.source_path.display()))?
-        .to_rgba8();
+        .with_context(|| format!("layer '{layer_id}': failed decoding {}", image_path.display()))?;
+    Ok(image.to_rgba8())
+}
+
+fn load_asset_pixmap(layer: &AssetLayer) -> Result<Pixmap> {
+    load_layer_pixmap(&layer.source_path, &layer.common.id)
+}
+
+fn load_image_pixmap(layer: &ImageLayer) -> Result<Pixmap> {
+    load_layer_pixmap(&layer.image.path, &layer.common.id)
+}
+
+fn load_layer_pixmap(image_path: &Path, layer_id: &str) -> Result<Pixmap> {
+    let image = load_rgba_image(image_path, layer_id)?;
     let (width, height) = image.dimensions();
 
     let mut rgba = image.into_raw();
     premultiply_rgba_in_place(&mut rgba);
 
-    let mut pixmap = Pixmap::new(width, height).ok_or_else(|| {
-        anyhow!(
-            "failed to allocate software pixmap for '{}'",
-            layer.common.id
-        )
-    })?;
+    let mut pixmap =
+        Pixmap::new(width, height).ok_or_else(|| anyhow!("failed to allocate software pixmap for '{}'", layer_id))?;
     pixmap.data_mut().copy_from_slice(&rgba);
     Ok(pixmap)
 }

@@ -1,0 +1,74 @@
+version: 1
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 24
+  duration:
+    frames: 120
+
+params:
+  accent_r: 0.0
+  accent_g: 1.0
+  accent_b: 1.0
+
+layers:
+  - id: bg
+    z_index: 0
+    procedural:
+      kind: gradient
+      start_color: { r: 0.03, g: 0.035, b: 0.06, a: 1.0 }
+      end_color: { r: 0.01, g: 0.012, b: 0.02, a: 1.0 }
+      direction: vertical
+
+  - id: cyan_wash
+    z_index: 1
+    opacity: "0.12"
+    procedural:
+      kind: gradient
+      start_color: { r: 0.0, g: 1.0, b: 1.0, a: 0.18 }
+      end_color: { r: 0.0, g: 1.0, b: 1.0, a: 0.0 }
+      direction: horizontal
+
+  - id: pixel_block_a
+    z_index: 2
+    pos_x: "240 + sin(t / 40) * 16"
+    pos_y: "680 + cos(t / 53) * 10"
+    scale: [2.2, 2.2]
+    opacity: "smoothstep(6, 34, t) * 0.55"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: pixel_block_b
+    z_index: 2
+    pos_x: "1330 + sin(t / 49) * -18"
+    pos_y: "210 + cos(t / 45) * 12"
+    scale: [1.5, 1.5]
+    opacity: "smoothstep(14, 44, t) * 0.36"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: pixel_block_c
+    z_index: 2
+    pos_x: "1490 + sin(t / 31) * 10"
+    pos_y: "760 + cos(t / 57) * -8"
+    scale: [0.95, 0.95]
+    opacity: "smoothstep(20, 58, t) * 0.28"
+    image:
+      path: "../assets/pixel_block.png"
+
+  - id: ascii_frame
+    z_index: 3
+    pos_x: "85 + sin(t / 72) * 3"
+    pos_y: "160 + cos(t / 68) * 2"
+    opacity: "smoothstep(24, 66, t) * 0.8"
+    image:
+      path: "../assets/ascii_frame.png"
+
+  - id: vcr_text
+    z_index: 4
+    pos_x: "110 + sin(t / 82) * 2"
+    pos_y: "280 + cos(t / 76) * 1.5"
+    opacity: "smoothstep(36, 78, t)"
+    image:
+      path: "../assets/vcr_text.png"
