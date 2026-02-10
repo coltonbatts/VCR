@@ -1,0 +1,48 @@
+version: 1
+seed: 42
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 24
+  duration: 5.0
+
+layers:
+  - id: background
+    procedural:
+      kind: solid_color
+      color: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+
+  # Title - fades in and slides up
+  - id: title
+    anchor: center
+    pos_x: 960
+    pos_y: "400 + 60 - 60 * smoothstep(0.5, 1.5, t)"
+    opacity: "0.001 + smoothstep(0.5, 1.5, t)"
+    text:
+      content: "SANITY CHECK"
+      font_family: "GeistPixel-Line"
+      font_size: 180
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  # Subtitle 1
+  - id: rendered
+    anchor: center
+    pos_x: 960
+    pos_y: "560 + 40 - 40 * smoothstep(1.5, 2.3, t)"
+    opacity: "0.001 + smoothstep(1.5, 2.3, t)"
+    text:
+      content: "RENDERED IN ~40MS"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.85 }
+
+  # Subtitle 2
+  - id: format
+    anchor: center
+    pos_x: 960
+    pos_y: "660 + 40 - 40 * smoothstep(2.3, 3.1, t)"
+    opacity: "0.001 + smoothstep(2.3, 3.1, t)"
+    text:
+      content: "PRORES 4444 WITH ALPHA"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.85 }
