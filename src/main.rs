@@ -2,6 +2,7 @@ mod encoding;
 mod manifest;
 mod renderer;
 mod schema;
+mod timeline;
 
 use std::fs;
 use std::path::Path;
@@ -15,8 +16,9 @@ use image::RgbaImage;
 
 use crate::encoding::FfmpegPipe;
 use crate::manifest::load_and_validate_manifest;
-use crate::renderer::{evaluate_manifest_layers_at_frame, RenderSceneData, Renderer};
+use crate::renderer::Renderer;
 use crate::schema::{Duration as ManifestDuration, Environment};
+use crate::timeline::{evaluate_manifest_layers_at_frame, RenderSceneData};
 
 #[derive(Debug, Parser)]
 #[command(name = "vcr")]

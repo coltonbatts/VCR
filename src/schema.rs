@@ -522,14 +522,101 @@ impl LayerCommon {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone)]
 pub enum Layer {
     Asset(AssetLayer),
     Image(ImageLayer),
     Procedural(ProceduralLayer),
     Shader(ShaderLayer),
     Text(TextLayer),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LayerWire {
+    #[serde(flatten)]
+    common: LayerCommon,
+    #[serde(default)]
+    source_path: Option<PathBuf>,
+    #[serde(default)]
+    image: Option<ImageSource>,
+    #[serde(default)]
+    procedural: Option<ProceduralSource>,
+    #[serde(default)]
+    shader: Option<ShaderSource>,
+    #[serde(default)]
+    text: Option<TextSource>,
+}
+
+impl<'de> Deserialize<'de> for Layer {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = LayerWire::deserialize(deserializer)?;
+        let layer_id = if wire.common.id.trim().is_empty() {
+            "<unknown>"
+        } else {
+            wire.common.id.as_str()
+        };
+
+        let mut present_sources = Vec::with_capacity(5);
+        if wire.source_path.is_some() {
+            present_sources.push("source_path");
+        }
+        if wire.image.is_some() {
+            present_sources.push("image");
+        }
+        if wire.procedural.is_some() {
+            present_sources.push("procedural");
+        }
+        if wire.shader.is_some() {
+            present_sources.push("shader");
+        }
+        if wire.text.is_some() {
+            present_sources.push("text");
+        }
+
+        if present_sources.is_empty() {
+            return Err(DeError::custom(format!(
+                "layer '{layer_id}' must define exactly one source block: `source_path` (legacy image path), `image`, `procedural`, `shader`, or `text`"
+            )));
+        }
+
+        if present_sources.len() > 1 {
+            return Err(DeError::custom(format!(
+                "layer '{layer_id}' defines multiple source blocks ({}) but exactly one is required: `source_path` (legacy image path), `image`, `procedural`, `shader`, or `text`",
+                present_sources.join(", ")
+            )));
+        }
+
+        let LayerWire {
+            common,
+            source_path,
+            image,
+            procedural,
+            shader,
+            text,
+        } = wire;
+
+        match (source_path, image, procedural, shader, text) {
+            (Some(source_path), None, None, None, None) => Ok(Self::Asset(AssetLayer {
+                common,
+                source_path,
+            })),
+            (None, Some(image), None, None, None) => Ok(Self::Image(ImageLayer { common, image })),
+            (None, None, Some(procedural), None, None) => {
+                Ok(Self::Procedural(ProceduralLayer { common, procedural }))
+            }
+            (None, None, None, Some(shader), None) => {
+                Ok(Self::Shader(ShaderLayer { common, shader }))
+            }
+            (None, None, None, None, Some(text)) => Ok(Self::Text(TextLayer { common, text })),
+            _ => Err(DeError::custom(
+                "failed to decode layer source; define exactly one source block",
+            )),
+        }
+    }
 }
 
 impl Layer {
@@ -690,7 +777,9 @@ impl ShaderLayer {
         let label = format!("layer '{}'", self.common.id);
         match (&self.shader.fragment, &self.shader.path) {
             (Some(_), None) | (None, Some(_)) => {}
-            (Some(_), Some(_)) => bail!("{label}: shader must have exactly one of fragment or path"),
+            (Some(_), Some(_)) => {
+                bail!("{label}: shader must have exactly one of fragment or path")
+            }
             (None, None) => bail!("{label}: shader must have one of fragment or path"),
         }
         if self.shader.uniforms.len() > 8 {
@@ -777,20 +866,36 @@ impl ProceduralSource {
                 radius.validate_with_context("radius", params, seed)?;
                 color.validate("color", params, seed)
             }
-            Self::RoundedRect { corner_radius, color, .. } => {
+            Self::RoundedRect {
+                corner_radius,
+                color,
+                ..
+            } => {
                 corner_radius.validate_with_context("corner_radius", params, seed)?;
                 color.validate("color", params, seed)
             }
-            Self::Ring { outer_radius, inner_radius, color, .. } => {
+            Self::Ring {
+                outer_radius,
+                inner_radius,
+                color,
+                ..
+            } => {
                 outer_radius.validate_with_context("outer_radius", params, seed)?;
                 inner_radius.validate_with_context("inner_radius", params, seed)?;
                 color.validate("color", params, seed)
             }
-            Self::Line { thickness, color, .. } => {
+            Self::Line {
+                thickness, color, ..
+            } => {
                 thickness.validate_with_context("thickness", params, seed)?;
                 color.validate("color", params, seed)
             }
-            Self::Polygon { radius, sides, color, .. } => {
+            Self::Polygon {
+                radius,
+                sides,
+                color,
+                ..
+            } => {
                 radius.validate_with_context("radius", params, seed)?;
                 if *sides < 3 {
                     bail!("polygon sides must be >= 3");
@@ -803,14 +908,27 @@ impl ProceduralSource {
     pub fn is_static(&self) -> bool {
         match self {
             Self::SolidColor { color } => color.is_static(),
-            Self::Gradient { start_color, end_color, .. } => start_color.is_static() && end_color.is_static(),
+            Self::Gradient {
+                start_color,
+                end_color,
+                ..
+            } => start_color.is_static() && end_color.is_static(),
             Self::Triangle { color, .. } => color.is_static(),
             Self::Circle { radius, color, .. } => radius.is_static() && color.is_static(),
-            Self::RoundedRect { corner_radius, color, .. } => corner_radius.is_static() && color.is_static(),
-            Self::Ring { outer_radius, inner_radius, color, .. } => {
-                outer_radius.is_static() && inner_radius.is_static() && color.is_static()
-            }
-            Self::Line { thickness, color, .. } => thickness.is_static() && color.is_static(),
+            Self::RoundedRect {
+                corner_radius,
+                color,
+                ..
+            } => corner_radius.is_static() && color.is_static(),
+            Self::Ring {
+                outer_radius,
+                inner_radius,
+                color,
+                ..
+            } => outer_radius.is_static() && inner_radius.is_static() && color.is_static(),
+            Self::Line {
+                thickness, color, ..
+            } => thickness.is_static() && color.is_static(),
             Self::Polygon { radius, color, .. } => radius.is_static() && color.is_static(),
         }
     }
@@ -878,10 +996,14 @@ impl AnimatableColor {
     }
 
     pub fn validate(&self, label: &str, params: &Parameters, seed: u64) -> Result<()> {
-        self.r.validate_with_context(&format!("{label}.r"), params, seed)?;
-        self.g.validate_with_context(&format!("{label}.g"), params, seed)?;
-        self.b.validate_with_context(&format!("{label}.b"), params, seed)?;
-        self.a.validate_with_context(&format!("{label}.a"), params, seed)?;
+        self.r
+            .validate_with_context(&format!("{label}.r"), params, seed)?;
+        self.g
+            .validate_with_context(&format!("{label}.g"), params, seed)?;
+        self.b
+            .validate_with_context(&format!("{label}.b"), params, seed)?;
+        self.a
+            .validate_with_context(&format!("{label}.a"), params, seed)?;
         Ok(())
     }
 }
@@ -1567,7 +1689,11 @@ fn evaluate_function(
         }
         "step" => {
             expect_arity(name, &evaluated, 2)?;
-            Ok(if evaluated[1] >= evaluated[0] { 1.0 } else { 0.0 })
+            Ok(if evaluated[1] >= evaluated[0] {
+                1.0
+            } else {
+                0.0
+            })
         }
         "fract" => {
             expect_arity(name, &evaluated, 1)?;
@@ -1890,5 +2016,50 @@ layers:
         .expect("manifest should parse");
 
         assert!(matches!(manifest.layers.first(), Some(Layer::Asset(_))));
+    }
+
+    #[test]
+    fn manifest_layer_requires_source_block() {
+        let error = serde_yaml::from_str::<Manifest>(
+            r#"
+version: 1
+environment:
+  resolution: { width: 320, height: 180 }
+  fps: 24
+  duration: { frames: 12 }
+layers:
+  - id: missing_source
+    position: [10, 20]
+"#,
+        )
+        .expect_err("manifest should fail without layer source");
+
+        let message = error.to_string();
+        assert!(message.contains("layer 'missing_source'"));
+        assert!(message.contains("must define exactly one source block"));
+    }
+
+    #[test]
+    fn manifest_layer_rejects_multiple_source_blocks() {
+        let error = serde_yaml::from_str::<Manifest>(
+            r#"
+version: 1
+environment:
+  resolution: { width: 320, height: 180 }
+  fps: 24
+  duration: { frames: 12 }
+layers:
+  - id: too_many_sources
+    source_path: "assets/a.png"
+    image:
+      path: "assets/b.png"
+"#,
+        )
+        .expect_err("manifest should fail when layer has multiple sources");
+
+        let message = error.to_string();
+        assert!(message.contains("layer 'too_many_sources'"));
+        assert!(message.contains("multiple source blocks"));
+        assert!(message.contains("source_path, image"));
     }
 }
