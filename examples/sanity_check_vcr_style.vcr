@@ -1,0 +1,88 @@
+version: 1
+seed: 42
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 6.0
+
+params:
+  scanline_count: 20.0
+
+layers:
+  # Black background
+  - id: background
+    procedural:
+      kind: solid_color
+      color: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+
+  # VCR timestamp (top left)
+  - id: timestamp
+    z_index: 5
+    pos_x: 60
+    pos_y: 60
+    opacity: "0.001 + smoothstep(0.2, 0.6, t)"
+    text:
+      content: "REC 00:00:00:00"
+      font_family: "GeistPixel-Line"
+      font_size: 48
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 0.9 }
+
+  # REC indicator dot (blinking)
+  - id: rec_dot
+    z_index: 5
+    pos_x: 30
+    pos_y: 60
+    opacity: "0.001 + smoothstep(0.2, 0.6, t) * step(0.5, fract(t * 2.0))"
+    procedural:
+      kind: circle
+      center: { x: 0.5, y: 0.5 }
+      radius: 0.015
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+
+  # Main title - types in
+  - id: title
+    anchor: center
+    pos_x: 960
+    pos_y: 420
+    opacity: "0.001 + smoothstep(0.8, 1.6, t)"
+    text:
+      content: "SANITY CHECK"
+      font_family: "GeistPixel-Line"
+      font_size: 200
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  # Subtitle 1
+  - id: rendered
+    anchor: center
+    pos_x: 960
+    pos_y: 600
+    opacity: "0.001 + smoothstep(2.0, 2.6, t)"
+    text:
+      content: "RENDERED IN ~40MS"
+      font_family: "GeistPixel-Line"
+      font_size: 64
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.85 }
+
+  # Subtitle 2
+  - id: format
+    anchor: center
+    pos_x: 960
+    pos_y: 700
+    opacity: "0.001 + smoothstep(2.8, 3.4, t)"
+    text:
+      content: "PRORES 4444 WITH ALPHA"
+      font_family: "GeistPixel-Line"
+      font_size: 64
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.85 }
+
+  # Thank you message
+  - id: thanks
+    anchor: center
+    pos_x: 960
+    pos_y: 820
+    opacity: "0.001 + smoothstep(3.8, 4.4, t)"
+    text:
+      content: "THANK YOU FOR USING VCR :)"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
