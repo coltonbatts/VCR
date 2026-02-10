@@ -1,35 +1,41 @@
+version: 1
+seed: 42
 environment:
-  resolution:
-    width: 1920
-    height: 1080
+  resolution: { width: 1920, height: 1080 }
   fps: 24
-  duration:
-    frames: 48
+  duration: 3.0
 
 layers:
   - id: background
-    z_index: 0
     procedural:
       kind: solid_color
-      color:
-        r: 0.10196
-        g: 0.10196
-        b: 0.10196
-        a: 1.0
+      color: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
 
-  - id: moving_gradient
-    z_index: 1
-    pos_x: "t * 40"
+  - id: title
+    pos_x: 360
+    pos_y: 450
+    opacity: "0.9 + glitch(t, 2.0) * 0.1"
+    text:
+      content: "SANITY CHECK"
+      font_family: "GeistPixel-Square"
+      font_size: 200
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: subtitle
+    pos_x: 380
+    pos_y: 620
+    opacity: "step(0.5, t) * (0.6 + 0.4 * saw(t, 2))"
+    text:
+      content: "RENDERED FROM TERMINAL IN MILLISECONDS."
+      font_family: "GeistPixel-Line"
+      font_size: 64
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: accent_line
+    pos_y: "680 + glitch(t, 1.0) * 5"
+    pos_x: 0
+    opacity: 0.3
     procedural:
-      kind: gradient
-      start_color:
-        r: 0.15
-        g: 0.45
-        b: 0.95
-        a: 0.85
-      end_color:
-        r: 0.95
-        g: 0.35
-        b: 0.15
-        a: 0.85
-      direction: horizontal
+      kind: solid_color
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    scale: [1.0, 0.002]
