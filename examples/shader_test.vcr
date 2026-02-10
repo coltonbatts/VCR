@@ -1,0 +1,29 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 3.0
+seed: 0
+
+layers:
+  - id: plasma
+    shader:
+      fragment: |
+        fn shade(uv: vec2<f32>, u: ShaderUniforms) -> vec4<f32> {
+          let t = u.time;
+          let speed = u.custom[0];
+          let intensity = u.custom[1];
+          let x = uv.x * 10.0;
+          let y = uv.y * 10.0;
+          let v1 = sin(x + t * speed);
+          let v2 = sin(y + t * speed * 0.7);
+          let v3 = sin((x + y) * 0.5 + t * speed * 1.3);
+          let v = (v1 + v2 + v3) * 0.333 * intensity;
+          let r = sin(v * 3.14159) * 0.5 + 0.5;
+          let g = sin(v * 3.14159 + 2.094) * 0.5 + 0.5;
+          let b = sin(v * 3.14159 + 4.189) * 0.5 + 0.5;
+          return vec4<f32>(r, g, b, 1.0);
+        }
+      uniforms:
+        speed: 2.0
+        intensity: 0.8

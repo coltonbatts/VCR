@@ -13,10 +13,10 @@ use tiny_skia::{
 use wgpu::util::DeviceExt;
 
 use crate::schema::{
-    Anchor, AssetLayer, ColorRgba, Environment, ExpressionContext, GradientDirection, Group, Layer,
-    ImageLayer, LayerCommon, Manifest, ModulatorBinding, ModulatorMap, Parameters,
-    ProceduralLayer,
-    ProceduralSource, PropertyValue, ScalarProperty, TextLayer, TimingControls, Vec2,
+    Anchor, AnimatableColor, AssetLayer, ColorRgba, Environment, ExpressionContext,
+    GradientDirection, Group, Layer, ImageLayer, LayerCommon, Manifest, ModulatorBinding,
+    ModulatorMap, Parameters, ProceduralLayer, ProceduralSource, PropertyValue, ScalarProperty,
+    ShaderLayer, TextLayer, TimingControls, Vec2,
 };
 
 const BLEND_SHADER: &str = r#"
@@ -60,15 +60,18 @@ const PROCEDURAL_SHADER: &str = r#"
 struct ProceduralUniform {
   kind: u32,
   axis: u32,
-  _pad0: vec2<u32>,
+  extra_u32: u32,
+  _padding: u32,
   color_a: vec4<f32>,
   color_b: vec4<f32>,
   p0: vec2<f32>,
   p1: vec2<f32>,
   p2: vec2<f32>,
   radius: f32,
-  _pad1: f32,
-  _pad2: vec4<f32>,
+  inner_radius: f32,
+  corner_radius: f32,
+  thickness: f32,
+  size: vec2<f32>,
 }
 
 @group(0) @binding(0) var<uniform> procedural: ProceduralUniform;
@@ -97,19 +100,25 @@ fn sign_func(p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> f32 {
     return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
 }
 
+const PI: f32 = 3.14159265358979;
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
   let uv = clamp(input.uv, vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 1.0));
-  
+  let transparent = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+
+  // 0: SolidColor
   if procedural.kind == 0u {
     return procedural.color_a;
   }
-  
+
+  // 1: Gradient
   if procedural.kind == 1u {
     let amount = select(uv.y, uv.x, procedural.axis == 0u);
     return mix(procedural.color_a, procedural.color_b, amount);
   }
 
+  // 2: Triangle
   if procedural.kind == 2u {
     let d1 = sign_func(uv, procedural.p0, procedural.p1);
     let d2 = sign_func(uv, procedural.p1, procedural.p2);
@@ -119,23 +128,118 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
 
     if !(has_neg && has_pos) {
-       // Outside the triangle, return transparent
-    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-  }
+      return transparent;
+    }
   }
 
-  if (procedural.kind == 3u) { // Circle
+  // 3: Circle
+  if procedural.kind == 3u {
     let dist = distance(uv, procedural.p0);
-    if (dist < procedural.radius) {
-        return procedural.color_a;
+    if dist < procedural.radius {
+      return procedural.color_a;
     }
-    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    return transparent;
+  }
+
+  // 4: RoundedRect
+  if procedural.kind == 4u {
+    let half_size = procedural.size * 0.5;
+    let d = abs(uv - procedural.p0) - half_size + vec2<f32>(procedural.corner_radius);
+    let sdf = length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0) - procedural.corner_radius;
+    if sdf <= 0.0 {
+      return procedural.color_a;
+    }
+    return transparent;
+  }
+
+  // 5: Ring
+  if procedural.kind == 5u {
+    let dist = distance(uv, procedural.p0);
+    if dist <= procedural.radius && dist >= procedural.inner_radius {
+      return procedural.color_a;
+    }
+    return transparent;
+  }
+
+  // 6: Line (capsule SDF)
+  if procedural.kind == 6u {
+    let ab = procedural.p1 - procedural.p0;
+    let ap = uv - procedural.p0;
+    let t_line = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
+    let closest = procedural.p0 + ab * t_line;
+    let dist = distance(uv, closest);
+    if dist <= procedural.thickness * 0.5 {
+      return procedural.color_a;
+    }
+    return transparent;
+  }
+
+  // 7: Polygon (regular n-gon SDF)
+  if procedural.kind == 7u {
+    let n = f32(procedural.extra_u32);
+    let p = uv - procedural.p0;
+    let angle = atan2(p.y, p.x);
+    let sector = 2.0 * PI / n;
+    let r = length(p);
+    let theta = ((angle % sector) + sector) % sector;
+    let half_sector = sector * 0.5;
+    let cos_half = cos(half_sector);
+    let edge_dist = procedural.radius * cos_half;
+    let proj = r * cos(theta - half_sector);
+    if proj <= edge_dist {
+      return procedural.color_a;
+    }
+    return transparent;
   }
 
   // Default fallback
   return vec4<f32>(0.0, 0.0, 0.0, 1.0);
 }
 "#;
+
+const CUSTOM_SHADER_PREAMBLE: &str = r#"
+struct ShaderUniforms {
+  time: f32,
+  frame: u32,
+  resolution: vec2<f32>,
+  custom: array<f32, 8>,
+}
+
+@group(0) @binding(0) var<uniform> vcr_uniforms: ShaderUniforms;
+
+struct VertexOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+  var positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -3.0),
+    vec2<f32>(-1.0, 1.0),
+    vec2<f32>(3.0, 1.0)
+  );
+  var out: VertexOutput;
+  let p = positions[vertex_index];
+  out.position = vec4<f32>(p, 0.0, 1.0);
+  out.uv = p * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
+  return out;
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+  return shade(input.uv, vcr_uniforms);
+}
+"#;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct ShaderUniform {
+    time: f32,
+    frame: u32,
+    resolution: [f32; 2],
+    custom: [f32; 8],
+}
 
 const EPSILON: f32 = 0.0001;
 const NO_GPU_ADAPTER_ERR: &str = "no suitable GPU adapter found";
@@ -260,14 +364,18 @@ struct LayerUniform {
 struct ProceduralUniform {
     kind: u32,
     axis: u32,
-    _padding: [u32; 2],
+    extra_u32: u32, // polygon sides
+    _padding: u32,
     color_a: [f32; 4],
     color_b: [f32; 4],
-    p0: [f32; 2], // center for Circle
+    p0: [f32; 2],
     p1: [f32; 2],
     p2: [f32; 2],
     radius: f32,
-    _pad_radius: [f32; 5],
+    inner_radius: f32,
+    corner_radius: f32,
+    thickness: f32,
+    size: [f32; 2],
 }
 
 struct GpuLayer {
@@ -299,6 +407,7 @@ impl GpuLayer {
         match &self.source {
             GpuLayerSource::Asset { .. } => true,
             GpuLayerSource::Procedural(gpu) => gpu.has_rendered,
+            GpuLayerSource::Shader(gpu) => gpu.has_rendered && gpu.is_static,
             GpuLayerSource::Text { .. } => true,
         }
     }
@@ -307,7 +416,19 @@ impl GpuLayer {
 enum GpuLayerSource {
     Asset { _texture: wgpu::Texture },
     Procedural(ProceduralGpu),
+    Shader(CustomShaderGpu),
     Text { _texture: wgpu::Texture },
+}
+
+struct CustomShaderGpu {
+    uniforms: Vec<ScalarProperty>,
+    uniform_buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    pipeline: wgpu::RenderPipeline,
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    has_rendered: bool,
+    is_static: bool,
 }
 
 struct ProceduralGpu {
@@ -442,6 +563,7 @@ struct SoftwareLayer {
 enum SoftwareLayerSource {
     Asset { pixmap: Pixmap },
     Procedural(ProceduralSource),
+    Shader,
     Text { pixmap: Pixmap },
 }
 
@@ -696,6 +818,21 @@ impl GpuRenderer {
                     scene.seed,
                     environment.fps,
                 )?,
+                Layer::Shader(shader_layer) => build_shader_layer(
+                    &device,
+                    &queue,
+                    width,
+                    height,
+                    shader_layer,
+                    group_chain,
+                    &blend_bind_group_layout,
+                    &sampler,
+                    &groups_by_id,
+                    &scene.params,
+                    &scene.modulators,
+                    scene.seed,
+                    environment.fps,
+                )?,
                 Layer::Text(text_layer) => build_text_layer(
                     &device,
                     &queue,
@@ -852,9 +989,10 @@ impl GpuRenderer {
 
     fn prepare_procedural_layers(
         &mut self,
-        _frame_index: u32,
+        frame_index: u32,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<()> {
+        let context = ExpressionContext::new(frame_index as f32, &self.params, self.seed);
         for layer in &mut self.layers {
             let GpuLayerSource::Procedural(procedural) = &mut layer.source else {
                 continue;
@@ -865,7 +1003,7 @@ impl GpuRenderer {
                 continue;
             }
 
-            let uniform = procedural_uniform(&procedural.source);
+            let uniform = evaluate_procedural_uniform(&procedural.source, &context)?;
             if procedural.last_uniform != Some(uniform) {
                 self.queue.write_buffer(
                     &procedural.uniform_buffer,
@@ -897,6 +1035,58 @@ impl GpuRenderer {
             }
 
             procedural.has_rendered = true;
+        }
+
+        // Shader layers
+        let fps = self.fps;
+        for layer in &mut self.layers {
+            let GpuLayerSource::Shader(shader) = &mut layer.source else {
+                continue;
+            };
+
+            let needs_update = !shader.has_rendered || !shader.is_static;
+            if !needs_update {
+                continue;
+            }
+
+            let time = frame_index as f32 / fps as f32;
+            let mut custom = [0.0_f32; 8];
+            for (i, prop) in shader.uniforms.iter().enumerate() {
+                custom[i] = prop.evaluate_with_context(&context)?;
+            }
+            let uniform = ShaderUniform {
+                time,
+                frame: frame_index,
+                resolution: [self.width as f32, self.height as f32],
+                custom,
+            };
+            self.queue.write_buffer(
+                &shader.uniform_buffer,
+                0,
+                bytemuck::bytes_of(&uniform),
+            );
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("vcr-shader-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &shader.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&shader.pipeline);
+                pass.set_bind_group(0, &shader.bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+
+            shader.has_rendered = true;
         }
 
         Ok(())
@@ -973,6 +1163,10 @@ impl SoftwareRenderer {
                 Layer::Procedural(procedural_layer) => {
                     SoftwareLayerSource::Procedural(procedural_layer.procedural.clone())
                 }
+                Layer::Shader(_) => {
+                    eprintln!("[warn] custom shader layers require GPU backend; layer rendered as transparent");
+                    SoftwareLayerSource::Shader
+                }
                 Layer::Text(text_layer) => SoftwareLayerSource::Text {
                     pixmap: render_text_to_pixmap(text_layer)?,
                 },
@@ -981,6 +1175,7 @@ impl SoftwareRenderer {
             let (layer_width, layer_height) = match &source {
                 SoftwareLayerSource::Asset { pixmap } => (pixmap.width(), pixmap.height()),
                 SoftwareLayerSource::Procedural(_) => (width, height),
+                SoftwareLayerSource::Shader => (width, height),
                 SoftwareLayerSource::Text { pixmap } => (pixmap.width(), pixmap.height()),
             };
 
@@ -1073,8 +1268,12 @@ impl SoftwareRenderer {
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
             }
             SoftwareLayerSource::Procedural(source) => {
-                let procedural = render_procedural_pixmap(source, self.width, self.height)?;
+                let context = ExpressionContext::new(frame_index as f32, &self.params, self.seed);
+                let procedural = render_procedural_pixmap(source, self.width, self.height, &context)?;
                 draw_layer_pixmap(output, procedural.as_ref(), opacity, transform);
+            }
+            SoftwareLayerSource::Shader => {
+                // Custom WGSL shaders can't run on CPU — skip
             }
             SoftwareLayerSource::Text { pixmap } => {
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
@@ -1303,7 +1502,8 @@ fn build_procedural_layer(
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let uniform = procedural_uniform(&layer.procedural);
+    let init_context = ExpressionContext::new(0.0, params, seed);
+    let uniform = evaluate_procedural_uniform(&layer.procedural, &init_context)?;
     let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("vcr-procedural-uniform-{}", layer.common.id)),
         contents: bytemuck::bytes_of(&uniform),
@@ -1355,7 +1555,7 @@ fn build_procedural_layer(
 
     let procedural_gpu = ProceduralGpu {
         source: layer.procedural.clone(),
-        is_static: true,
+        is_static: layer.procedural.is_static(),
         has_rendered: false,
         uniform_buffer,
         bind_group,
@@ -1543,67 +1743,96 @@ fn refresh_layer_draw_state(
     Ok(())
 }
 
-fn procedural_uniform(source: &ProceduralSource) -> ProceduralUniform {
-    match source {
-        ProceduralSource::SolidColor { color } => ProceduralUniform {
-            kind: 0,
-            axis: 0,
-            _padding: [0; 2],
-            color_a: color.as_array(),
-            color_b: color.as_array(),
-            p0: [0.0; 2],
-            p1: [0.0; 2],
-            p2: [0.0; 2],
-            radius: 0.0,
-            _pad_radius: [0.0; 5],
-        },
-        ProceduralSource::Gradient {
-            start_color,
-            end_color,
-            direction,
-        } => {
-            let axis = match direction {
+fn evaluate_procedural_uniform(
+    source: &ProceduralSource,
+    context: &ExpressionContext<'_>,
+) -> Result<ProceduralUniform> {
+    let default = ProceduralUniform {
+        kind: 0,
+        axis: 0,
+        extra_u32: 0,
+        _padding: 0,
+        color_a: [0.0; 4],
+        color_b: [0.0; 4],
+        p0: [0.0; 2],
+        p1: [0.0; 2],
+        p2: [0.0; 2],
+        radius: 0.0,
+        inner_radius: 0.0,
+        corner_radius: 0.0,
+        thickness: 0.0,
+        size: [0.0; 2],
+    };
+
+    fn eval_color(c: &AnimatableColor, ctx: &ExpressionContext<'_>) -> Result<[f32; 4]> {
+        Ok(c.evaluate(ctx)?.as_array())
+    }
+
+    Ok(match source {
+        ProceduralSource::SolidColor { color } => {
+            let c = eval_color(color, context)?;
+            ProceduralUniform { kind: 0, color_a: c, color_b: c, ..default }
+        }
+        ProceduralSource::Gradient { start_color, end_color, direction } => ProceduralUniform {
+            kind: 1,
+            axis: match direction {
                 GradientDirection::Horizontal => 0,
                 GradientDirection::Vertical => 1,
-            };
+            },
+            color_a: eval_color(start_color, context)?,
+            color_b: eval_color(end_color, context)?,
+            ..default
+        },
+        ProceduralSource::Triangle { p0, p1, p2, color } => {
+            let c = eval_color(color, context)?;
             ProceduralUniform {
-                kind: 1,
-                axis,
-                _padding: [0; 2],
-                color_a: start_color.as_array(),
-                color_b: end_color.as_array(),
-                p0: [0.0; 2],
-                p1: [0.0; 2],
-                p2: [0.0; 2],
-                radius: 0.0,
-                _pad_radius: [0.0; 5],
+                kind: 2, color_a: c, color_b: c,
+                p0: [p0.x, p0.y], p1: [p1.x, p1.y], p2: [p2.x, p2.y],
+                ..default
             }
         }
-        ProceduralSource::Triangle { p0, p1, p2, color } => ProceduralUniform {
-            kind: 2,
-            axis: 0,
-            _padding: [0; 2],
-            color_a: color.as_array(),
-            color_b: color.as_array(),
-            p0: [p0.x, p0.y],
-            p1: [p1.x, p1.y],
-            p2: [p2.x, p2.y],
-            radius: 0.0,
-            _pad_radius: [0.0; 5],
-        },
-        ProceduralSource::Circle { center, radius, color } => ProceduralUniform {
-            kind: 3,
-            axis: 0,
-            _padding: [0; 2],
-            color_a: color.as_array(),
-            color_b: color.as_array(),
+        ProceduralSource::Circle { center, radius, color } => {
+            let c = eval_color(color, context)?;
+            ProceduralUniform {
+                kind: 3, color_a: c, color_b: c,
+                p0: [center.x, center.y],
+                radius: radius.evaluate_with_context(context)?,
+                ..default
+            }
+        }
+        ProceduralSource::RoundedRect { center, size, corner_radius, color } => ProceduralUniform {
+            kind: 4,
+            color_a: eval_color(color, context)?,
             p0: [center.x, center.y],
-            p1: [0.0; 2],
-            p2: [0.0; 2],
-            radius: *radius,
-            _pad_radius: [0.0; 5],
+            size: [size.x, size.y],
+            corner_radius: corner_radius.evaluate_with_context(context)?,
+            ..default
         },
-    }
+        ProceduralSource::Ring { center, outer_radius, inner_radius, color } => ProceduralUniform {
+            kind: 5,
+            color_a: eval_color(color, context)?,
+            p0: [center.x, center.y],
+            radius: outer_radius.evaluate_with_context(context)?,
+            inner_radius: inner_radius.evaluate_with_context(context)?,
+            ..default
+        },
+        ProceduralSource::Line { start, end, thickness, color } => ProceduralUniform {
+            kind: 6,
+            color_a: eval_color(color, context)?,
+            p0: [start.x, start.y],
+            p1: [end.x, end.y],
+            thickness: thickness.evaluate_with_context(context)?,
+            ..default
+        },
+        ProceduralSource::Polygon { center, radius, sides, color } => ProceduralUniform {
+            kind: 7,
+            extra_u32: *sides,
+            color_a: eval_color(color, context)?,
+            p0: [center.x, center.y],
+            radius: radius.evaluate_with_context(context)?,
+            ..default
+        },
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2007,19 +2236,26 @@ fn layer_transform(
     Transform::from_row(a, b, c, d, tx, ty)
 }
 
-fn render_procedural_pixmap(source: &ProceduralSource, width: u32, height: u32) -> Result<Pixmap> {
+fn render_procedural_pixmap(
+    source: &ProceduralSource,
+    width: u32,
+    height: u32,
+    context: &ExpressionContext<'_>,
+) -> Result<Pixmap> {
     let mut pixmap = Pixmap::new(width, height).unwrap();
     pixmap.fill(Color::TRANSPARENT);
 
     match source {
         ProceduralSource::SolidColor { color } => {
-            pixmap.fill(color_to_skia(*color));
+            pixmap.fill(color_to_skia(color.evaluate(context)?));
         }
         ProceduralSource::Gradient {
             start_color,
             end_color,
             direction,
         } => {
+            let sc = start_color.evaluate(context)?;
+            let ec = end_color.evaluate(context)?;
             let mut paint = Paint::default();
             let (start, end) = match direction {
                 GradientDirection::Horizontal => (Point::from_xy(0.0, 0.0), Point::from_xy(width as f32, 0.0)),
@@ -2029,8 +2265,8 @@ fn render_procedural_pixmap(source: &ProceduralSource, width: u32, height: u32) 
                 start,
                 end,
                 vec![
-                    GradientStop::new(0.0, color_to_skia(*start_color)),
-                    GradientStop::new(1.0, color_to_skia(*end_color)),
+                    GradientStop::new(0.0, color_to_skia(sc)),
+                    GradientStop::new(1.0, color_to_skia(ec)),
                 ],
                 SpreadMode::Pad,
                 Transform::identity(),
@@ -2044,6 +2280,7 @@ fn render_procedural_pixmap(source: &ProceduralSource, width: u32, height: u32) 
             );
         }
         ProceduralSource::Triangle { p0, p1, p2, color } => {
+            let c = color.evaluate(context)?;
             let mut path = PathBuilder::new();
             path.move_to(p0.x * width as f32, p0.y * height as f32);
             path.line_to(p1.x * width as f32, p1.y * height as f32);
@@ -2052,20 +2289,124 @@ fn render_procedural_pixmap(source: &ProceduralSource, width: u32, height: u32) 
 
             let path = path.finish().ok_or_else(|| anyhow!("failed to create triangle path"))?;
             let mut paint = Paint::default();
-            paint.set_color(color_to_skia(*color));
+            paint.set_color(color_to_skia(c));
             paint.anti_alias = false;
 
             pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
         }
         ProceduralSource::Circle { center, radius, color } => {
+            let c = color.evaluate(context)?;
+            let r = radius.evaluate_with_context(context)?;
             let mut path = PathBuilder::new();
-            path.push_circle(center.x * width as f32, center.y * height as f32, radius * width as f32);
-            
+            path.push_circle(center.x * width as f32, center.y * height as f32, r * width as f32);
+
             let path = path.finish().ok_or_else(|| anyhow!("failed to create circle path"))?;
             let mut paint = Paint::default();
-            paint.set_color(color_to_skia(*color));
+            paint.set_color(color_to_skia(c));
             paint.anti_alias = false;
 
+            pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+        ProceduralSource::RoundedRect { center, size, corner_radius, color } => {
+            let c = color.evaluate(context)?;
+            let cr = corner_radius.evaluate_with_context(context)?;
+            let w = size.x * width as f32;
+            let h = size.y * height as f32;
+            let cx = center.x * width as f32;
+            let cy = center.y * height as f32;
+            let x = cx - w * 0.5;
+            let y = cy - h * 0.5;
+            let r = cr * width as f32;
+
+            let mut pb = PathBuilder::new();
+            pb.move_to(x + r, y);
+            pb.line_to(x + w - r, y);
+            pb.quad_to(x + w, y, x + w, y + r);
+            pb.line_to(x + w, y + h - r);
+            pb.quad_to(x + w, y + h, x + w - r, y + h);
+            pb.line_to(x + r, y + h);
+            pb.quad_to(x, y + h, x, y + h - r);
+            pb.line_to(x, y + r);
+            pb.quad_to(x, y, x + r, y);
+            pb.close();
+
+            let path = pb.finish().ok_or_else(|| anyhow!("failed to create rounded rect path"))?;
+            let mut paint = Paint::default();
+            paint.set_color(color_to_skia(c));
+            paint.anti_alias = false;
+            pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+        ProceduralSource::Ring { center, outer_radius, inner_radius, color } => {
+            let c = color.evaluate(context)?;
+            let cx = center.x * width as f32;
+            let cy = center.y * height as f32;
+            let or = outer_radius.evaluate_with_context(context)? * width as f32;
+            let ir = inner_radius.evaluate_with_context(context)? * width as f32;
+
+            let mut pb = PathBuilder::new();
+            pb.push_circle(cx, cy, or);
+            pb.push_circle(cx, cy, ir);
+
+            let path = pb.finish().ok_or_else(|| anyhow!("failed to create ring path"))?;
+            let mut paint = Paint::default();
+            paint.set_color(color_to_skia(c));
+            paint.anti_alias = false;
+            pixmap.fill_path(&path, &paint, FillRule::EvenOdd, Transform::identity(), None);
+        }
+        ProceduralSource::Line { start, end, thickness, color } => {
+            let c = color.evaluate(context)?;
+            let t = thickness.evaluate_with_context(context)?;
+            let sx = start.x * width as f32;
+            let sy = start.y * height as f32;
+            let ex = end.x * width as f32;
+            let ey = end.y * height as f32;
+            let half_t = t * width as f32 * 0.5;
+
+            let dx = ex - sx;
+            let dy = ey - sy;
+            let len = (dx * dx + dy * dy).sqrt();
+            if len < 1e-6 {
+                // Degenerate line, skip
+            } else {
+                let nx = -dy / len * half_t;
+                let ny = dx / len * half_t;
+                let mut pb = PathBuilder::new();
+                pb.move_to(sx + nx, sy + ny);
+                pb.line_to(ex + nx, ey + ny);
+                pb.line_to(ex - nx, ey - ny);
+                pb.line_to(sx - nx, sy - ny);
+                pb.close();
+                let path = pb.finish().ok_or_else(|| anyhow!("failed to create line path"))?;
+                let mut paint = Paint::default();
+                paint.set_color(color_to_skia(c));
+                paint.anti_alias = false;
+                pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+        ProceduralSource::Polygon { center, radius, sides, color } => {
+            let c = color.evaluate(context)?;
+            let r_val = radius.evaluate_with_context(context)?;
+            let cx = center.x * width as f32;
+            let cy = center.y * height as f32;
+            let r = r_val * width as f32;
+            let n = *sides;
+
+            let mut pb = PathBuilder::new();
+            for i in 0..n {
+                let angle = 2.0 * std::f32::consts::PI * (i as f32) / (n as f32) - std::f32::consts::FRAC_PI_2;
+                let px = cx + r * angle.cos();
+                let py = cy + r * angle.sin();
+                if i == 0 {
+                    pb.move_to(px, py);
+                } else {
+                    pb.line_to(px, py);
+                }
+            }
+            pb.close();
+            let path = pb.finish().ok_or_else(|| anyhow!("failed to create polygon path"))?;
+            let mut paint = Paint::default();
+            paint.set_color(color_to_skia(c));
+            paint.anti_alias = false;
             pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
         }
     }
@@ -2215,6 +2556,206 @@ fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
     }
 
     Ok(pixmap)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_shader_layer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame_width: u32,
+    frame_height: u32,
+    layer: &ShaderLayer,
+    group_chain: Vec<Group>,
+    blend_bind_group_layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    groups_by_id: &BTreeMap<String, Group>,
+    params: &Parameters,
+    modulators: &ModulatorMap,
+    seed: u64,
+    fps: u32,
+) -> Result<GpuLayer> {
+    // Load shader source
+    let user_fragment = if let Some(fragment) = &layer.shader.fragment {
+        fragment.clone()
+    } else if let Some(path) = &layer.shader.path {
+        std::fs::read_to_string(path)
+            .with_context(|| format!("layer '{}': failed reading shader file {}", layer.common.id, path.display()))?
+    } else {
+        bail!("layer '{}': shader must have fragment or path", layer.common.id);
+    };
+
+    let full_wgsl = format!("{}\n{}", user_fragment, CUSTOM_SHADER_PREAMBLE);
+
+    // Create per-layer pipeline
+    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(&format!("vcr-custom-shader-{}", layer.common.id)),
+        source: wgpu::ShaderSource::Wgsl(full_wgsl.into()),
+    });
+
+    let shader_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(&format!("vcr-shader-bgl-{}", layer.common.id)),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<ShaderUniform>() as u64),
+            },
+            count: None,
+        }],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(&format!("vcr-shader-pl-{}", layer.common.id)),
+        bind_group_layouts: &[&shader_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(&format!("vcr-shader-pipeline-{}", layer.common.id)),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader_module,
+            entry_point: "vs_main",
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader_module,
+            entry_point: "fs_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        multiview: None,
+    });
+
+    // Create offscreen texture
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(&format!("vcr-shader-tex-{}", layer.common.id)),
+        size: wgpu::Extent3d {
+            width: frame_width,
+            height: frame_height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // Create uniform buffer
+    let init_context = ExpressionContext::new(0.0, params, seed);
+    let mut custom = [0.0_f32; 8];
+    let uniform_props: Vec<ScalarProperty> = layer.shader.uniforms.values().cloned().collect();
+    for (i, prop) in uniform_props.iter().enumerate() {
+        custom[i] = prop.evaluate_with_context(&init_context)?;
+    }
+    let initial_uniform = ShaderUniform {
+        time: 0.0,
+        frame: 0,
+        resolution: [frame_width as f32, frame_height as f32],
+        custom,
+    };
+    let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(&format!("vcr-shader-uniform-{}", layer.common.id)),
+        contents: bytemuck::bytes_of(&initial_uniform),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(&format!("vcr-shader-bg-{}", layer.common.id)),
+        layout: &shader_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buffer.as_entire_binding(),
+        }],
+    });
+
+    let is_static = uniform_props.iter().all(ScalarProperty::is_static);
+
+    // Evaluate initial layer state
+    let state = evaluate_layer_state(
+        &layer.common.id,
+        &layer.common.position,
+        layer.common.pos_x.as_ref(),
+        layer.common.pos_y.as_ref(),
+        &layer.common.scale,
+        &layer.common.rotation_degrees,
+        &layer.common.opacity,
+        layer.common.timing_controls(),
+        &layer.common.modulators,
+        &group_chain,
+        0,
+        fps,
+        params,
+        seed,
+        modulators,
+    )?.ok_or_else(|| anyhow!("layer '{}' not active at frame 0", layer.common.id))?;
+
+    let blend_texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let draw_resources = build_layer_draw_resources(
+        device,
+        queue,
+        frame_width,
+        frame_height,
+        &layer.common,
+        state.position,
+        state.scale,
+        state.rotation_degrees,
+        frame_width,
+        frame_height,
+        &blend_texture_view,
+        blend_bind_group_layout,
+        sampler,
+    )?;
+
+    let shader_gpu = CustomShaderGpu {
+        uniforms: uniform_props,
+        uniform_buffer,
+        bind_group,
+        pipeline,
+        _texture: texture,
+        view,
+        has_rendered: false,
+        is_static,
+    };
+
+    Ok(GpuLayer {
+        id: layer.common.id.clone(),
+        z_index: layer.common.z_index,
+        width: frame_width,
+        height: frame_height,
+        position: layer.common.position.clone(),
+        position_x: layer.common.pos_x.clone(),
+        position_y: layer.common.pos_y.clone(),
+        scale: layer.common.scale.clone(),
+        rotation_degrees: layer.common.rotation_degrees.clone(),
+        opacity: layer.common.opacity.clone(),
+        timing: layer.common.timing_controls(),
+        modulators: layer.common.modulators.clone(),
+        all_properties_static: layer.common.has_static_properties()
+            && group_chain.iter().all(Group::has_static_properties)
+            && is_static,
+        group_chain,
+        anchor: layer.common.anchor,
+        uniform_buffer: draw_resources.uniform_buffer,
+        blend_bind_group: draw_resources.blend_bind_group,
+        vertex_buffer: draw_resources.vertex_buffer,
+        last_vertices: Some(draw_resources.initial_vertices),
+        last_opacity: Some(draw_resources.initial_opacity),
+        source: GpuLayerSource::Shader(shader_gpu),
+    })
 }
 
 fn build_text_layer(

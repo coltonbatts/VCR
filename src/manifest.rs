@@ -83,6 +83,17 @@ fn validate_manifest(manifest: &mut Manifest, manifest_path: &Path) -> Result<()
                 image_layer.image.path = resolved;
             }
             Layer::Procedural(_) => {}
+            Layer::Shader(shader_layer) => {
+                if let Some(path) = &shader_layer.shader.path {
+                    let resolved = resolve_and_validate_asset_path(
+                        &manifest_dir,
+                        path,
+                        &shader_layer.common.id,
+                        "shader.path",
+                    )?;
+                    shader_layer.shader.path = Some(resolved);
+                }
+            }
             Layer::Text(_) => {}
         }
     }

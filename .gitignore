@@ -4,3 +4,4 @@
 *.mov
 *.png
 !assets/*.png
+*.backup*

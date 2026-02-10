@@ -528,6 +528,7 @@ pub enum Layer {
     Asset(AssetLayer),
     Image(ImageLayer),
     Procedural(ProceduralLayer),
+    Shader(ShaderLayer),
     Text(TextLayer),
 }
 
@@ -545,6 +546,7 @@ impl Layer {
             Self::Asset(layer) => &layer.common,
             Self::Image(layer) => &layer.common,
             Self::Procedural(layer) => &layer.common,
+            Self::Shader(layer) => &layer.common,
             Self::Text(layer) => &layer.common,
         }
     }
@@ -560,7 +562,8 @@ impl Layer {
         match self {
             Self::Asset(layer) => layer.validate(),
             Self::Image(layer) => layer.validate(),
-            Self::Procedural(layer) => layer.validate(),
+            Self::Procedural(layer) => layer.validate(params, seed),
+            Self::Shader(layer) => layer.validate(params, seed),
             Self::Text(layer) => layer.validate(),
         }
     }
@@ -663,10 +666,47 @@ pub struct ProceduralLayer {
     pub procedural: ProceduralSource,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShaderLayer {
+    #[serde(flatten)]
+    pub common: LayerCommon,
+    pub shader: ShaderSource,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShaderSource {
+    #[serde(default)]
+    pub fragment: Option<String>,
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+    #[serde(default)]
+    pub uniforms: BTreeMap<String, ScalarProperty>,
+}
+
+impl ShaderLayer {
+    fn validate(&self, params: &Parameters, seed: u64) -> Result<()> {
+        let label = format!("layer '{}'", self.common.id);
+        match (&self.shader.fragment, &self.shader.path) {
+            (Some(_), None) | (None, Some(_)) => {}
+            (Some(_), Some(_)) => bail!("{label}: shader must have exactly one of fragment or path"),
+            (None, None) => bail!("{label}: shader must have one of fragment or path"),
+        }
+        if self.shader.uniforms.len() > 8 {
+            bail!("{label}: shader supports at most 8 custom uniforms");
+        }
+        for (name, prop) in &self.shader.uniforms {
+            prop.validate_with_context(&format!("{label}.uniforms.{name}"), params, seed)?;
+        }
+        Ok(())
+    }
+}
+
 impl ProceduralLayer {
-    fn validate(&self) -> Result<()> {
+    fn validate(&self, params: &Parameters, seed: u64) -> Result<()> {
         self.procedural
-            .validate()
+            .validate(params, seed)
             .map_err(|error| anyhow!("layer '{}': {error}", self.common.id))
     }
 }
@@ -675,11 +715,11 @@ impl ProceduralLayer {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProceduralSource {
     SolidColor {
-        color: ColorRgba,
+        color: AnimatableColor,
     },
     Gradient {
-        start_color: ColorRgba,
-        end_color: ColorRgba,
+        start_color: AnimatableColor,
+        end_color: AnimatableColor,
         #[serde(default)]
         direction: GradientDirection,
     },
@@ -687,29 +727,91 @@ pub enum ProceduralSource {
         p0: Vec2,
         p1: Vec2,
         p2: Vec2,
-        color: ColorRgba,
+        color: AnimatableColor,
     },
     Circle {
         center: Vec2,
-        radius: f32,
-        color: ColorRgba,
+        radius: ScalarProperty,
+        color: AnimatableColor,
+    },
+    RoundedRect {
+        center: Vec2,
+        size: Vec2,
+        corner_radius: ScalarProperty,
+        color: AnimatableColor,
+    },
+    Ring {
+        center: Vec2,
+        outer_radius: ScalarProperty,
+        inner_radius: ScalarProperty,
+        color: AnimatableColor,
+    },
+    Line {
+        start: Vec2,
+        end: Vec2,
+        thickness: ScalarProperty,
+        color: AnimatableColor,
+    },
+    Polygon {
+        center: Vec2,
+        radius: ScalarProperty,
+        sides: u32,
+        color: AnimatableColor,
     },
 }
 
 impl ProceduralSource {
-    fn validate(&self) -> Result<()> {
+    fn validate(&self, params: &Parameters, seed: u64) -> Result<()> {
         match self {
-            Self::SolidColor { color } => color.validate("color"),
+            Self::SolidColor { color } => color.validate("color", params, seed),
             Self::Gradient {
                 start_color,
                 end_color,
                 ..
             } => {
-                start_color.validate("start_color")?;
-                end_color.validate("end_color")
+                start_color.validate("start_color", params, seed)?;
+                end_color.validate("end_color", params, seed)
             }
-            Self::Triangle { color, .. } => color.validate("color"),
-            Self::Circle { color, .. } => color.validate("color"),
+            Self::Triangle { color, .. } => color.validate("color", params, seed),
+            Self::Circle { radius, color, .. } => {
+                radius.validate_with_context("radius", params, seed)?;
+                color.validate("color", params, seed)
+            }
+            Self::RoundedRect { corner_radius, color, .. } => {
+                corner_radius.validate_with_context("corner_radius", params, seed)?;
+                color.validate("color", params, seed)
+            }
+            Self::Ring { outer_radius, inner_radius, color, .. } => {
+                outer_radius.validate_with_context("outer_radius", params, seed)?;
+                inner_radius.validate_with_context("inner_radius", params, seed)?;
+                color.validate("color", params, seed)
+            }
+            Self::Line { thickness, color, .. } => {
+                thickness.validate_with_context("thickness", params, seed)?;
+                color.validate("color", params, seed)
+            }
+            Self::Polygon { radius, sides, color, .. } => {
+                radius.validate_with_context("radius", params, seed)?;
+                if *sides < 3 {
+                    bail!("polygon sides must be >= 3");
+                }
+                color.validate("color", params, seed)
+            }
+        }
+    }
+
+    pub fn is_static(&self) -> bool {
+        match self {
+            Self::SolidColor { color } => color.is_static(),
+            Self::Gradient { start_color, end_color, .. } => start_color.is_static() && end_color.is_static(),
+            Self::Triangle { color, .. } => color.is_static(),
+            Self::Circle { radius, color, .. } => radius.is_static() && color.is_static(),
+            Self::RoundedRect { corner_radius, color, .. } => corner_radius.is_static() && color.is_static(),
+            Self::Ring { outer_radius, inner_radius, color, .. } => {
+                outer_radius.is_static() && inner_radius.is_static() && color.is_static()
+            }
+            Self::Line { thickness, color, .. } => thickness.is_static() && color.is_static(),
+            Self::Polygon { radius, color, .. } => radius.is_static() && color.is_static(),
         }
     }
 }
@@ -749,6 +851,78 @@ impl ColorRgba {
 
 fn default_alpha() -> f32 {
     1.0
+}
+
+/// Color with animatable r/g/b/a channels. Accepts both static `{r: 0.5, ...}` and
+/// expression strings like `{r: "sin(t)", g: 0.5, b: 0, a: 1}`.
+#[derive(Debug, Clone)]
+pub struct AnimatableColor {
+    pub r: ScalarProperty,
+    pub g: ScalarProperty,
+    pub b: ScalarProperty,
+    pub a: ScalarProperty,
+}
+
+impl AnimatableColor {
+    pub fn evaluate(&self, context: &ExpressionContext<'_>) -> Result<ColorRgba> {
+        Ok(ColorRgba {
+            r: self.r.evaluate_with_context(context)?,
+            g: self.g.evaluate_with_context(context)?,
+            b: self.b.evaluate_with_context(context)?,
+            a: self.a.evaluate_with_context(context)?,
+        })
+    }
+
+    pub fn is_static(&self) -> bool {
+        self.r.is_static() && self.g.is_static() && self.b.is_static() && self.a.is_static()
+    }
+
+    pub fn validate(&self, label: &str, params: &Parameters, seed: u64) -> Result<()> {
+        self.r.validate_with_context(&format!("{label}.r"), params, seed)?;
+        self.g.validate_with_context(&format!("{label}.g"), params, seed)?;
+        self.b.validate_with_context(&format!("{label}.b"), params, seed)?;
+        self.a.validate_with_context(&format!("{label}.a"), params, seed)?;
+        Ok(())
+    }
+}
+
+impl<'de> Deserialize<'de> for AnimatableColor {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct ColorFields {
+            r: ScalarProperty,
+            g: ScalarProperty,
+            b: ScalarProperty,
+            #[serde(default = "default_alpha_property")]
+            a: ScalarProperty,
+        }
+
+        fn default_alpha_property() -> ScalarProperty {
+            ScalarProperty::Static(1.0)
+        }
+
+        let fields = ColorFields::deserialize(deserializer)?;
+        Ok(AnimatableColor {
+            r: fields.r,
+            g: fields.g,
+            b: fields.b,
+            a: fields.a,
+        })
+    }
+}
+
+impl From<ColorRgba> for AnimatableColor {
+    fn from(c: ColorRgba) -> Self {
+        AnimatableColor {
+            r: ScalarProperty::Static(c.r),
+            g: ScalarProperty::Static(c.g),
+            b: ScalarProperty::Static(c.b),
+            a: ScalarProperty::Static(c.a),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]

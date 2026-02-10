@@ -1,0 +1,120 @@
+environment:
+  resolution:
+    width: 2560
+    height: 1440
+  fps: 24
+  duration:
+    frames: 120
+
+params:
+  glitch_int: 1.2
+  speed: 2.0
+
+groups:
+  - id: master_rig
+    # Subtle jitter on everything
+    pos_x: "glitch(t, 0.2) * 5"
+    pos_y: "glitch(t + 0.5, 0.2) * 5"
+
+layers:
+  - id: bg
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+
+  # INTRO REVEAL (0-40)
+  - id: geist_intro
+    group: master_rig
+    z_index: 10
+    pos_x: "1280 - 600 + glitch(t, glitch_int) * 40"
+    pos_y: "720 - 150"
+    opacity: "step(0, t) * (1.0 - step(40, t)) * (0.8 + glitch(t, 2.0) * 0.2)"
+    text:
+      content: "GEIST"
+      font_family: "GeistPixel-Square"
+      font_size: 400
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  # VARIANT CYCLING (40-100)
+  # We use opacity + floor(t/interval) to cycle visibility
+  - id: var_line
+    group: master_rig
+    pos_x: 600
+    pos_y: 720
+    opacity: "step(40, t) * step(t, 52) * (0.9 + glitch(t, 1.0) * 0.1)"
+    text:
+      content: "PIXEL: LINE"
+      font_family: "GeistPixel-Line"
+      font_size: 300
+  
+  - id: var_square
+    group: master_rig
+    pos_x: 600
+    pos_y: 720
+    opacity: "step(52, t) * step(t, 64)"
+    text:
+      content: "PIXEL: SQUARE"
+      font_family: "GeistPixel-Square"
+      font_size: 300
+
+  - id: var_grid
+    group: master_rig
+    pos_x: 600
+    pos_y: 720
+    opacity: "step(64, t) * step(t, 76)"
+    text:
+      content: "PIXEL: GRID"
+      font_family: "GeistPixel-Grid"
+      font_size: 300
+
+  - id: var_circle
+    group: master_rig
+    pos_x: 600
+    pos_y: 720
+    opacity: "step(76, t) * step(t, 88)"
+    text:
+      content: "PIXEL: CIRCLE"
+      font_family: "GeistPixel-Circle"
+      font_size: 300
+
+  - id: var_triangle
+    group: master_rig
+    pos_x: 600
+    pos_y: 720
+    opacity: "step(88, t) * step(t, 100)"
+    text:
+      content: "PIXEL: TRIANGLE"
+      font_family: "GeistPixel-Triangle"
+      font_size: 300
+
+  # FINAL LOCKUP (100-120)
+  - id: lockup_geist
+    group: master_rig
+    pos_x: 800
+    pos_y: 600
+    opacity: "step(100, t)"
+    text:
+      content: "GEIST"
+      font_family: "GeistPixel-Square"
+      font_size: 200
+
+  - id: lockup_subtitle
+    group: master_rig
+    pos_x: 800
+    pos_y: 800
+    opacity: "step(105, t) * (0.5 + 0.5 * saw(t, 10))"
+    text:
+      content: "NATIVE TO VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+
+  # PIXEL ACCENTS
+  - id: accent_box
+    z_index: 5
+    pos_x: "100 + fract(t * 0.1) * 2000"
+    pos_y: "100 + random(floor(t/4)) * 1200"
+    scale: [0.1, 0.1]
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.5 }
