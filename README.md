@@ -115,6 +115,45 @@ cargo run --release -- build examples/welcome_terminal_scene.vcr -o output.mov
 
 Run `cargo run --release -- --help` for full CLI options.
 
+## Figma -> VCR Workflow CLI (MVP)
+
+This repo now includes an MVP workflow binary for product cards:
+
+```bash
+cargo run --release --bin figma-vcr-workflow -- \
+  --figma-file "https://www.figma.com/file/<FILE_KEY>/Product-Cards" \
+  --description "product card: pink skirt, $29.99" \
+  --output-folder "./exports"
+```
+
+Optional:
+
+- `--frame-project "prj_xxxxx"` to request Frame.io upload (currently a non-blocking MVP placeholder)
+- `--skip-render` to only extract data + generate manifest
+- `--render-timeout-seconds 30` to cap render duration
+
+Required environment variables:
+
+- `FIGMA_TOKEN`: Figma personal access token
+
+Optional environment variables:
+
+- `ANTHROPIC_API_KEY`: if set, Claude is used to generate the manifest
+- `ANTHROPIC_MODEL`: override default Claude model
+- `FRAME_IO_TOKEN`: token used for future Frame.io upload wiring
+
+Expected Figma card structure (MVP assumption):
+
+- Frame containing layers named `product_image`, `product_name`, and `price`
+- Optional layers: `description`, `background`
+
+The command writes a run folder under `--output-folder` with:
+
+- extracted Figma JSON (`product_card_data.json`)
+- downloaded layer PNGs
+- generated manifest (`product_card.vcr`)
+- rendered output (`product_card.mov`, unless `--skip-render`)
+
 ## Manifest Format (High-Level)
 
 A `.vcr` file is structured around:
