@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -88,7 +88,15 @@ fn encoding_worker(
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
-        .context("failed to spawn ffmpeg sidecar process")?;
+        .map_err(|error| {
+            if error.kind() == ErrorKind::NotFound {
+                anyhow!(
+                    "ffmpeg was not found on PATH. Install ffmpeg and verify `ffmpeg -version` works before running `vcr build` or `vcr preview` video output."
+                )
+            } else {
+                anyhow!("failed to spawn ffmpeg sidecar process: {error}")
+            }
+        })?;
 
     let mut stdin = child
         .stdin

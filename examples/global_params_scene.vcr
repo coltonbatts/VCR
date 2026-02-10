@@ -1,0 +1,32 @@
+version: 1
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 24
+  duration:
+    frames: 144
+
+seed: 7
+params:
+  energy: 0.85
+  phase: 0.4
+  drift: 30.0
+
+layers:
+  - id: bg
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.07, g: 0.08, b: 0.10, a: 1.0 }
+
+  - id: stripe
+    z_index: 1
+    pos_x: "sin(t * 0.05 + phase) * drift"
+    rotation_degrees: "sin(t * 0.04 + phase) * (energy * 18)"
+    opacity: "clamp(0.35 + energy * 0.5, 0.0, 1.0)"
+    procedural:
+      kind: gradient
+      start_color: { r: 0.1, g: 0.4, b: 0.9, a: 0.9 }
+      end_color: { r: 0.95, g: 0.3, b: 0.15, a: 0.9 }
+      direction: horizontal

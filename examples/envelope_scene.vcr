@@ -1,0 +1,36 @@
+version: 1
+environment:
+  resolution:
+    width: 960
+    height: 540
+  fps: 24
+  duration:
+    frames: 192
+
+seed: 0
+params:
+  pulse_size: 0.35
+
+layers:
+  - id: bg
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.03, g: 0.04, b: 0.05, a: 1.0 }
+
+  - id: pulse
+    z_index: 1
+    position: [160, 100]
+    scale:
+      start_frame: 0
+      end_frame: 191
+      from: [0.8, 0.8]
+      to: [1.1, 1.1]
+      easing: ease_in_out
+    rotation_degrees: "sin(t * 0.03) * 10"
+    opacity: "clamp(env(t, 24, 120) + pulse_size, 0.0, 1.0)"
+    procedural:
+      kind: gradient
+      start_color: { r: 0.95, g: 0.6, b: 0.2, a: 0.9 }
+      end_color: { r: 0.2, g: 0.5, b: 0.95, a: 0.9 }
+      direction: vertical

@@ -1,12 +1,30 @@
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Result};
 use serde::{de::Error as DeError, Deserialize, Deserializer};
 
+pub type Parameters = BTreeMap<String, f32>;
+pub type ModulatorMap = BTreeMap<String, ModulatorDefinition>;
+
+const DEFAULT_MANIFEST_VERSION: u32 = 1;
+const DEFAULT_ENV_ATTACK: f32 = 12.0;
+const DEFAULT_ENV_DECAY: f32 = 24.0;
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
+    #[serde(default = "default_manifest_version")]
+    pub version: u32,
     pub environment: Environment,
+    #[serde(default)]
+    pub seed: u64,
+    #[serde(default)]
+    pub params: Parameters,
+    #[serde(default)]
+    pub modulators: ModulatorMap,
+    #[serde(default)]
+    pub groups: Vec<Group>,
     pub layers: Vec<Layer>,
 }
 
@@ -91,10 +109,306 @@ pub enum Duration {
     Frames { frames: u32 },
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TimingControls {
+    pub start_time: Option<f32>,
+    pub end_time: Option<f32>,
+    pub time_offset: f32,
+    pub time_scale: f32,
+}
+
+impl Default for TimingControls {
+    fn default() -> Self {
+        Self {
+            start_time: None,
+            end_time: None,
+            time_offset: 0.0,
+            time_scale: 1.0,
+        }
+    }
+}
+
+impl TimingControls {
+    pub fn validate(self, label: &str) -> Result<()> {
+        if let Some(start_time) = self.start_time {
+            if !start_time.is_finite() {
+                bail!("{label}.start_time must be finite");
+            }
+        }
+        if let Some(end_time) = self.end_time {
+            if !end_time.is_finite() {
+                bail!("{label}.end_time must be finite");
+            }
+        }
+        if let (Some(start_time), Some(end_time)) = (self.start_time, self.end_time) {
+            if end_time < start_time {
+                bail!("{label}.end_time ({end_time}) must be >= {label}.start_time ({start_time})");
+            }
+        }
+
+        if !self.time_offset.is_finite() {
+            bail!("{label}.time_offset must be finite");
+        }
+        if !self.time_scale.is_finite() || self.time_scale <= 0.0 {
+            bail!("{label}.time_scale must be > 0");
+        }
+
+        Ok(())
+    }
+
+    pub fn remap_frame(self, input_frame: f32, fps: u32) -> Option<f32> {
+        let seconds = input_frame / fps as f32;
+        if let Some(start_time) = self.start_time {
+            if seconds < start_time {
+                return None;
+            }
+        }
+        if let Some(end_time) = self.end_time {
+            if seconds > end_time {
+                return None;
+            }
+        }
+
+        Some((input_frame + self.time_offset * fps as f32) * self.time_scale)
+    }
+
+    pub fn is_default(self) -> bool {
+        self.start_time.is_none()
+            && self.end_time.is_none()
+            && self.time_offset.abs() <= f32::EPSILON
+            && (self.time_scale - 1.0).abs() <= f32::EPSILON
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModulatorDefinition {
+    pub expression: ScalarExpression,
+}
+
+impl ModulatorDefinition {
+    fn validate(&self, name: &str, params: &Parameters, seed: u64) -> Result<()> {
+        let context = ExpressionContext::new(0.0, params, seed);
+        let probe = self
+            .expression
+            .evaluate_with_context(&context)
+            .map_err(|error| anyhow!("modulator '{name}': {error}"))?;
+        validate_number(&format!("modulator '{name}' expression result"), probe)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ModulatorWeights {
+    #[serde(default)]
+    pub x: f32,
+    #[serde(default)]
+    pub y: f32,
+    #[serde(default, alias = "scale_x")]
+    pub scale_x: f32,
+    #[serde(default, alias = "scale_y")]
+    pub scale_y: f32,
+    #[serde(default, alias = "rotation_degrees")]
+    pub rotation: f32,
+    #[serde(default)]
+    pub opacity: f32,
+}
+
+impl ModulatorWeights {
+    pub fn is_zero(self) -> bool {
+        self.x.abs() <= f32::EPSILON
+            && self.y.abs() <= f32::EPSILON
+            && self.scale_x.abs() <= f32::EPSILON
+            && self.scale_y.abs() <= f32::EPSILON
+            && self.rotation.abs() <= f32::EPSILON
+            && self.opacity.abs() <= f32::EPSILON
+    }
+
+    pub fn validate(self, label: &str) -> Result<()> {
+        for (field, value) in [
+            ("x", self.x),
+            ("y", self.y),
+            ("scale_x", self.scale_x),
+            ("scale_y", self.scale_y),
+            ("rotation", self.rotation),
+            ("opacity", self.opacity),
+        ] {
+            if !value.is_finite() {
+                bail!("{label}.{field} must be finite");
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModulatorBinding {
+    pub source: String,
+    #[serde(default)]
+    pub weights: ModulatorWeights,
+}
+
+impl ModulatorBinding {
+    fn validate(&self, label: &str, modulators: &ModulatorMap) -> Result<()> {
+        if self.source.trim().is_empty() {
+            bail!("{label}.source cannot be empty");
+        }
+
+        self.weights.validate(&format!("{label}.weights"))?;
+        if self.weights.is_zero() {
+            bail!(
+                "{label}.weights must include at least one non-zero component (x, y, scale_x, scale_y, rotation, opacity)"
+            );
+        }
+
+        if !modulators.contains_key(&self.source) {
+            bail!(
+                "{label}.source '{}' is undefined. Define it in top-level modulators",
+                self.source
+            );
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Group {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub stable_id: Option<String>,
+    #[serde(default)]
+    pub parent: Option<String>,
+    #[serde(default)]
+    pub position: PropertyValue<Vec2>,
+    #[serde(default, alias = "position_x")]
+    pub pos_x: Option<ScalarProperty>,
+    #[serde(default, alias = "position_y")]
+    pub pos_y: Option<ScalarProperty>,
+    #[serde(default = "default_scale")]
+    pub scale: PropertyValue<Vec2>,
+    #[serde(default)]
+    pub rotation_degrees: ScalarProperty,
+    #[serde(default = "default_opacity_property")]
+    pub opacity: ScalarProperty,
+    #[serde(default)]
+    pub start_time: Option<f32>,
+    #[serde(default)]
+    pub end_time: Option<f32>,
+    #[serde(default)]
+    pub time_offset: f32,
+    #[serde(default = "default_time_scale")]
+    pub time_scale: f32,
+    #[serde(default)]
+    pub modulators: Vec<ModulatorBinding>,
+}
+
+impl Group {
+    pub fn timing_controls(&self) -> TimingControls {
+        TimingControls {
+            start_time: self.start_time,
+            end_time: self.end_time,
+            time_offset: self.time_offset,
+            time_scale: self.time_scale,
+        }
+    }
+
+    pub fn validate(
+        &self,
+        params: &Parameters,
+        seed: u64,
+        modulators: &ModulatorMap,
+    ) -> Result<()> {
+        if self.id.trim().is_empty() {
+            bail!("group id cannot be empty");
+        }
+        if let Some(name) = &self.name {
+            if name.trim().is_empty() {
+                bail!("group '{}' name cannot be empty", self.id);
+            }
+        }
+        if let Some(stable_id) = &self.stable_id {
+            if stable_id.trim().is_empty() {
+                bail!("group '{}' stable_id cannot be empty", self.id);
+            }
+        }
+
+        self.position
+            .validate("position")
+            .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
+        if let Some(position_x) = &self.pos_x {
+            position_x
+                .validate_with_context("pos_x", params, seed)
+                .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
+        }
+        if let Some(position_y) = &self.pos_y {
+            position_y
+                .validate_with_context("pos_y", params, seed)
+                .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
+        }
+        self.scale
+            .validate("scale")
+            .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
+        self.rotation_degrees
+            .validate_with_context("rotation_degrees", params, seed)
+            .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
+        self.opacity
+            .validate_with_context("opacity", params, seed)
+            .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
+        self.timing_controls()
+            .validate("timing")
+            .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
+
+        for (index, modulator) in self.modulators.iter().enumerate() {
+            modulator
+                .validate(&format!("modulators[{index}]"), modulators)
+                .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
+        }
+
+        Ok(())
+    }
+
+    pub fn has_static_properties(&self) -> bool {
+        self.position.is_static()
+            && self.pos_x.as_ref().map_or(true, ScalarProperty::is_static)
+            && self.pos_y.as_ref().map_or(true, ScalarProperty::is_static)
+            && self.scale.is_static()
+            && self.rotation_degrees.is_static()
+            && self.opacity.is_static()
+            && self.modulators.is_empty()
+            && self.timing_controls().is_default()
+    }
+
+    pub fn sample_position_with_context(
+        &self,
+        frame: f32,
+        context: &ExpressionContext<'_>,
+    ) -> Result<Vec2> {
+        let mut position = self.position.sample_at(frame);
+        if let Some(pos_x) = &self.pos_x {
+            position.x = pos_x.evaluate_with_context(&context.with_time(frame))?;
+        }
+        if let Some(pos_y) = &self.pos_y {
+            position.y = pos_y.evaluate_with_context(&context.with_time(frame))?;
+        }
+        Ok(position)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LayerCommon {
     pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub stable_id: Option<String>,
+    #[serde(default)]
+    pub group: Option<String>,
     #[serde(default)]
     pub z_index: i32,
     #[serde(default)]
@@ -109,38 +423,81 @@ pub struct LayerCommon {
     pub rotation_degrees: ScalarProperty,
     #[serde(default = "default_opacity_property")]
     pub opacity: ScalarProperty,
+    #[serde(default)]
+    pub start_time: Option<f32>,
+    #[serde(default)]
+    pub end_time: Option<f32>,
+    #[serde(default)]
+    pub time_offset: f32,
+    #[serde(default = "default_time_scale")]
+    pub time_scale: f32,
+    #[serde(default)]
+    pub modulators: Vec<ModulatorBinding>,
 }
 
 impl LayerCommon {
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate_with_context(
+        &self,
+        params: &Parameters,
+        seed: u64,
+        modulators: &ModulatorMap,
+    ) -> Result<()> {
         if self.id.trim().is_empty() {
             bail!("layer id cannot be empty");
+        }
+        if let Some(name) = &self.name {
+            if name.trim().is_empty() {
+                bail!("layer '{}' name cannot be empty", self.id);
+            }
+        }
+        if let Some(stable_id) = &self.stable_id {
+            if stable_id.trim().is_empty() {
+                bail!("layer '{}' stable_id cannot be empty", self.id);
+            }
         }
 
         self.position
             .validate("position")
-            .map_err(|error| anyhow::anyhow!("layer '{}': {error}", self.id))?;
+            .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
         if let Some(position_x) = &self.pos_x {
             position_x
-                .validate("pos_x")
-                .map_err(|error| anyhow::anyhow!("layer '{}': {error}", self.id))?;
+                .validate_with_context("pos_x", params, seed)
+                .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
         }
         if let Some(position_y) = &self.pos_y {
             position_y
-                .validate("pos_y")
-                .map_err(|error| anyhow::anyhow!("layer '{}': {error}", self.id))?;
+                .validate_with_context("pos_y", params, seed)
+                .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
         }
         self.scale
             .validate("scale")
-            .map_err(|error| anyhow::anyhow!("layer '{}': {error}", self.id))?;
+            .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
         self.rotation_degrees
-            .validate("rotation_degrees")
-            .map_err(|error| anyhow::anyhow!("layer '{}': {error}", self.id))?;
+            .validate_with_context("rotation_degrees", params, seed)
+            .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
         self.opacity
-            .validate("opacity")
-            .map_err(|error| anyhow::anyhow!("layer '{}': {error}", self.id))?;
+            .validate_with_context("opacity", params, seed)
+            .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
+        self.timing_controls()
+            .validate("timing")
+            .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
+
+        for (index, modulator) in self.modulators.iter().enumerate() {
+            modulator
+                .validate(&format!("modulators[{index}]"), modulators)
+                .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
+        }
 
         Ok(())
+    }
+
+    pub fn timing_controls(&self) -> TimingControls {
+        TimingControls {
+            start_time: self.start_time,
+            end_time: self.end_time,
+            time_offset: self.time_offset,
+            time_scale: self.time_scale,
+        }
     }
 
     pub fn has_static_properties(&self) -> bool {
@@ -150,17 +507,8 @@ impl LayerCommon {
             && self.scale.is_static()
             && self.rotation_degrees.is_static()
             && self.opacity.is_static()
-    }
-
-    pub fn sample_position(&self, frame: u32) -> Result<Vec2> {
-        let mut position = self.position.sample(frame);
-        if let Some(pos_x) = &self.pos_x {
-            position.x = pos_x.evaluate(frame)?;
-        }
-        if let Some(pos_y) = &self.pos_y {
-            position.y = pos_y.evaluate(frame)?;
-        }
-        Ok(position)
+            && self.modulators.is_empty()
+            && self.timing_controls().is_default()
     }
 }
 
@@ -187,8 +535,14 @@ impl Layer {
         }
     }
 
-    pub fn validate(&self) -> Result<()> {
-        self.common().validate()?;
+    pub fn validate(
+        &self,
+        params: &Parameters,
+        seed: u64,
+        modulators: &ModulatorMap,
+    ) -> Result<()> {
+        self.common()
+            .validate_with_context(params, seed, modulators)?;
         match self {
             Self::Asset(layer) => layer.validate(),
             Self::Procedural(layer) => layer.validate(),
@@ -222,7 +576,7 @@ impl ProceduralLayer {
     fn validate(&self) -> Result<()> {
         self.procedural
             .validate()
-            .map_err(|error| anyhow::anyhow!("layer '{}': {error}", self.common.id))
+            .map_err(|error| anyhow!("layer '{}': {error}", self.common.id))
     }
 }
 
@@ -346,10 +700,10 @@ pub enum PropertyValue<T> {
 }
 
 impl<T: Clone + Interpolate> PropertyValue<T> {
-    pub fn sample(&self, frame: u32) -> T {
+    pub fn sample_at(&self, frame: f32) -> T {
         match self {
             Self::Static(value) => value.clone(),
-            Self::Mapping(mapping) => mapping.sample(frame),
+            Self::Mapping(mapping) => mapping.sample_at(frame),
         }
     }
 }
@@ -389,15 +743,15 @@ pub enum ScalarProperty {
 }
 
 impl ScalarProperty {
-    pub fn evaluate(&self, t: u32) -> Result<f32> {
+    pub fn evaluate_with_context(&self, context: &ExpressionContext<'_>) -> Result<f32> {
         match self {
             Self::Static(value) => Ok(*value),
-            Self::Mapping(mapping) => Ok(mapping.sample(t)),
-            Self::Expression(expression) => expression.evaluate(t),
+            Self::Mapping(mapping) => Ok(mapping.sample_at(context.t)),
+            Self::Expression(expression) => expression.evaluate_with_context(context),
         }
     }
 
-    pub fn validate(&self, label: &str) -> Result<()> {
+    pub fn validate_with_context(&self, label: &str, params: &Parameters, seed: u64) -> Result<()> {
         match self {
             Self::Static(value) => validate_number(label, *value),
             Self::Mapping(mapping) => {
@@ -412,7 +766,8 @@ impl ScalarProperty {
                 validate_number(&format!("{label}.to"), mapping.to)
             }
             Self::Expression(expression) => {
-                let probe = expression.evaluate(0)?;
+                let context = ExpressionContext::new(0.0, params, seed);
+                let probe = expression.evaluate_with_context(&context)?;
                 validate_number(label, probe)
             }
         }
@@ -436,10 +791,10 @@ pub struct ScalarExpression {
 }
 
 impl ScalarExpression {
-    pub fn evaluate(&self, t: u32) -> Result<f32> {
+    pub fn evaluate_with_context(&self, context: &ExpressionContext<'_>) -> Result<f32> {
         let value = self
             .ast
-            .evaluate(t as f32)
+            .evaluate(context)
             .map_err(|error| anyhow!("invalid expression '{}': {error}", self.source))?;
         validate_number("expression result", value)?;
         Ok(value)
@@ -462,7 +817,11 @@ impl<'de> Deserialize<'de> for ScalarExpression {
 #[derive(Debug, Clone)]
 enum ExpressionNode {
     Constant(f32),
-    Frame,
+    Variable(String),
+    Call {
+        name: String,
+        args: Vec<ExpressionNode>,
+    },
     UnaryNeg(Box<ExpressionNode>),
     Add(Box<ExpressionNode>, Box<ExpressionNode>),
     Sub(Box<ExpressionNode>, Box<ExpressionNode>),
@@ -473,34 +832,59 @@ enum ExpressionNode {
 }
 
 impl ExpressionNode {
-    fn evaluate(&self, t: f32) -> Result<f32> {
+    fn evaluate(&self, context: &ExpressionContext<'_>) -> Result<f32> {
         match self {
             Self::Constant(value) => Ok(*value),
-            Self::Frame => Ok(t),
-            Self::UnaryNeg(value) => Ok(-value.evaluate(t)?),
-            Self::Add(left, right) => Ok(left.evaluate(t)? + right.evaluate(t)?),
-            Self::Sub(left, right) => Ok(left.evaluate(t)? - right.evaluate(t)?),
-            Self::Mul(left, right) => Ok(left.evaluate(t)? * right.evaluate(t)?),
+            Self::Variable(identifier) => match identifier.as_str() {
+                "t" => Ok(context.t),
+                _ => context
+                    .params
+                    .get(identifier)
+                    .copied()
+                    .ok_or_else(|| anyhow!("unknown variable '{identifier}'")),
+            },
+            Self::Call { name, args } => evaluate_function(name, args, context),
+            Self::UnaryNeg(value) => Ok(-value.evaluate(context)?),
+            Self::Add(left, right) => Ok(left.evaluate(context)? + right.evaluate(context)?),
+            Self::Sub(left, right) => Ok(left.evaluate(context)? - right.evaluate(context)?),
+            Self::Mul(left, right) => Ok(left.evaluate(context)? * right.evaluate(context)?),
             Self::Div(left, right) => {
-                let divisor = right.evaluate(t)?;
+                let divisor = right.evaluate(context)?;
                 if divisor.abs() <= f32::EPSILON {
                     bail!("expression attempted division by zero");
                 }
-                Ok(left.evaluate(t)? / divisor)
+                Ok(left.evaluate(context)? / divisor)
             }
             Self::Mod(left, right) => {
-                let divisor = right.evaluate(t)?;
+                let divisor = right.evaluate(context)?;
                 if divisor.abs() <= f32::EPSILON {
                     bail!("expression attempted modulo by zero");
                 }
-                Ok(left.evaluate(t)? % divisor)
+                Ok(left.evaluate(context)? % divisor)
             }
             Self::Pow(left, right) => {
-                let value = left.evaluate(t)?.powf(right.evaluate(t)?);
+                let value = left.evaluate(context)?.powf(right.evaluate(context)?);
                 validate_number("pow result", value)?;
                 Ok(value)
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ExpressionContext<'a> {
+    pub t: f32,
+    pub params: &'a Parameters,
+    pub seed: u64,
+}
+
+impl<'a> ExpressionContext<'a> {
+    pub fn new(t: f32, params: &'a Parameters, seed: u64) -> Self {
+        Self { t, params, seed }
+    }
+
+    pub fn with_time(self, t: f32) -> Self {
+        Self { t, ..self }
     }
 }
 
@@ -618,7 +1002,7 @@ impl<'a> ExpressionParser<'a> {
                 Ok(expression)
             }
             Some('0'..='9') | Some('.') => self.parse_number(),
-            Some('a'..='z') | Some('A'..='Z') | Some('_') => self.parse_identifier(),
+            Some('a'..='z') | Some('A'..='Z') | Some('_') => self.parse_identifier_or_call(),
             Some(token) => bail!("unexpected token '{token}' at position {}", self.index),
             None => bail!("unexpected end of expression"),
         }
@@ -660,7 +1044,7 @@ impl<'a> ExpressionParser<'a> {
         Ok(ExpressionNode::Constant(value))
     }
 
-    fn parse_identifier(&mut self) -> Result<ExpressionNode> {
+    fn parse_identifier_or_call(&mut self) -> Result<ExpressionNode> {
         let start = self.index;
         while matches!(
             self.peek_char(),
@@ -669,10 +1053,46 @@ impl<'a> ExpressionParser<'a> {
             self.index += 1;
         }
         let identifier = &self.source[start..self.index];
-        match identifier {
-            "t" => Ok(ExpressionNode::Frame),
-            _ => bail!("unsupported variable '{identifier}', only 't' is allowed"),
+
+        self.skip_whitespace();
+        if self.peek_char() != Some('(') {
+            return Ok(ExpressionNode::Variable(identifier.to_owned()));
         }
+
+        self.index += 1;
+        let mut args = Vec::new();
+        loop {
+            self.skip_whitespace();
+            if self.peek_char() == Some(')') {
+                self.index += 1;
+                break;
+            }
+
+            args.push(self.parse_add_sub()?);
+            self.skip_whitespace();
+            match self.peek_char() {
+                Some(',') => {
+                    self.index += 1;
+                }
+                Some(')') => {
+                    self.index += 1;
+                    break;
+                }
+                Some(token) => {
+                    bail!(
+                        "expected ',' or ')' after function argument, found '{}' at position {}",
+                        token,
+                        self.index
+                    );
+                }
+                None => bail!("unterminated function call for '{identifier}'"),
+            }
+        }
+
+        Ok(ExpressionNode::Call {
+            name: identifier.to_owned(),
+            args,
+        })
     }
 
     fn skip_whitespace(&mut self) {
@@ -698,16 +1118,18 @@ pub struct KeyValue<T> {
 }
 
 impl<T: Clone + Interpolate> KeyValue<T> {
-    pub fn sample(&self, frame: u32) -> T {
-        if frame <= self.start_frame {
+    pub fn sample_at(&self, frame: f32) -> T {
+        let start_frame = self.start_frame as f32;
+        let end_frame = self.end_frame as f32;
+        if frame <= start_frame {
             return self.from.clone();
         }
-        if frame >= self.end_frame {
+        if frame >= end_frame {
             return self.to.clone();
         }
 
-        let span = (self.end_frame - self.start_frame) as f32;
-        let progress = (frame - self.start_frame) as f32 / span;
+        let span = end_frame - start_frame;
+        let progress = (frame - start_frame) / span;
         let eased = self.easing.apply(progress.clamp(0.0, 1.0));
         T::interpolate(&self.from, &self.to, eased)
     }
@@ -724,7 +1146,7 @@ pub enum EasingCurve {
 }
 
 impl EasingCurve {
-    fn apply(self, t: f32) -> f32 {
+    pub fn apply(self, t: f32) -> f32 {
         match self {
             Self::Linear => t,
             Self::EaseIn => t * t,
@@ -759,6 +1181,219 @@ impl Interpolate for Vec2 {
     }
 }
 
+pub fn validate_manifest_manifest_level(manifest: &Manifest) -> Result<()> {
+    if manifest.version != DEFAULT_MANIFEST_VERSION {
+        bail!(
+            "unsupported manifest version {} (expected {}). Add a migration or set version: {}",
+            manifest.version,
+            DEFAULT_MANIFEST_VERSION,
+            DEFAULT_MANIFEST_VERSION
+        );
+    }
+
+    for (name, value) in &manifest.params {
+        if !valid_identifier(name) {
+            bail!("invalid param name '{name}'. Use identifiers like energy, phase, tension_2");
+        }
+        if name == "t" {
+            bail!("param name 't' is reserved for frame time in expressions");
+        }
+        validate_number(&format!("param '{name}'"), *value)?;
+    }
+
+    for (name, modulator) in &manifest.modulators {
+        if !valid_identifier(name) {
+            bail!("invalid modulator name '{name}'. Use identifiers like wobble or pulse_1");
+        }
+        modulator.validate(name, &manifest.params, manifest.seed)?;
+    }
+
+    let mut seen_group_ids = HashSet::with_capacity(manifest.groups.len());
+    for group in &manifest.groups {
+        group.validate(&manifest.params, manifest.seed, &manifest.modulators)?;
+        if !seen_group_ids.insert(group.id.as_str()) {
+            bail!("duplicate group id '{}'", group.id);
+        }
+    }
+
+    for group in &manifest.groups {
+        if let Some(parent) = &group.parent {
+            if !seen_group_ids.contains(parent.as_str()) {
+                bail!(
+                    "group '{}' references unknown parent '{}'. Define the parent group first",
+                    group.id,
+                    parent
+                );
+            }
+        }
+    }
+
+    for group in &manifest.groups {
+        let mut seen = HashSet::new();
+        seen.insert(group.id.as_str());
+        let mut current = group.parent.as_deref();
+        while let Some(parent_id) = current {
+            if !seen.insert(parent_id) {
+                bail!(
+                    "group '{}' has a cyclic parent chain involving '{}'",
+                    group.id,
+                    parent_id
+                );
+            }
+
+            current = manifest
+                .groups
+                .iter()
+                .find(|candidate| candidate.id == parent_id)
+                .and_then(|candidate| candidate.parent.as_deref());
+        }
+    }
+
+    Ok(())
+}
+
+fn evaluate_function(
+    name: &str,
+    args: &[ExpressionNode],
+    context: &ExpressionContext<'_>,
+) -> Result<f32> {
+    let evaluated = args
+        .iter()
+        .map(|arg| arg.evaluate(context))
+        .collect::<Result<Vec<_>>>()?;
+
+    let normalized = normalize_identifier(name);
+    match normalized.as_str() {
+        "clamp" => {
+            expect_arity(name, &evaluated, 3)?;
+            Ok(evaluated[0].clamp(evaluated[1], evaluated[2]))
+        }
+        "lerp" => {
+            expect_arity(name, &evaluated, 3)?;
+            Ok(evaluated[0] + (evaluated[1] - evaluated[0]) * evaluated[2])
+        }
+        "smoothstep" => {
+            expect_arity(name, &evaluated, 3)?;
+            let edge_0 = evaluated[0];
+            let edge_1 = evaluated[1];
+            let x = evaluated[2];
+            if (edge_1 - edge_0).abs() <= f32::EPSILON {
+                bail!("function {name} requires edge0 and edge1 to differ");
+            }
+            let t = ((x - edge_0) / (edge_1 - edge_0)).clamp(0.0, 1.0);
+            Ok(t * t * (3.0 - 2.0 * t))
+        }
+        "easeinout" => {
+            expect_arity(name, &evaluated, 1)?;
+            Ok(EasingCurve::EaseInOut.apply(evaluated[0].clamp(0.0, 1.0)))
+        }
+        "sin" => {
+            expect_arity(name, &evaluated, 1)?;
+            Ok(evaluated[0].sin())
+        }
+        "cos" => {
+            expect_arity(name, &evaluated, 1)?;
+            Ok(evaluated[0].cos())
+        }
+        "abs" => {
+            expect_arity(name, &evaluated, 1)?;
+            Ok(evaluated[0].abs())
+        }
+        "noise1d" => {
+            if evaluated.is_empty() || evaluated.len() > 2 {
+                bail!("function {name} expects 1 or 2 arguments");
+            }
+            let x = evaluated[0];
+            let seed_offset = evaluated.get(1).copied().unwrap_or(0.0).round() as i64;
+            Ok(noise_1d(x, context.seed.wrapping_add(seed_offset as u64)))
+        }
+        "env" => {
+            if evaluated.len() != 1 && evaluated.len() != 3 {
+                bail!("function {name} expects 1 or 3 arguments");
+            }
+            let time = evaluated[0];
+            let attack = evaluated.get(1).copied().unwrap_or(DEFAULT_ENV_ATTACK);
+            let decay = evaluated.get(2).copied().unwrap_or(DEFAULT_ENV_DECAY);
+            envelope(time, attack, decay)
+        }
+        _ => bail!("unsupported function '{name}'"),
+    }
+}
+
+fn expect_arity(name: &str, args: &[f32], expected: usize) -> Result<()> {
+    if args.len() != expected {
+        bail!(
+            "function {name} expects {expected} argument(s), got {}",
+            args.len()
+        );
+    }
+    Ok(())
+}
+
+fn noise_1d(x: f32, seed: u64) -> f32 {
+    let x0 = x.floor() as i64;
+    let x1 = x0 + 1;
+    let frac = x - x.floor();
+    let smooth = frac * frac * (3.0 - 2.0 * frac);
+    let a = hash_to_unit_range(x0, seed);
+    let b = hash_to_unit_range(x1, seed);
+    (a + (b - a) * smooth) * 2.0 - 1.0
+}
+
+fn hash_to_unit_range(x: i64, seed: u64) -> f32 {
+    let mut value = (x as u64).wrapping_add(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
+    value ^= value >> 31;
+    (value as f64 / u64::MAX as f64) as f32
+}
+
+fn envelope(time: f32, attack: f32, decay: f32) -> Result<f32> {
+    if !attack.is_finite() || attack <= 0.0 {
+        bail!("env attack must be finite and > 0");
+    }
+    if !decay.is_finite() || decay <= 0.0 {
+        bail!("env decay must be finite and > 0");
+    }
+
+    if time <= 0.0 {
+        return Ok(0.0);
+    }
+    if time < attack {
+        return Ok((time / attack).clamp(0.0, 1.0));
+    }
+
+    let decay_progress = (time - attack) / decay;
+    Ok((1.0 - decay_progress).clamp(0.0, 1.0))
+}
+
+fn normalize_identifier(identifier: &str) -> String {
+    identifier
+        .chars()
+        .filter(|character| *character != '_')
+        .flat_map(|character| character.to_lowercase())
+        .collect()
+}
+
+fn valid_identifier(identifier: &str) -> bool {
+    let mut chars = identifier.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+
+    chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
+fn default_manifest_version() -> u32 {
+    DEFAULT_MANIFEST_VERSION
+}
+
 fn default_scale() -> PropertyValue<Vec2> {
     PropertyValue::Static(Vec2 { x: 1.0, y: 1.0 })
 }
@@ -767,9 +1402,123 @@ fn default_opacity_property() -> ScalarProperty {
     ScalarProperty::Static(1.0)
 }
 
+fn default_time_scale() -> f32 {
+    1.0
+}
+
 fn validate_number(label: &str, value: f32) -> Result<()> {
     if !value.is_finite() {
         bail!("{label} must be finite");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        default_manifest_version, validate_manifest_manifest_level, ExpressionContext, Manifest,
+        ScalarExpression, ScalarProperty,
+    };
+
+    fn parse_expression(source: &str) -> ScalarExpression {
+        serde_yaml::from_str::<ScalarExpression>(&format!("\"{source}\""))
+            .expect("expression should parse")
+    }
+
+    #[test]
+    fn expression_supports_builtins_and_params() {
+        let expression = parse_expression("lerp(energy, clamp(t, 0, 10), easeInOut(0.5)) + sin(0)");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("energy".to_owned(), 2.0);
+
+        let context = ExpressionContext::new(4.0, &params, 7);
+        let value = expression
+            .evaluate_with_context(&context)
+            .expect("expression should evaluate");
+
+        // easeInOut(0.5) == 0.5, sin(0) == 0
+        assert!((value - 3.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn expression_noise_is_deterministic() {
+        let expression = parse_expression("noise1d(t * 0.1)");
+        let params = std::collections::BTreeMap::new();
+
+        let a = expression
+            .evaluate_with_context(&ExpressionContext::new(12.0, &params, 99))
+            .expect("noise should evaluate");
+        let b = expression
+            .evaluate_with_context(&ExpressionContext::new(12.0, &params, 99))
+            .expect("noise should evaluate");
+        let c = expression
+            .evaluate_with_context(&ExpressionContext::new(12.0, &params, 100))
+            .expect("noise should evaluate");
+
+        assert!((a - b).abs() < f32::EPSILON);
+        assert!((a - c).abs() > 0.0001);
+    }
+
+    #[test]
+    fn expression_unknown_variable_returns_error() {
+        let expression = parse_expression("energy + missing_param");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("energy".to_owned(), 1.0);
+
+        let error = expression
+            .evaluate_with_context(&ExpressionContext::new(0.0, &params, 0))
+            .expect_err("missing_param should fail validation");
+        assert!(error.to_string().contains("missing_param"));
+    }
+
+    #[test]
+    fn manifest_parses_groups_params_and_modulators() {
+        let manifest = serde_yaml::from_str::<Manifest>(
+            r#"
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 24
+  duration: { frames: 48 }
+seed: 42
+params:
+  energy: 0.8
+modulators:
+  wobble:
+    expression: "noise1d(t * 0.1) * energy"
+groups:
+  - id: root
+    position: [10, 20]
+layers:
+  - id: gradient
+    group: root
+    modulators:
+      - source: wobble
+        weights:
+          x: 30
+    procedural:
+      kind: gradient
+      start_color: { r: 0.1, g: 0.2, b: 0.3, a: 1.0 }
+      end_color: { r: 0.7, g: 0.2, b: 0.5, a: 1.0 }
+"#,
+        )
+        .expect("manifest should parse");
+
+        assert_eq!(manifest.version, default_manifest_version());
+        assert_eq!(manifest.groups.len(), 1);
+        assert_eq!(manifest.modulators.len(), 1);
+        validate_manifest_manifest_level(&manifest).expect("manifest level validation should pass");
+    }
+
+    #[test]
+    fn scalar_property_expression_uses_context() {
+        let property = ScalarProperty::Expression(parse_expression("energy * cos(t)"));
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("energy".to_owned(), 2.0);
+
+        let value = property
+            .evaluate_with_context(&ExpressionContext::new(0.0, &params, 0))
+            .expect("property should evaluate");
+        assert!((value - 2.0).abs() < 0.0001);
+    }
 }

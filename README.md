@@ -1,30 +1,65 @@
 # VCR (Video Component Renderer)
 
 VCR is a headless, local-first motion graphics renderer.
-It compiles declarative scene manifests into video files using a GPU pipeline (`wgpu`) with an automatic CPU software fallback (`tiny-skia`) when no GPU adapter is available.
+It compiles declarative scene manifests (`.vcr`) into frames or video using a GPU-first pipeline (`wgpu`) with automatic CPU fallback (`tiny-skia`).
+
+Repository: [https://github.com/coltonbatts/VCR](https://github.com/coltonbatts/VCR)
 
 ## Features
 
-- YAML-based scene manifests (`.vcr` files)
-- Layered compositing with z-order
-- Asset and procedural layers
-- Procedural solid and linear gradient sources
-- Per-layer animation controls:
-  - `position` (static vec2 or keyframed mapping)
-  - `pos_x`/`position_x` and `pos_y`/`position_y` expression overrides
-  - `scale`, `rotation_degrees`, `opacity`
-- ProRes 4444 output through FFmpeg
-- Automatic CPU fallback with warning when no GPU is present
+- YAML scene manifests with stable IDs and readable animation data.
+- GPU-first rendering with deterministic CPU fallback.
+- Procedural layers (`solid_color`, `gradient`) and asset layers.
+- Expression-driven animation (`t`, params, easing/math helpers, deterministic `noise1d`, `env`).
+- Global `params`, reusable `modulators`, and inheritable `groups`.
+- Timing controls per layer/group: `start_time`, `end_time`, `time_offset`, `time_scale`.
+- Fast iteration workflows:
+  - `preview` (scaled, short, frame-window)
+  - `render-frame` (single PNG)
+  - `render-frames` (PNG sequence)
+  - `watch` (rebuild on manifest change)
+- Diagnostics:
+  - `check` for structural validation
+  - `lint` for common scene issues
+  - `dump` for resolved scene state at a frame/time
 
 ## Requirements
 
-- Rust (stable)
-- FFmpeg available on `PATH`
+- Rust stable toolchain
+- FFmpeg on `PATH` for `.mov` output (`build` and default `preview` output)
+
+If FFmpeg is missing, VCR fails with a helpful error message. Use image sequence output (`--image-sequence`) when FFmpeg is unavailable.
 
 ## Build
 
 ```bash
 cargo build
+```
+
+## Golden Path
+
+1. Validate your manifest:
+
+```bash
+cargo run -- check sanity_check.vcr
+```
+
+2. Run a fast preview (half-res, short duration):
+
+```bash
+cargo run -- preview sanity_check.vcr --image-sequence -o preview_frames
+```
+
+3. Iterate while editing:
+
+```bash
+cargo run -- watch sanity_check.vcr --image-sequence -o preview_frames
+```
+
+4. Build final video:
+
+```bash
+cargo run -- build sanity_check.vcr -o output.mov
 ```
 
 ## CLI
@@ -35,57 +70,34 @@ cargo run -- --help
 
 Commands:
 
-- `check <manifest>`: validate and print manifest summary
-- `build <manifest> -o <output.mov>`: render video
+- `check <manifest>`: validate and summarize the manifest.
+- `lint <manifest>`: flag common scene issues.
+- `dump <manifest> [--frame N | --time SECONDS]`: print resolved layer state.
+- `build <manifest> -o <output.mov> [--start-frame N] [--frames N | --end-frame N]`.
+- `preview <manifest> [--scale 0.5] [--frames N] [--image-sequence]`.
+- `render-frame <manifest> --frame N -o frame.png`.
+- `render-frames <manifest> --start-frame N --frames N -o frames_dir`.
+- `watch <manifest> [preview flags]`: rebuild preview when the manifest changes.
 
-Examples:
+Every render path prints timing breakdowns: parse, layout, render, encode.
 
-```bash
-cargo run -- check sanity_check.vcr
-cargo run -- build sanity_check.vcr -o test.mov
-```
+## Manifest Notes
 
-If no GPU is available, VCR falls back automatically:
+- Existing manifests remain valid (defaults are additive).
+- New steerability blocks:
+  - `params`: named global scalar controls.
+  - `modulators`: reusable expression sources.
+  - `groups`: transform/timing inheritance.
+- Expressions support:
+  - `clamp`, `lerp`, `smoothstep`, `easeInOut`
+  - `sin`, `cos`, `abs`
+  - deterministic `noise1d`
+  - envelope helper `env`
 
-```text
-[VCR] Warning: No GPU found. Falling back to CPU rendering (Slow).
-```
+See `STEERABILITY.md` and the examples under `examples/`.
 
-## Manifest Shape (high-level)
+## Included Examples
 
-```yaml
-environment:
-  resolution:
-    width: 1920
-    height: 1080
-  fps: 24
-  duration:
-    frames: 48
-
-layers:
-  - id: background
-    z_index: 0
-    procedural:
-      kind: solid_color
-      color: { r: 0.1, g: 0.1, b: 0.1, a: 1.0 }
-
-  - id: moving_gradient
-    z_index: 1
-    pos_x: "t * 40"
-    procedural:
-      kind: gradient
-      start_color: { r: 0.15, g: 0.45, b: 0.95, a: 0.85 }
-      end_color: { r: 0.95, g: 0.35, b: 0.15, a: 0.85 }
-      direction: horizontal
-```
-
-## Included Example Manifests
-
-- `sanity_check.vcr`
-- `sanity_check_fallback.vcr`
-
-## Notes
-
-- The software renderer returns tight RGBA8 rows directly.
-- The GPU renderer handles padded row copies and strips padding before encoding.
-- Output artifacts like local test renders are not source-controlled.
+- `examples/global_params_scene.vcr`
+- `examples/envelope_scene.vcr`
+- `examples/group_wobble_scene.vcr`

@@ -1,0 +1,66 @@
+version: 1
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 24
+  duration:
+    frames: 240
+
+seed: 1337
+params:
+  wobble: 0.9
+
+modulators:
+  rig_wobble:
+    expression: "noise1d(t * 0.18) * wobble"
+
+groups:
+  - id: hero_rig
+    name: Hero Rig
+    position: [420, 220]
+    time_offset: 0.1
+    time_scale: 1.0
+    modulators:
+      - source: rig_wobble
+        weights:
+          x: 18
+          y: 10
+          rotation: 2.5
+
+layers:
+  - id: bg
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.06, g: 0.06, b: 0.08, a: 1.0 }
+
+  - id: hero_plate
+    group: hero_rig
+    z_index: 1
+    name: Hero Plate
+    stable_id: plate_A
+    scale: [0.75, 0.75]
+    opacity: 0.92
+    procedural:
+      kind: gradient
+      start_color: { r: 0.2, g: 0.25, b: 0.95, a: 0.9 }
+      end_color: { r: 0.95, g: 0.35, b: 0.2, a: 0.9 }
+      direction: horizontal
+
+  - id: hero_glow
+    group: hero_rig
+    z_index: 2
+    position: [40, 18]
+    scale: [0.95, 0.95]
+    opacity: "clamp(0.3 + env(t, 20, 160) * 0.5, 0.0, 1.0)"
+    modulators:
+      - source: rig_wobble
+        weights:
+          y: 6
+          opacity: 0.12
+    procedural:
+      kind: gradient
+      start_color: { r: 0.9, g: 0.9, b: 0.2, a: 0.7 }
+      end_color: { r: 0.2, g: 0.9, b: 0.9, a: 0.2 }
+      direction: vertical

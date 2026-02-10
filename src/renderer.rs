@@ -1,7 +1,8 @@
+use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 use std::sync::mpsc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bytemuck::{Pod, Zeroable};
 use image::ImageReader;
 use tiny_skia::{
@@ -11,8 +12,9 @@ use tiny_skia::{
 use wgpu::util::DeviceExt;
 
 use crate::schema::{
-    AssetLayer, ColorRgba, Environment, GradientDirection, Layer, LayerCommon, ProceduralLayer,
-    ProceduralSource, PropertyValue, ScalarProperty, Vec2,
+    AssetLayer, ColorRgba, Environment, ExpressionContext, GradientDirection, Group, Layer,
+    LayerCommon, Manifest, ModulatorBinding, ModulatorMap, Parameters, ProceduralLayer,
+    ProceduralSource, PropertyValue, ScalarProperty, TimingControls, Vec2,
 };
 
 const BLEND_SHADER: &str = r#"
@@ -98,6 +100,107 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 const EPSILON: f32 = 0.0001;
 const NO_GPU_ADAPTER_ERR: &str = "no suitable GPU adapter found (hardware or fallback)";
 
+#[derive(Debug, Clone, Default)]
+pub struct RenderSceneData {
+    pub seed: u64,
+    pub params: Parameters,
+    pub modulators: ModulatorMap,
+    pub groups: Vec<Group>,
+}
+
+impl RenderSceneData {
+    pub fn from_manifest(manifest: &Manifest) -> Self {
+        Self {
+            seed: manifest.seed,
+            params: manifest.params.clone(),
+            modulators: manifest.modulators.clone(),
+            groups: manifest.groups.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LayerDebugState {
+    pub id: String,
+    pub name: Option<String>,
+    pub stable_id: Option<String>,
+    pub z_index: i32,
+    pub visible: bool,
+    pub position: Vec2,
+    pub scale: Vec2,
+    pub rotation_degrees: f32,
+    pub opacity: f32,
+}
+
+pub fn evaluate_manifest_layers_at_frame(
+    manifest: &Manifest,
+    frame_index: u32,
+) -> Result<Vec<LayerDebugState>> {
+    let scene = RenderSceneData::from_manifest(manifest);
+    let groups_by_id = scene
+        .groups
+        .iter()
+        .cloned()
+        .map(|group| (group.id.clone(), group))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut states = Vec::with_capacity(manifest.layers.len());
+    for layer in &manifest.layers {
+        let common = layer.common();
+        let group_chain = resolve_group_chain(common, &groups_by_id)?;
+        let evaluated = evaluate_layer_state(
+            common.id.as_str(),
+            &common.position,
+            common.pos_x.as_ref(),
+            common.pos_y.as_ref(),
+            &common.scale,
+            &common.rotation_degrees,
+            &common.opacity,
+            common.timing_controls(),
+            &common.modulators,
+            &group_chain,
+            frame_index,
+            manifest.environment.fps,
+            &scene.params,
+            scene.seed,
+            &scene.modulators,
+        )?;
+
+        let (visible, position, scale, rotation_degrees, opacity) = if let Some(state) = evaluated {
+            (
+                true,
+                state.position,
+                state.scale,
+                state.rotation_degrees,
+                state.opacity,
+            )
+        } else {
+            (
+                false,
+                Vec2 { x: 0.0, y: 0.0 },
+                Vec2 { x: 1.0, y: 1.0 },
+                0.0,
+                0.0,
+            )
+        };
+
+        states.push(LayerDebugState {
+            id: common.id.clone(),
+            name: common.name.clone(),
+            stable_id: common.stable_id.clone(),
+            z_index: common.z_index,
+            visible,
+            position,
+            scale,
+            rotation_degrees,
+            opacity,
+        });
+    }
+
+    states.sort_by_key(|state| state.z_index);
+    Ok(states)
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct Vertex {
@@ -123,6 +226,7 @@ struct ProceduralUniform {
 }
 
 struct GpuLayer {
+    id: String,
     z_index: i32,
     width: u32,
     height: u32,
@@ -132,6 +236,9 @@ struct GpuLayer {
     scale: PropertyValue<Vec2>,
     rotation_degrees: ScalarProperty,
     opacity: ScalarProperty,
+    timing: TimingControls,
+    modulators: Vec<ModulatorBinding>,
+    group_chain: Vec<Group>,
     all_properties_static: bool,
     uniform_buffer: wgpu::Buffer,
     blend_bind_group: wgpu::BindGroup,
@@ -173,6 +280,10 @@ struct GpuRenderer {
     queue: wgpu::Queue,
     width: u32,
     height: u32,
+    fps: u32,
+    seed: u64,
+    params: Parameters,
+    modulators: ModulatorMap,
     output_texture: wgpu::Texture,
     output_view: wgpu::TextureView,
     readback_buffer: wgpu::Buffer,
@@ -185,6 +296,7 @@ struct GpuRenderer {
 
 pub struct Renderer {
     backend: RendererBackend,
+    backend_reason: String,
 }
 
 enum RendererBackend {
@@ -195,10 +307,15 @@ enum RendererBackend {
 struct SoftwareRenderer {
     width: u32,
     height: u32,
+    fps: u32,
+    seed: u64,
+    params: Parameters,
+    modulators: ModulatorMap,
     layers: Vec<SoftwareLayer>,
 }
 
 struct SoftwareLayer {
+    id: String,
     z_index: i32,
     width: u32,
     height: u32,
@@ -208,6 +325,9 @@ struct SoftwareLayer {
     scale: PropertyValue<Vec2>,
     rotation_degrees: ScalarProperty,
     opacity: ScalarProperty,
+    timing: TimingControls,
+    modulators: Vec<ModulatorBinding>,
+    group_chain: Vec<Group>,
     source: SoftwareLayerSource,
 }
 
@@ -217,9 +337,19 @@ enum SoftwareLayerSource {
 }
 
 impl GpuRenderer {
-    pub async fn new(environment: &Environment, layers: &[Layer]) -> Result<Self> {
+    pub async fn new(
+        environment: &Environment,
+        layers: &[Layer],
+        scene: &RenderSceneData,
+    ) -> Result<Self> {
         let width = environment.resolution.width;
         let height = environment.resolution.height;
+        let groups_by_id = scene
+            .groups
+            .iter()
+            .cloned()
+            .map(|group| (group.id.clone(), group))
+            .collect::<BTreeMap<_, _>>();
 
         let instance = wgpu::Instance::default();
         let adapter = if let Some(adapter) = instance
@@ -422,6 +552,8 @@ impl GpuRenderer {
 
         let mut gpu_layers = Vec::with_capacity(layers.len());
         for layer in layers {
+            let common = layer.common();
+            let group_chain = resolve_group_chain(common, &groups_by_id)?;
             let gpu_layer = match layer {
                 Layer::Asset(asset_layer) => build_asset_layer(
                     &device,
@@ -429,6 +561,7 @@ impl GpuRenderer {
                     width,
                     height,
                     asset_layer,
+                    group_chain.clone(),
                     &blend_bind_group_layout,
                     &sampler,
                 )?,
@@ -438,6 +571,7 @@ impl GpuRenderer {
                     width,
                     height,
                     procedural_layer,
+                    group_chain,
                     &blend_bind_group_layout,
                     &procedural_bind_group_layout,
                     &sampler,
@@ -452,6 +586,10 @@ impl GpuRenderer {
             queue,
             width,
             height,
+            fps: environment.fps,
+            seed: scene.seed,
+            params: scene.params.clone(),
+            modulators: scene.modulators.clone(),
             output_texture,
             output_view,
             readback_buffer,
@@ -497,6 +635,10 @@ impl GpuRenderer {
                         &self.queue,
                         self.width,
                         self.height,
+                        self.fps,
+                        self.seed,
+                        &self.params,
+                        &self.modulators,
                         layer,
                         frame_index,
                     )?;
@@ -625,24 +767,37 @@ impl GpuRenderer {
 }
 
 impl Renderer {
-    pub async fn new(environment: &Environment, layers: &[Layer]) -> Result<Self> {
-        match GpuRenderer::new(environment, layers).await {
+    pub async fn new_with_scene(
+        environment: &Environment,
+        layers: &[Layer],
+        scene: RenderSceneData,
+    ) -> Result<Self> {
+        match GpuRenderer::new(environment, layers, &scene).await {
             Ok(gpu) => Ok(Self {
                 backend: RendererBackend::Gpu(gpu),
+                backend_reason: "wgpu adapter available".to_owned(),
             }),
             Err(error) if error.to_string().contains(NO_GPU_ADAPTER_ERR) => {
-                let software = SoftwareRenderer::new(environment, layers)
+                let software = SoftwareRenderer::new(environment, layers, &scene)
                     .context("failed to initialize software renderer fallback")?;
                 Ok(Self {
                     backend: RendererBackend::Software(software),
+                    backend_reason: error.to_string(),
                 })
             }
             Err(error) => Err(error),
         }
     }
 
-    pub fn using_software(&self) -> bool {
-        matches!(self.backend, RendererBackend::Software(_))
+    pub fn backend_name(&self) -> &'static str {
+        match self.backend {
+            RendererBackend::Gpu(_) => "GPU",
+            RendererBackend::Software(_) => "CPU",
+        }
+    }
+
+    pub fn backend_reason(&self) -> &str {
+        &self.backend_reason
     }
 
     pub fn render_frame_rgba(&mut self, frame_index: u32) -> Result<Vec<u8>> {
@@ -654,13 +809,20 @@ impl Renderer {
 }
 
 impl SoftwareRenderer {
-    fn new(environment: &Environment, layers: &[Layer]) -> Result<Self> {
+    fn new(environment: &Environment, layers: &[Layer], scene: &RenderSceneData) -> Result<Self> {
         let width = environment.resolution.width;
         let height = environment.resolution.height;
+        let groups_by_id = scene
+            .groups
+            .iter()
+            .cloned()
+            .map(|group| (group.id.clone(), group))
+            .collect::<BTreeMap<_, _>>();
         let mut software_layers = Vec::with_capacity(layers.len());
 
         for layer in layers {
             let common = layer.common();
+            let group_chain = resolve_group_chain(common, &groups_by_id)?;
             let source = match layer {
                 Layer::Asset(asset_layer) => SoftwareLayerSource::Asset {
                     pixmap: load_asset_pixmap(asset_layer)?,
@@ -676,6 +838,7 @@ impl SoftwareRenderer {
             };
 
             software_layers.push(SoftwareLayer {
+                id: common.id.clone(),
                 z_index: common.z_index,
                 width: layer_width,
                 height: layer_height,
@@ -685,6 +848,9 @@ impl SoftwareRenderer {
                 scale: common.scale.clone(),
                 rotation_degrees: common.rotation_degrees.clone(),
                 opacity: common.opacity.clone(),
+                timing: common.timing_controls(),
+                modulators: common.modulators.clone(),
+                group_chain,
                 source,
             });
         }
@@ -693,6 +859,10 @@ impl SoftwareRenderer {
         Ok(Self {
             width,
             height,
+            fps: environment.fps,
+            seed: scene.seed,
+            params: scene.params.clone(),
+            modulators: scene.modulators.clone(),
             layers: software_layers,
         })
     }
@@ -717,23 +887,34 @@ impl SoftwareRenderer {
         layer: &SoftwareLayer,
         frame_index: u32,
     ) -> Result<()> {
-        let opacity = layer.opacity.evaluate(frame_index)?.clamp(0.0, 1.0);
-        if opacity <= 0.0 {
-            return Ok(());
-        }
-
-        let position = sample_position(
+        let Some(state) = evaluate_layer_state(
+            &layer.id,
             &layer.position,
             layer.position_x.as_ref(),
             layer.position_y.as_ref(),
+            &layer.scale,
+            &layer.rotation_degrees,
+            &layer.opacity,
+            layer.timing,
+            &layer.modulators,
+            &layer.group_chain,
             frame_index,
-        )?;
-        let scale = layer.scale.sample(frame_index);
-        let rotation = layer.rotation_degrees.evaluate(frame_index)?;
+            self.fps,
+            &self.params,
+            self.seed,
+            &self.modulators,
+        )?
+        else {
+            return Ok(());
+        };
+        let opacity = state.opacity.clamp(0.0, 1.0);
+        if opacity <= 0.0 {
+            return Ok(());
+        }
         let transform = layer_transform(
-            position,
-            scale,
-            rotation,
+            state.position,
+            state.scale,
+            state.rotation_degrees,
             layer.width as f32,
             layer.height as f32,
         );
@@ -758,6 +939,7 @@ fn build_asset_layer(
     frame_width: u32,
     frame_height: u32,
     layer: &AssetLayer,
+    group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
 ) -> Result<GpuLayer> {
@@ -833,6 +1015,7 @@ fn build_asset_layer(
     )?;
 
     Ok(GpuLayer {
+        id: layer.common.id.clone(),
         z_index: layer.common.z_index,
         width: layer_width,
         height: layer_height,
@@ -842,7 +1025,11 @@ fn build_asset_layer(
         scale: layer.common.scale.clone(),
         rotation_degrees: layer.common.rotation_degrees.clone(),
         opacity: layer.common.opacity.clone(),
-        all_properties_static: layer.common.has_static_properties(),
+        timing: layer.common.timing_controls(),
+        modulators: layer.common.modulators.clone(),
+        all_properties_static: layer.common.has_static_properties()
+            && group_chain.iter().all(Group::has_static_properties),
+        group_chain,
         uniform_buffer: draw_resources.uniform_buffer,
         blend_bind_group: draw_resources.blend_bind_group,
         vertex_buffer: draw_resources.vertex_buffer,
@@ -858,6 +1045,7 @@ fn build_procedural_layer(
     frame_width: u32,
     frame_height: u32,
     layer: &ProceduralLayer,
+    group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     procedural_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
@@ -919,6 +1107,7 @@ fn build_procedural_layer(
     };
 
     Ok(GpuLayer {
+        id: layer.common.id.clone(),
         z_index: layer.common.z_index,
         width: frame_width,
         height: frame_height,
@@ -928,7 +1117,11 @@ fn build_procedural_layer(
         scale: layer.common.scale.clone(),
         rotation_degrees: layer.common.rotation_degrees.clone(),
         opacity: layer.common.opacity.clone(),
-        all_properties_static: layer.common.has_static_properties(),
+        timing: layer.common.timing_controls(),
+        modulators: layer.common.modulators.clone(),
+        all_properties_static: layer.common.has_static_properties()
+            && group_chain.iter().all(Group::has_static_properties),
+        group_chain,
         uniform_buffer: draw_resources.uniform_buffer,
         blend_bind_group: draw_resources.blend_bind_group,
         vertex_buffer: draw_resources.vertex_buffer,
@@ -958,7 +1151,7 @@ fn build_layer_draw_resources(
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
 ) -> Result<LayerDrawResources> {
-    let opacity = common.opacity.evaluate(0)?.clamp(0.0, 1.0);
+    let opacity = 1.0;
     let uniform = LayerUniform {
         opacity,
         _pad: [0.0; 3],
@@ -1000,9 +1193,9 @@ fn build_layer_draw_resources(
         frame_height,
         layer_width,
         layer_height,
-        common.sample_position(0)?,
-        common.scale.sample(0),
-        common.rotation_degrees.evaluate(0)?,
+        Vec2 { x: 0.0, y: 0.0 },
+        Vec2 { x: 1.0, y: 1.0 },
+        0.0,
     );
     queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&initial_vertices));
 
@@ -1019,10 +1212,40 @@ fn refresh_layer_draw_state(
     queue: &wgpu::Queue,
     frame_width: u32,
     frame_height: u32,
+    fps: u32,
+    seed: u64,
+    params: &Parameters,
+    modulators: &ModulatorMap,
     layer: &mut GpuLayer,
     frame_index: u32,
 ) -> Result<()> {
-    let opacity = layer.opacity.evaluate(frame_index)?.clamp(0.0, 1.0);
+    let Some(state) = evaluate_layer_state(
+        &layer.id,
+        &layer.position,
+        layer.position_x.as_ref(),
+        layer.position_y.as_ref(),
+        &layer.scale,
+        &layer.rotation_degrees,
+        &layer.opacity,
+        layer.timing,
+        &layer.modulators,
+        &layer.group_chain,
+        frame_index,
+        fps,
+        params,
+        seed,
+        modulators,
+    )?
+    else {
+        let hidden = LayerUniform {
+            opacity: 0.0,
+            _pad: [0.0; 3],
+        };
+        queue.write_buffer(&layer.uniform_buffer, 0, bytemuck::bytes_of(&hidden));
+        layer.last_opacity = Some(0.0);
+        return Ok(());
+    };
+    let opacity = state.opacity.clamp(0.0, 1.0);
     if layer
         .last_opacity
         .map_or(true, |previous| (previous - opacity).abs() > EPSILON)
@@ -1035,20 +1258,14 @@ fn refresh_layer_draw_state(
         layer.last_opacity = Some(opacity);
     }
 
-    let position = sample_position(
-        &layer.position,
-        layer.position_x.as_ref(),
-        layer.position_y.as_ref(),
-        frame_index,
-    )?;
     let vertices = build_layer_quad(
         frame_width,
         frame_height,
         layer.width,
         layer.height,
-        position,
-        layer.scale.sample(frame_index),
-        layer.rotation_degrees.evaluate(frame_index)?,
+        state.position,
+        state.scale,
+        state.rotation_degrees,
     );
 
     if layer
@@ -1092,20 +1309,200 @@ fn procedural_uniform(source: &ProceduralSource) -> ProceduralUniform {
     }
 }
 
-fn sample_position(
+#[derive(Debug, Clone, Copy)]
+struct EvaluatedLayerState {
+    position: Vec2,
+    scale: Vec2,
+    rotation_degrees: f32,
+    opacity: f32,
+}
+
+fn resolve_group_chain(
+    common: &LayerCommon,
+    groups_by_id: &BTreeMap<String, Group>,
+) -> Result<Vec<Group>> {
+    let Some(group_id) = common.group.as_deref() else {
+        return Ok(Vec::new());
+    };
+
+    let mut chain = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut current = Some(group_id);
+    while let Some(group_name) = current {
+        if !seen.insert(group_name.to_owned()) {
+            return Err(anyhow!(
+                "layer '{}' has a cyclic group chain around '{}'",
+                common.id,
+                group_name
+            ));
+        }
+
+        let group = groups_by_id.get(group_name).ok_or_else(|| {
+            anyhow!(
+                "layer '{}' references unknown group '{}'",
+                common.id,
+                group_name
+            )
+        })?;
+        chain.push(group.clone());
+        current = group.parent.as_deref();
+    }
+
+    chain.reverse();
+    Ok(chain)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_layer_state(
+    layer_id: &str,
     position: &PropertyValue<Vec2>,
     position_x: Option<&ScalarProperty>,
     position_y: Option<&ScalarProperty>,
+    scale: &PropertyValue<Vec2>,
+    rotation_degrees: &ScalarProperty,
+    opacity: &ScalarProperty,
+    timing: TimingControls,
+    layer_modulators: &[ModulatorBinding],
+    group_chain: &[Group],
     frame_index: u32,
-) -> Result<Vec2> {
-    let mut sampled = position.sample(frame_index);
+    fps: u32,
+    params: &Parameters,
+    seed: u64,
+    modulator_defs: &ModulatorMap,
+) -> Result<Option<EvaluatedLayerState>> {
+    let mut frame = frame_index as f32;
+    let mut combined_position = Vec2 { x: 0.0, y: 0.0 };
+    let mut combined_scale = Vec2 { x: 1.0, y: 1.0 };
+    let mut combined_rotation = 0.0;
+    let mut combined_opacity = 1.0;
+
+    for group in group_chain {
+        frame = match group.timing_controls().remap_frame(frame, fps) {
+            Some(mapped) => mapped,
+            None => return Ok(None),
+        };
+
+        let context = ExpressionContext::new(frame, params, seed);
+        let mut group_position = group
+            .sample_position_with_context(frame, &context)
+            .with_context(|| format!("group '{}' failed to evaluate position", group.id))?;
+        let mut group_scale = group.scale.sample_at(frame);
+        let mut group_rotation = group
+            .rotation_degrees
+            .evaluate_with_context(&context)
+            .with_context(|| format!("group '{}' failed to evaluate rotation", group.id))?;
+        let mut group_opacity = group
+            .opacity
+            .evaluate_with_context(&context)
+            .with_context(|| format!("group '{}' failed to evaluate opacity", group.id))?;
+
+        apply_modulators(
+            &group.modulators,
+            &context,
+            modulator_defs,
+            &mut group_position,
+            &mut group_scale,
+            &mut group_rotation,
+            &mut group_opacity,
+            &format!("group '{}'", group.id),
+        )?;
+
+        combined_position.x += group_position.x;
+        combined_position.y += group_position.y;
+        combined_scale.x *= group_scale.x;
+        combined_scale.y *= group_scale.y;
+        combined_rotation += group_rotation;
+        combined_opacity *= group_opacity;
+    }
+
+    frame = match timing.remap_frame(frame, fps) {
+        Some(mapped) => mapped,
+        None => return Ok(None),
+    };
+    let context = ExpressionContext::new(frame, params, seed);
+
+    let mut layer_position = position.sample_at(frame);
     if let Some(x) = position_x {
-        sampled.x = x.evaluate(frame_index)?;
+        layer_position.x = x.evaluate_with_context(&context)?;
     }
     if let Some(y) = position_y {
-        sampled.y = y.evaluate(frame_index)?;
+        layer_position.y = y.evaluate_with_context(&context)?;
     }
-    Ok(sampled)
+    let mut layer_scale = scale.sample_at(frame);
+    let mut layer_rotation = rotation_degrees.evaluate_with_context(&context)?;
+    let mut layer_opacity = opacity.evaluate_with_context(&context)?;
+
+    apply_modulators(
+        layer_modulators,
+        &context,
+        modulator_defs,
+        &mut layer_position,
+        &mut layer_scale,
+        &mut layer_rotation,
+        &mut layer_opacity,
+        &format!("layer '{layer_id}'"),
+    )?;
+
+    combined_position.x += layer_position.x;
+    combined_position.y += layer_position.y;
+    combined_scale.x *= layer_scale.x;
+    combined_scale.y *= layer_scale.y;
+    combined_rotation += layer_rotation;
+    combined_opacity *= layer_opacity;
+
+    if !combined_position.x.is_finite()
+        || !combined_position.y.is_finite()
+        || !combined_scale.x.is_finite()
+        || !combined_scale.y.is_finite()
+        || !combined_rotation.is_finite()
+        || !combined_opacity.is_finite()
+    {
+        bail!("layer '{layer_id}' produced non-finite animation values");
+    }
+
+    if combined_opacity <= 0.0 {
+        return Ok(None);
+    }
+
+    Ok(Some(EvaluatedLayerState {
+        position: combined_position,
+        scale: combined_scale,
+        rotation_degrees: combined_rotation,
+        opacity: combined_opacity.clamp(0.0, 1.0),
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_modulators(
+    bindings: &[ModulatorBinding],
+    context: &ExpressionContext<'_>,
+    definitions: &ModulatorMap,
+    position: &mut Vec2,
+    scale: &mut Vec2,
+    rotation_degrees: &mut f32,
+    opacity: &mut f32,
+    label: &str,
+) -> Result<()> {
+    for binding in bindings {
+        let definition = definitions.get(&binding.source).ok_or_else(|| {
+            anyhow!(
+                "{label} references missing modulator '{}'; run `vcr lint` to diagnose",
+                binding.source
+            )
+        })?;
+        let value = definition
+            .expression
+            .evaluate_with_context(context)
+            .with_context(|| format!("{label} failed evaluating modulator '{}'", binding.source))?;
+        let weights = binding.weights;
+        position.x += value * weights.x;
+        position.y += value * weights.y;
+        scale.x += value * weights.scale_x;
+        scale.y += value * weights.scale_y;
+        *rotation_degrees += value * weights.rotation;
+        *opacity += value * weights.opacity;
+    }
+    Ok(())
 }
 
 fn vertices_approx_eq(left: &[Vertex; 6], right: &[Vertex; 6]) -> bool {
@@ -1382,7 +1779,8 @@ fn unpremultiply_rgba_in_place(bytes: &mut [u8]) {
 
 #[cfg(test)]
 mod tests {
-    use super::copy_tight_rows;
+    use super::{copy_tight_rows, RenderSceneData, SoftwareRenderer};
+    use crate::schema::Manifest;
 
     #[test]
     fn copy_tight_rows_strips_padding() {
@@ -1400,5 +1798,75 @@ mod tests {
         let mapped = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let tight = copy_tight_rows(&mapped, 4, 4, 2).expect("expected tight copy");
         assert_eq!(tight, mapped);
+    }
+
+    #[test]
+    fn software_renderer_golden_checksum_is_stable() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 16, height: 16 }
+  fps: 24
+  duration: { frames: 8 }
+seed: 42
+params:
+  energy: 0.8
+modulators:
+  wobble:
+    expression: "noise1d(t * 0.3) * energy"
+groups:
+  - id: rig
+    position: [2, 2]
+    modulators:
+      - source: wobble
+        weights:
+          x: 1.5
+layers:
+  - id: background
+    procedural:
+      kind: solid_color
+      color: { r: 0.1, g: 0.1, b: 0.1, a: 1.0 }
+  - id: accent
+    group: rig
+    position: [1, 1]
+    scale: [0.8, 0.8]
+    rotation_degrees: "sin(t * 0.2) * 12"
+    opacity: "clamp(0.6 + env(t, 2, 6) * 0.4, 0, 1)"
+    modulators:
+      - source: wobble
+        weights:
+          y: 1.0
+          rotation: 4.0
+    procedural:
+      kind: gradient
+      start_color: { r: 0.9, g: 0.2, b: 0.1, a: 0.9 }
+      end_color: { r: 0.1, g: 0.4, b: 0.9, a: 0.9 }
+      direction: horizontal
+"#,
+        )
+        .expect("manifest should parse");
+
+        let mut renderer = SoftwareRenderer::new(
+            &manifest.environment,
+            &manifest.layers,
+            &RenderSceneData::from_manifest(&manifest),
+        )
+        .expect("software renderer should initialize");
+
+        let frame = renderer
+            .render_frame_rgba(4)
+            .expect("frame render should succeed");
+        let checksum = fnv1a64(&frame);
+        assert_eq!(checksum, 2991149225877046887);
+    }
+
+    fn fnv1a64(bytes: &[u8]) -> u64 {
+        let mut hash = 0xcbf29ce484222325_u64;
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash
     }
 }
