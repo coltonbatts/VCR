@@ -1,11 +1,9 @@
 # VCR (Video Component Renderer)
 
+![Welcome to VCR](welcome%20to%20VCR.jpg)
+
 A headless motion graphics renderer that compiles declarative YAML scenes into broadcast-quality ProRes 4444 video with alpha transparency.
 Built in Rust, GPU-accelerated on Apple Silicon, and designed to render in seconds.
-
-![Sanity Check Demo](assets/sanity_check_demo.png)
-
-*This animated demo was rendered from a `.vcr` manifest in under 2 seconds. The output is a ProRes 4444 `.mov` with full alpha transparency—ready to drop into any NLE.*
 
 **Perfect for:** motion graphics overlays, animated lower thirds, branded graphics, procedural backgrounds, and repeatable graphics pipelines you would normally build in After Effects but want to control in code.
 
@@ -32,6 +30,10 @@ VCR is not a replacement for a full motion design GUI. It is best when you want 
 - **CLI-first workflow:** no GUI dependency, no Electron overhead.
 
 ## Quick Example
+
+![Sanity Check Demo](assets/sanity_check_demo.gif)
+
+*This demo was rendered from a `.vcr` manifest in under 2 seconds. The output is a ProRes 4444 `.mov` with full alpha transparency—ready to drop into any NLE.*
 
 `examples/welcome_terminal_scene.vcr` renders a terminal-style lower third overlay.
 
