@@ -3,9 +3,9 @@
 A headless motion graphics renderer that compiles declarative YAML scenes into broadcast-quality ProRes 4444 video with alpha transparency.
 Built in Rust, GPU-accelerated on Apple Silicon, and designed to render in seconds.
 
-<video src="docs/sanity_check_clean.webm" autoplay loop muted playsinline width="960"></video>
+![Sanity Check Demo](.github/demo.png)
 
-*This animated demo was rendered from a `.vcr` manifest in under 2 seconds. The output is a ProRes 4444 `.mov` with full alpha transparency—ready to drop into any NLE.*
+*This demo frame was rendered from a `.vcr` manifest in under 50ms. The full animation outputs as ProRes 4444 `.mov` with alpha transparency—ready to drop into any NLE.*
 
 **Perfect for:** motion graphics overlays, animated lower thirds, branded graphics, procedural backgrounds, and repeatable graphics pipelines you would normally build in After Effects but want to control in code.
 
