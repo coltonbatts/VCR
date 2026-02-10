@@ -3,7 +3,7 @@ seed: 42
 environment:
   resolution: { width: 1920, height: 1080 }
   fps: 24
-  duration: 4.0
+  duration: 3.0
 
 layers:
   - id: background
@@ -14,31 +14,29 @@ layers:
   - id: title
     anchor: center
     pos_x: 960
-    pos_y: 540
-    opacity: "0.8 + 0.2 * tri(t, 2)"
+    pos_y: 400
     text:
-      content: "THANK YOU FOR USING VCR"
+      content: "SANITY CHECK"
       font_family: "GeistPixel-Square"
-      font_size: 140
+      font_size: 180
       color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
 
-  - id: smiley_face
+  - id: stats
+    anchor: center
+    pos_x: 960
+    pos_y: 560
+    text:
+      content: "RENDERED IN ~40MS FROM TERMINAL"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.9 }
+
+  - id: thank_you
     anchor: center
     pos_x: 960
     pos_y: 720
     text:
-      content: ":)"
+      content: "THANK YOU FOR USING VCR :)"
       font_family: "GeistPixel-Square"
-      font_size: 100
-      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.8 }
-
-  - id: decorative_circle
-    anchor: center
-    pos_x: "960 + 400 * cos(t * 2)"
-    pos_y: "540 + 200 * sin(t * 2.5)"
-    opacity: 0.2
-    procedural:
-      kind: circle
-      center: { x: 0.5, y: 0.5 }
-      radius: 0.05
+      font_size: 80
       color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }

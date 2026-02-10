@@ -659,6 +659,11 @@ impl GpuRenderer {
                     group_chain.clone(),
                     &blend_bind_group_layout,
                     &sampler,
+                    &groups_by_id,
+                    &scene.params,
+                    &scene.modulators,
+                    scene.seed,
+                    environment.fps,
                 )?,
                 Layer::Image(image_layer) => build_image_layer(
                     &device,
@@ -669,6 +674,11 @@ impl GpuRenderer {
                     group_chain.clone(),
                     &blend_bind_group_layout,
                     &sampler,
+                    &groups_by_id,
+                    &scene.params,
+                    &scene.modulators,
+                    scene.seed,
+                    environment.fps,
                 )?,
                 Layer::Procedural(procedural_layer) => build_procedural_layer(
                     &device,
@@ -680,6 +690,11 @@ impl GpuRenderer {
                     &blend_bind_group_layout,
                     &procedural_bind_group_layout,
                     &sampler,
+                    &groups_by_id,
+                    &scene.params,
+                    &scene.modulators,
+                    scene.seed,
+                    environment.fps,
                 )?,
                 Layer::Text(text_layer) => build_text_layer(
                     &device,
@@ -690,6 +705,11 @@ impl GpuRenderer {
                     group_chain,
                     &blend_bind_group_layout,
                     &sampler,
+                    &groups_by_id,
+                    &scene.params,
+                    &scene.modulators,
+                    scene.seed,
+                    environment.fps,
                 )?,
             };
             gpu_layers.push(gpu_layer);
@@ -1074,6 +1094,11 @@ fn build_asset_layer(
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
+    groups_by_id: &BTreeMap<String, Group>,
+    params: &Parameters,
+    modulators: &ModulatorMap,
+    seed: u64,
+    fps: u32,
 ) -> Result<GpuLayer> {
     build_bitmap_layer(
         device,
@@ -1085,6 +1110,11 @@ fn build_asset_layer(
         group_chain,
         blend_bind_group_layout,
         sampler,
+        groups_by_id,
+        params,
+        modulators,
+        seed,
+        fps,
     )
 }
 
@@ -1097,6 +1127,11 @@ fn build_image_layer(
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
+    groups_by_id: &BTreeMap<String, Group>,
+    params: &Parameters,
+    modulators: &ModulatorMap,
+    seed: u64,
+    fps: u32,
 ) -> Result<GpuLayer> {
     build_bitmap_layer(
         device,
@@ -1108,10 +1143,14 @@ fn build_image_layer(
         group_chain,
         blend_bind_group_layout,
         sampler,
+        groups_by_id,
+        params,
+        modulators,
+        seed,
+        fps,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_bitmap_layer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -1122,6 +1161,10 @@ fn build_bitmap_layer(
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
+    groups_by_id: &BTreeMap<String, Group>,
+    params: &Parameters,
+    modulators: &ModulatorMap,
+    seed: u64, fps: u32,
 ) -> Result<GpuLayer> {
     let image = load_rgba_image(image_path, &common.id)?;
     let (layer_width, layer_height) = image.dimensions();
@@ -1167,12 +1210,35 @@ fn build_bitmap_layer(
     );
 
     let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let group_chain_ref = resolve_group_chain(common, groups_by_id)?;
+    let state = evaluate_layer_state(
+        &common.id,
+        &common.position,
+        common.pos_x.as_ref(),
+        common.pos_y.as_ref(),
+        &common.scale,
+        &common.rotation_degrees,
+        &common.opacity,
+        common.timing_controls(),
+        &common.modulators,
+        &group_chain_ref,
+        0,
+        fps,
+        params,
+        seed,
+        modulators,
+    )?.ok_or_else(|| anyhow!("layer '{}' not active at frame 0", common.id))?;
+
     let draw_resources = build_layer_draw_resources(
         device,
         queue,
         frame_width,
         frame_height,
         common,
+        state.position,
+        state.scale,
+        state.rotation_degrees,
         layer_width,
         layer_height,
         &texture_view,
@@ -1215,6 +1281,11 @@ fn build_procedural_layer(
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     procedural_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
+    groups_by_id: &BTreeMap<String, Group>,
+    params: &Parameters,
+    modulators: &ModulatorMap,
+    seed: u64,
+    fps: u32,
 ) -> Result<GpuLayer> {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(&format!("vcr-procedural-layer-{}", layer.common.id)),
@@ -1248,12 +1319,33 @@ fn build_procedural_layer(
         }],
     });
 
+    let state = evaluate_layer_state(
+        &layer.common.id,
+        &layer.common.position,
+        layer.common.pos_x.as_ref(),
+        layer.common.pos_y.as_ref(),
+        &layer.common.scale,
+        &layer.common.rotation_degrees,
+        &layer.common.opacity,
+        layer.common.timing_controls(),
+        &layer.common.modulators,
+        &group_chain,
+        0,
+        fps,
+        params,
+        seed,
+        modulators,
+    )?.ok_or_else(|| anyhow!("layer not active at frame 0"))?;
+
     let draw_resources = build_layer_draw_resources(
         device,
         queue,
         frame_width,
         frame_height,
         &layer.common,
+        state.position,
+        state.scale,
+        state.rotation_degrees,
         frame_width,
         frame_height,
         &view,
@@ -1311,6 +1403,9 @@ fn build_layer_draw_resources(
     frame_width: u32,
     frame_height: u32,
     common: &LayerCommon,
+    position: Vec2,
+    scale: Vec2,
+    rotation_degrees: f32,
     layer_width: u32,
     layer_height: u32,
     sampled_texture_view: &wgpu::TextureView,
@@ -1359,9 +1454,9 @@ fn build_layer_draw_resources(
         frame_height,
         layer_width,
         layer_height,
-        Vec2 { x: 0.0, y: 0.0 },
-        Vec2 { x: 1.0, y: 1.0 },
-        0.0,
+        position,
+        scale,
+        rotation_degrees,
         common.anchor,
     );
     queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&initial_vertices));
@@ -2131,6 +2226,11 @@ fn build_text_layer(
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
+    groups_by_id: &BTreeMap<String, Group>,
+    params: &Parameters,
+    modulators: &ModulatorMap,
+    seed: u64,
+    fps: u32,
 ) -> Result<GpuLayer> {
     let pixmap = render_text_to_pixmap(layer)?;
     let (layer_width, layer_height) = (pixmap.width(), pixmap.height());
@@ -2170,6 +2270,24 @@ fn build_text_layer(
         },
     );
 
+    let state = evaluate_layer_state(
+        &layer.common.id,
+        &layer.common.position,
+        layer.common.pos_x.as_ref(),
+        layer.common.pos_y.as_ref(),
+        &layer.common.scale,
+        &layer.common.rotation_degrees,
+        &layer.common.opacity,
+        layer.common.timing_controls(),
+        &layer.common.modulators,
+        &group_chain,
+        0,
+        fps,
+        params,
+        seed,
+        modulators,
+    )?.ok_or_else(|| anyhow!("layer not active at frame 0"))?;
+
     let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let draw_resources = build_layer_draw_resources(
         device,
@@ -2177,6 +2295,9 @@ fn build_text_layer(
         frame_width,
         frame_height,
         &layer.common,
+        state.position,
+        state.scale,
+        state.rotation_degrees,
         layer_width,
         layer_height,
         &texture_view,
