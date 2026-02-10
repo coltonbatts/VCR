@@ -1,0 +1,20 @@
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 60
+  duration:
+    frames: 180
+
+layers:
+  - id: vcr_text
+    z_index: 1
+    pos_x: 960
+    pos_y: "540 + 40 - 40 * smoothstep(0.0, 1.2, t)"
+    anchor: center
+    opacity: "0.001 + smoothstep(0.2, 1.2, t)"
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 280
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }

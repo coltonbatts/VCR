@@ -1,0 +1,210 @@
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 24
+  duration:
+    frames: 180
+
+params:
+  chars_per_sec: 8.0
+  cursor_blink_speed: 2.0
+
+layers:
+  - id: background
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+
+  # Terminal prompt
+  - id: prompt
+    z_index: 2
+    pos_x: 100
+    pos_y: 500
+    text:
+      content: ">"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  # Typewriter text - reveals character by character
+  # "Welcome to VCR" = 14 chars
+  # At 8 chars/sec, full reveal at t = 14/8 = 1.75 seconds = 42 frames
+  - id: typed_text_w
+    z_index: 2
+    pos_x: 150
+    pos_y: 500
+    opacity: "step(0.124, t)"
+    text:
+      content: "W"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_e1
+    z_index: 2
+    pos_x: 200
+    pos_y: 500
+    opacity: "step(0.249, t)"
+    text:
+      content: "e"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_l1
+    z_index: 2
+    pos_x: 250
+    pos_y: 500
+    opacity: "step(0.374, t)"
+    text:
+      content: "l"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_c
+    z_index: 2
+    pos_x: 300
+    pos_y: 500
+    opacity: "step(0.499, t)"
+    text:
+      content: "c"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_o1
+    z_index: 2
+    pos_x: 350
+    pos_y: 500
+    opacity: "step(0.624, t)"
+    text:
+      content: "o"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_m
+    z_index: 2
+    pos_x: 400
+    pos_y: 500
+    opacity: "step(0.749, t)"
+    text:
+      content: "m"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_e2
+    z_index: 2
+    pos_x: 450
+    pos_y: 500
+    opacity: "step(0.874, t)"
+    text:
+      content: "e"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_space1
+    z_index: 2
+    pos_x: 500
+    pos_y: 500
+    opacity: "step(0.999, t)"
+    text:
+      content: " "
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_t
+    z_index: 2
+    pos_x: 550
+    pos_y: 500
+    opacity: "step(1.124, t)"
+    text:
+      content: "t"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_o2
+    z_index: 2
+    pos_x: 600
+    pos_y: 500
+    opacity: "step(1.249, t)"
+    text:
+      content: "o"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_space2
+    z_index: 2
+    pos_x: 650
+    pos_y: 500
+    opacity: "step(1.374, t)"
+    text:
+      content: " "
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_v
+    z_index: 2
+    pos_x: 700
+    pos_y: 500
+    opacity: "step(1.499, t)"
+    text:
+      content: "V"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_c2
+    z_index: 2
+    pos_x: 750
+    pos_y: 500
+    opacity: "step(1.624, t)"
+    text:
+      content: "C"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  - id: typed_text_r
+    z_index: 2
+    pos_x: 800
+    pos_y: 500
+    opacity: "step(1.749, t)"
+    text:
+      content: "R"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  # Blinking cursor - appears after last character
+  # Blinks at 2Hz (on/off every 0.5 seconds)
+  - id: cursor
+    z_index: 3
+    pos_x: 850
+    pos_y: 500
+    opacity: "step(1.749, t) * step(0.5, fract(t * cursor_blink_speed))"
+    anchor: top_left
+    procedural:
+      kind: rounded_rect
+      center: { x: 0.5, y: 0.5 }
+      size: { x: 0.015, y: 0.06 }
+      corner_radius: 0.002
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  # Scanline effect
+  - id: scanline
+    z_index: 10
+    opacity: 0.15
+    pos_y: "fract(t * 0.3) * 1080"
+    procedural:
+      kind: solid_color
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 0.1 }

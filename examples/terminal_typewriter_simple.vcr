@@ -1,0 +1,62 @@
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 24
+  duration:
+    frames: 120
+
+params:
+  cursor_blink_speed: 2.0
+
+layers:
+  - id: background
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+
+  # Terminal prompt
+  - id: prompt
+    z_index: 2
+    pos_x: 100
+    pos_y: 500
+    text:
+      content: ">"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  # Full text that reveals character by character
+  - id: typed_text
+    z_index: 2
+    pos_x: 150
+    pos_y: 500
+    text:
+      content: "Welcome to VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  # Blinking cursor
+  - id: cursor
+    z_index: 3
+    pos_x: "150 + t * 50"
+    pos_y: 500
+    opacity: "0.001 + step(0.5, fract(t * cursor_blink_speed))"
+    anchor: top_left
+    procedural:
+      kind: rounded_rect
+      center: { x: 0.5, y: 0.5 }
+      size: { x: 0.015, y: 0.06 }
+      corner_radius: 0.002
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+
+  # Scanline effect
+  - id: scanline
+    z_index: 10
+    opacity: 0.15
+    pos_y: "fract(t * 0.3) * 1080"
+    procedural:
+      kind: solid_color
+      color: { r: 0.0, g: 1.0, b: 0.0, a: 0.1 }
