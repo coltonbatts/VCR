@@ -21,3 +21,8 @@ tiny-skia = "0.11"
 url = "2.5"
 wgpu = { version = "0.20", default-features = false, features = ["metal", "wgsl"] }
 fontdue = "0.9"
+notify = "6.1"
+winit = "0.29"
+egui = "0.28"
+egui-wgpu = "0.28"
+egui-winit = "0.28"

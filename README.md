@@ -144,6 +144,11 @@ cargo run --release --bin vcr -- lint examples/primitives_test.vcr
 # Preview frames
 cargo run --release --bin vcr -- preview examples/primitives_test.vcr --image-sequence -o ./preview_frames
 
+# Interactive live preview
+cargo run --release --bin vcr -- play examples/primitives_test.vcr
+# Start paused at a specific frame
+cargo run --release --bin vcr -- play examples/primitives_test.vcr --start-frame 48 --paused
+
 # Render to ProRes 4444
 cargo run --release --bin vcr -- build examples/welcome_terminal_scene.vcr -o output.mov
 ```
@@ -163,12 +168,39 @@ cargo run --release --bin vcr -- build examples/welcome_terminal_scene.vcr -o ou
 | `lint <manifest>` | Report common scene issues |
 | `dump <manifest> --frame N` | Print resolved state at frame N |
 | `preview <manifest>` | Render preview frames (`--image-sequence` skips FFmpeg) |
+| `play <manifest>` | Interactive real-time preview window with hot-reload |
 | `render-frame <manifest> --frame N -o frame.png` | Render a single frame |
 | `render-frames <manifest> --start-frame N --frames X -o dir` | Render a frame range |
 | `build <manifest> -o output.mov` | Full ProRes 4444 render |
 | `watch <manifest>` | Hot-reload preview on manifest changes |
 
 Run `cargo run --release --bin vcr -- --help` for full options.
+
+## Interactive Preview (`play`)
+
+Use `play` for live scene iteration in a window at your manifest resolution:
+
+```bash
+cargo run --release --bin vcr -- play examples/primitives_test.vcr
+```
+
+Optional flags:
+
+- `--paused` start paused
+- `--start-frame N` start at a specific frame
+
+Controls:
+
+- `Space`: Play/Pause
+- `Left` / `Right`: Seek one frame
+- `R`: Restart
+- `Esc`: Quit
+- Drag seek bar: Scrub timeline
+
+Hot-reload behavior:
+
+- Save the `.vcr` file and the scene reloads in-place.
+- If reload parsing fails, the error is printed and the previous valid scene keeps rendering.
 
 ## Figma to VCR Workflow (MVP)
 
