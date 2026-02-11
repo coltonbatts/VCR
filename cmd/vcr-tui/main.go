@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -108,10 +109,21 @@ func (m model) scanGPU() tea.Msg {
 }
 
 func (m model) scanLLM() tea.Msg {
-	client := http.Client{Timeout: 1 * time.Second}
+	client := http.Client{Timeout: 2 * time.Second}
 
 	// 1. Check LM Studio (Priority)
 	if resp, err := client.Get("http://localhost:1234/v1/models"); err == nil && resp.StatusCode == 200 {
+		var mData struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if body, _ := io.ReadAll(resp.Body); err == nil {
+			json.Unmarshal(body, &mData)
+			if len(mData.Data) > 0 {
+				return llmScanMsg("STUDIO:" + mData.Data[0].ID)
+			}
+		}
 		return llmScanMsg("LM_STUDIO")
 	}
 
@@ -123,29 +135,36 @@ func (m model) scanLLM() tea.Msg {
 	return llmScanMsg("NONE")
 }
 
-func (m model) handshakeLLM() tea.Msg {
-	client := http.Client{Timeout: 5 * time.Second}
+func (m model) handshakeLLM(modelID string) tea.Cmd {
+	return func() tea.Msg {
+		client := http.Client{Timeout: 10 * time.Second}
 
-	// Try a minimal chat completion to ensure model is loaded
-	payload, _ := json.Marshal(map[string]interface{}{
-		"model": "local-model",
-		"messages": []map[string]string{
-			{"role": "user", "content": "ping"},
-		},
-		"max_tokens": 1,
-	})
+		// If modelID is generic, try to use "local-model" or just any
+		id := modelID
+		if id == "" {
+			id = "local-model"
+		}
 
-	resp, err := client.Post("http://localhost:1234/v1/chat/completions", "application/json", strings.NewReader(string(payload)))
-	if err != nil {
-		return handshakeMsg{success: false, details: "Timeout or Connection Refused"}
+		payload, _ := json.Marshal(map[string]interface{}{
+			"model": id,
+			"messages": []map[string]string{
+				{"role": "user", "content": "ping"},
+			},
+			"max_tokens": 1,
+		})
+
+		resp, err := client.Post("http://localhost:1234/v1/chat/completions", "application/json", strings.NewReader(string(payload)))
+		if err != nil {
+			return handshakeMsg{success: false, details: "Timeout or Connection Refused"}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			return handshakeMsg{success: false, details: fmt.Sprintf("HTTP %d", resp.StatusCode)}
+		}
+
+		return handshakeMsg{success: true, details: "Local Brain Verified"}
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return handshakeMsg{success: false, details: fmt.Sprintf("HTTP %d", resp.StatusCode)}
-	}
-
-	return handshakeMsg{success: true, details: "Local Brain Verified"}
 }
 
 func (m model) runSkill(prompt string) tea.Cmd {
@@ -221,13 +240,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gpuInfo = string(msg)
 		return m, nil
 	case llmScanMsg:
-		if string(msg) == "LM_STUDIO" {
+		s := string(msg)
+		if strings.HasPrefix(s, "STUDIO:") {
+			modelID := strings.TrimPrefix(s, "STUDIO:")
+			m.llmStatus = "LLM: LM STUDIO (" + modelID + ")"
+			m.handshaking = true
+			m.status = "HANDSHAKING WITH BRAIN..."
+			return m, m.handshakeLLM(modelID)
+		}
+		if s == "LM_STUDIO" {
 			m.llmStatus = "LLM: LM STUDIO DETECTED"
 			m.handshaking = true
 			m.status = "HANDSHAKING WITH BRAIN..."
-			return m, m.handshakeLLM
+			return m, m.handshakeLLM("local-model")
 		}
-		m.llmStatus = "LLM: " + string(msg)
+		m.llmStatus = "LLM: " + s
 		m.initializing = false
 		m.status = "VCR READY"
 		return m, nil
