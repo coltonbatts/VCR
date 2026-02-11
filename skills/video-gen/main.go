@@ -27,39 +27,58 @@ func emit(msg IPCMessage) {
 	fmt.Println(string(b))
 }
 
+// debug logs to a file so we can see what's happening without breaking IPC
+func debugLog(msg string) {
+	f, _ := os.OpenFile("vcr-agent.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	defer f.Close()
+	f.WriteString(msg + "\n")
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		emit(IPCMessage{Type: "status", Status: "Error: No prompt provided."})
 		os.Exit(1)
 	}
 	prompt := os.Args[1]
+	debugLog("--- STARTING AGENTIC RUN ---")
+	debugLog("Prompt: " + prompt)
 
 	// 1. Fetch Context from SQLite
-	emit(IPCMessage{Type: "status", Status: "Retrieving creative context from Intelligence Tree..."})
+	emit(IPCMessage{Type: "status", Status: "Reading Intelligence Tree..."})
 	database, err := db.Open()
 	if err != nil {
-		emit(IPCMessage{Type: "status", Status: fmt.Sprintf("Error opening DB: %v", err)})
+		emit(IPCMessage{Type: "status", Status: "Error opening DB"})
 		os.Exit(1)
 	}
 	defer database.Conn.Close()
 
-	nodes, err := database.GetContextNodes()
-	contextStr := ""
-	if err == nil {
-		contextStr = strings.Join(nodes, "\n")
+	nodes, _ := database.GetContextNodes()
+	contextStr := strings.Join(nodes, "\n")
+
+	// 2. Dynamic Model Detection from LM Studio
+	emit(IPCMessage{Type: "status", Status: "Syncing with LM Studio..."})
+	modelName := "local-model"
+	if mResp, err := http.Get("http://localhost:1234/v1/models"); err == nil {
+		var mData struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if body, err := io.ReadAll(mResp.Body); err == nil {
+			json.Unmarshal(body, &mData)
+			if len(mData.Data) > 0 {
+				modelName = mData.Data[0].ID
+				debugLog("Detected Model: " + modelName)
+			}
+		}
 	}
 
-	// 2. Query LM Studio (localhost:1234)
-	emit(IPCMessage{Type: "status", Status: "Thinking... (Querying LM Studio at 1234/v1)"})
+	// 3. Query LLM
+	emit(IPCMessage{Type: "status", Status: "Thinking... (Consulting local brain)"})
 
-	messaage := fmt.Sprintf(`You are VCR, an expert motion graphics agent. 
-Generate a valid VCR manifest YAML based on this prompt: "%s"
+	systemPrompt := `You are the VCR Engine Brain. You only output valid VCR YAML manifests.
+A VCR manifest MUST follow this structure:
 
-Creative Context from other tools:
-%s
-
-IMPORTANT: Output ONLY the valid YAML manifest. No talk. No markdown blocks. Just the YAML.
-A VCR manifest must have:
 version: 1
 environment:
   resolution: {width: 1280, height: 720}
@@ -67,29 +86,45 @@ environment:
   duration: 5.0
 layers:
   - id: background
-    procedural: {type: solid, color: {r: 10, g: 10, b: 10, a: 255}}
-  - id: main_text
-    text: {content: "VCR", size: 120, font_variant: line}
+    procedural: {type: solid, color: {r: 0, g: 0, b: 0, a: 255}}
+  - id: sample_text
+    text: {content: "HELLO", size: 80, font_variant: line}
     position: {x: 640, y: 360}
     anchor: center
-`, prompt, contextStr)
+
+Rules:
+1. No conversational text. 
+2. Use "procedural" for backgrounds.
+3. Use "text" for copy.
+4. Use ONLY Geist Pixel font variants: "line", "bold", "regular".
+5. Resolution must be integers.`
+
+	userMessage := fmt.Sprintf(`Creative Context from Intelligence Tree:
+%s
+
+User Request: %s
+
+Generate the YAML manifest now:`, contextStr, prompt)
 
 	requestBody, _ := json.Marshal(map[string]interface{}{
-		"model": "local-model",
+		"model": modelName,
 		"messages": []map[string]string{
-			{"role": "user", "content": messaage},
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": userMessage},
 		},
-		"temperature": 0.2,
+		"temperature": 0.0, // Strictness
 	})
 
 	resp, err := http.Post("http://localhost:1234/v1/chat/completions", "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
-		emit(IPCMessage{Type: "status", Status: "Error connecting to LM Studio. Is it running on port 1234?"})
+		emit(IPCMessage{Type: "status", Status: "LM Studio Connection Failed."})
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
+	debugLog("Raw AI Output: " + string(body))
+
 	var aiResp struct {
 		Choices []struct {
 			Message struct {
@@ -99,38 +134,52 @@ layers:
 	}
 	json.Unmarshal(body, &aiResp)
 
-	aiContent := aiResp.Choices[0].Message.Content
-	// Extract YAML if it's in a code block
-	re := regexp.MustCompile("(?s)```(?:yaml)?\n?(.*?)```")
-	match := re.FindStringSubmatch(aiContent)
-	yamlContent := aiContent
-	if len(match) > 1 {
-		yamlContent = match[1]
+	if len(aiResp.Choices) == 0 {
+		emit(IPCMessage{Type: "status", Status: "Deeply sorry: The model returned nothing."})
+		os.Exit(1)
 	}
+
+	content := aiResp.Choices[0].Message.Content
+
+	// Robust Extraction Logic: Prioritize finding the VCR version marker
+	yamlContent := content
+	if strings.Contains(content, "version:") {
+		// Find where version: starts
+		idx := strings.Index(content, "version:")
+		yamlContent = content[idx:]
+		// If there's a trailing code block marker, strip it
+		if strings.Contains(yamlContent, "```") {
+			yamlContent = strings.Split(yamlContent, "```")[0]
+		}
+	} else if strings.Contains(content, "```") {
+		// Fallback to code block extraction
+		re := regexp.MustCompile("(?s)```(?:yaml)?\n?(.*?)```")
+		match := re.FindStringSubmatch(content)
+		if len(match) > 1 {
+			yamlContent = match[1]
+		}
+	}
+	yamlContent = strings.TrimSpace(yamlContent)
 
 	manifestPath := "agent_manifest.yaml"
 	os.WriteFile(manifestPath, []byte(yamlContent), 0644)
+	debugLog("Final Manifest:\n" + yamlContent)
 
-	// 3. Render with VCR engine
-	emit(IPCMessage{Type: "status", Status: "Generating Video with VCR Engine..."})
+	// 4. Render
+	emit(IPCMessage{Type: "status", Status: "VCR Engine: Initializing GPU render..."})
 
-	// Run vcr build
-	outputPath := "renders/agentic_output.mov"
-	// Use the local debug binary
 	vcrPath := "./target/debug/vcr"
-	if _, err := os.Stat(vcrPath); err != nil {
-		vcrPath = "vcr" // Fallback to path
-	}
+	outputPath := "renders/agentic_result.mov"
+	os.MkdirAll("renders", 0755)
 
 	cmd := exec.Command(vcrPath, "build", manifestPath, "-o", outputPath)
 	stderr, _ := cmd.StderrPipe()
 	cmd.Start()
 
-	// Parse VCR engine progress
 	scanner := bufio.NewScanner(stderr)
 	for scanner.Scan() {
 		line := scanner.Text()
-		// Try to extract frame progress: "rendered frame 10/120"
+		debugLog("VCR Build Log: " + line)
 		if strings.Contains(line, "rendered frame") {
 			var current, total int
 			fmt.Sscanf(line, "rendered frame %d/%d", &current, &total)
@@ -148,6 +197,6 @@ layers:
 	emit(IPCMessage{
 		Type:   "artifact",
 		Path:   outputPath,
-		Status: fmt.Sprintf("SUCCESS: Generated %s", outputPath),
+		Status: "RENDER COMPLETE: Saved to " + outputPath,
 	})
 }
