@@ -1,0 +1,14 @@
+version: 1
+environment:
+  resolution: {width: 1280, height: 720}
+  fps: 24
+  duration: 5.0
+layers:
+  - id: background
+    procedural: {type: solid, color: {r: 26, g: 26, b: 26, a: 255}}
+  - id: main_text
+    text: {content: "we did it.", size: 96, font_variant: bold}
+    position: {x: 640, y: 360}
+    anchor: center
+    style:
+      fill: {type: gradient, colors: ["#FFD700", "#1A1A1A"], direction: horizontal}

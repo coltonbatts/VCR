@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/coltonbatts/vcr/tui/internal/db"
 )
 
 // Aesthetic Constants (Editorial Modernism / Brutalist)
@@ -45,6 +46,7 @@ type IPCMessage struct {
 
 type model struct {
 	initializing bool
+	handshaking  bool
 	running      bool
 	spinner      spinner.Model
 	progress     progress.Model
@@ -58,6 +60,10 @@ type model struct {
 
 type gpuScanMsg string
 type llmScanMsg string
+type handshakeMsg struct {
+	success bool
+	details string
+}
 type skillDoneMsg struct{}
 type errMsg error
 
@@ -106,15 +112,40 @@ func (m model) scanLLM() tea.Msg {
 
 	// 1. Check LM Studio (Priority)
 	if resp, err := client.Get("http://localhost:1234/v1/models"); err == nil && resp.StatusCode == 200 {
-		return llmScanMsg("LLM: LM STUDIO ACTIVE (1234/v1)")
+		return llmScanMsg("LM_STUDIO")
 	}
 
 	// 2. Check Ollama
 	if resp, err := client.Get("http://localhost:11434/api/tags"); err == nil && resp.StatusCode == 200 {
-		return llmScanMsg("LLM: OLLAMA ACTIVE (11434)")
+		return llmScanMsg("OLLAMA")
 	}
 
-	return llmScanMsg("LLM: NO LOCAL ENDPOINT FOUND")
+	return llmScanMsg("NONE")
+}
+
+func (m model) handshakeLLM() tea.Msg {
+	client := http.Client{Timeout: 5 * time.Second}
+
+	// Try a minimal chat completion to ensure model is loaded
+	payload, _ := json.Marshal(map[string]interface{}{
+		"model": "local-model",
+		"messages": []map[string]string{
+			{"role": "user", "content": "ping"},
+		},
+		"max_tokens": 1,
+	})
+
+	resp, err := client.Post("http://localhost:1234/v1/chat/completions", "application/json", strings.NewReader(string(payload)))
+	if err != nil {
+		return handshakeMsg{success: false, details: "Timeout or Connection Refused"}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return handshakeMsg{success: false, details: fmt.Sprintf("HTTP %d", resp.StatusCode)}
+	}
+
+	return handshakeMsg{success: true, details: "Local Brain Verified"}
 }
 
 func (m model) runSkill(prompt string) tea.Cmd {
@@ -190,9 +221,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gpuInfo = string(msg)
 		return m, nil
 	case llmScanMsg:
-		m.llmStatus = string(msg)
+		if string(msg) == "LM_STUDIO" {
+			m.llmStatus = "LLM: LM STUDIO DETECTED"
+			m.handshaking = true
+			m.status = "HANDSHAKING WITH BRAIN..."
+			return m, m.handshakeLLM
+		}
+		m.llmStatus = "LLM: " + string(msg)
 		m.initializing = false
 		m.status = "VCR READY"
+		return m, nil
+	case handshakeMsg:
+		m.handshaking = false
+		m.initializing = false
+		if msg.success {
+			m.llmStatus = "LLM: LOCAL BRAIN VERIFIED"
+			m.status = "VCR READY"
+		} else {
+			m.llmStatus = "LLM: HANDSHAKE FAILED (" + msg.details + ")"
+			m.status = "VCR READY (OFFLINE)"
+		}
 		return m, nil
 	case skillUpdateMsg:
 		m.skillStatus = msg.msg.Status
@@ -220,10 +268,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	header := headerStyle.Render("VCR // TERMINAL OS HUB")
+	header := headerStyle.Render("VCR // HUB")
 
 	var statusLine string
 	if m.initializing {
+		statusLine = fmt.Sprintf("%s %s", m.spinner.View(), m.status)
+	} else if m.handshaking {
 		statusLine = fmt.Sprintf("%s %s", m.spinner.View(), m.status)
 	} else {
 		statusLine = fmt.Sprintf("✓ %s", m.status)
@@ -236,14 +286,25 @@ func (m model) View() string {
 	}
 
 	if m.running {
-		panels = append(panels, "", statusStyle.Render(m.skillStatus), m.progress.View())
+		// Agentic Row
+		agentStatus := lipgloss.NewStyle().
+			Width(56).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Render(m.skillStatus)
+
+		panels = append(panels, "\n[AGENTIC ENGINE ACTIVE]", agentStatus, m.progress.View())
 	}
 
 	content := borderStyle.Width(60).Padding(1).Render(lipgloss.JoinVertical(lipgloss.Left, panels...))
 
 	footer := "\n"
 	if !m.initializing && !m.running {
-		footer += "> " + m.textInput.View()
+		footer += lipgloss.NewStyle().
+			Background(lipgloss.Color("#FFFFFF")).
+			Foreground(lipgloss.Color("#000000")).
+			Padding(0, 1).
+			Render(" PROMPT ")
+		footer += " " + m.textInput.View()
 	}
 	footer += "\n\n [q] quit | [ctrl+c] terminate"
 
@@ -251,6 +312,15 @@ func (m model) View() string {
 }
 
 func main() {
+	// Auto-Init DB
+	database, err := db.Open()
+	if err == nil {
+		// Initialize with embedded schema if we had one,
+		// but for now we'll just seed if it's the first run
+		database.SeedMockData()
+		database.Conn.Close()
+	}
+
 	p := tea.NewProgram(initialModel())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error: %v", err)

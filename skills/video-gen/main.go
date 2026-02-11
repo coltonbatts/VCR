@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/coltonbatts/vcr/tui/internal/db"
 )
@@ -115,9 +116,10 @@ Generate the YAML manifest now:`, contextStr, prompt)
 		"temperature": 0.0, // Strictness
 	})
 
-	resp, err := http.Post("http://localhost:1234/v1/chat/completions", "application/json", bytes.NewBuffer(requestBody))
+	client := &http.Client{Timeout: 60 * time.Second} // Allow 60s for LLM thought
+	resp, err := client.Post("http://localhost:1234/v1/chat/completions", "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
-		emit(IPCMessage{Type: "status", Status: "LM Studio Connection Failed."})
+		emit(IPCMessage{Type: "status", Status: "LM Studio Request Timed Out or Failed."})
 		os.Exit(1)
 	}
 	defer resp.Body.Close()

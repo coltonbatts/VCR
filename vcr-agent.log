@@ -1,0 +1,102 @@
+--- STARTING AGENTIC RUN ---
+Prompt: Can you make me a video that's just white text that says "Hello World?" 
+Detected Model: qwen/qwen3-coder-next
+Raw AI Output: {
+  "id": "chatcmpl-5zkk98leljqfj26j8zh3ha",
+  "object": "chat.completion",
+  "created": 1770782332,
+  "model": "qwen/qwen3-coder-next",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "format:\n  resolution: \"1280x720\"\n  fps: 24\n  duration_seconds: 5\n\nvisual:\n  background_color: \"#1A1A1A\"\n  elements:\n    - type: \"text\"\n      content: \"Hello World?\"\n      font: \"Geist Pixel\"\n      color: \"#FFD700\"\n      size: 96\n      position:\n        x: \"center\"\n        y: \"center\"\n      alignment: \"center\"\n\naudio:\n  track: \"Cairn Logic\"\n  bpm: 128\n  mood: \"dark\"\n  volume: 0.75\n\ntiming:\n  fade_in_duration: 1.0\n  hold_duration: 3.0\n  fade_out_duration: 1.0",
+        "tool_calls": []
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 150,
+    "completion_tokens": 171,
+    "total_tokens": 321
+  },
+  "stats": {},
+  "system_fingerprint": "qwen/qwen3-coder-next"
+}
+Final Manifest:
+format:
+  resolution: "1280x720"
+  fps: 24
+  duration_seconds: 5
+
+visual:
+  background_color: "#1A1A1A"
+  elements:
+    - type: "text"
+      content: "Hello World?"
+      font: "Geist Pixel"
+      color: "#FFD700"
+      size: 96
+      position:
+        x: "center"
+        y: "center"
+      alignment: "center"
+
+audio:
+  track: "Cairn Logic"
+  bpm: 128
+  mood: "dark"
+  volume: 0.75
+
+timing:
+  fade_in_duration: 1.0
+  hold_duration: 3.0
+  fade_out_duration: 1.0
+VCR Build Log: [VCR] Output path: renders/agentic_result.mov
+VCR Build Log: Error: failed to parse yaml in agent_manifest.yaml at line 1, column 1: unknown field `format`, expected one of `version`, `environment`, `seed`, `params`, `modulators`, `groups`, `layers`
+--- STARTING AGENTIC RUN ---
+Prompt: Make a "hello world" that says "we did it." 
+Detected Model: qwen/qwen3-coder-next
+Raw AI Output: {
+  "id": "chatcmpl-hr1f5buo0bewo8547kiibg",
+  "object": "chat.completion",
+  "created": 1770782677,
+  "model": "qwen/qwen3-coder-next",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "version: 1\nenvironment:\n  resolution: {width: 1280, height: 720}\n  fps: 24\n  duration: 5.0\nlayers:\n  - id: background\n    procedural: {type: solid, color: {r: 26, g: 26, b: 26, a: 255}}\n  - id: main_text\n    text: {content: \"we did it.\", size: 96, font_variant: bold}\n    position: {x: 640, y: 360}\n    anchor: center\n    style:\n      fill: {type: gradient, colors: [\"#FFD700\", \"#1A1A1A\"], direction: horizontal}",
+        "tool_calls": []
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 323,
+    "completion_tokens": 171,
+    "total_tokens": 494
+  },
+  "stats": {},
+  "system_fingerprint": "qwen/qwen3-coder-next"
+}
+Final Manifest:
+version: 1
+environment:
+  resolution: {width: 1280, height: 720}
+  fps: 24
+  duration: 5.0
+layers:
+  - id: background
+    procedural: {type: solid, color: {r: 26, g: 26, b: 26, a: 255}}
+  - id: main_text
+    text: {content: "we did it.", size: 96, font_variant: bold}
+    position: {x: 640, y: 360}
+    anchor: center
+    style:
+      fill: {type: gradient, colors: ["#FFD700", "#1A1A1A"], direction: horizontal}
