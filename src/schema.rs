@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde::{de::Error as DeError, Deserialize, Deserializer};
+use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
 
 pub type Parameters = BTreeMap<String, f32>;
 pub type ModulatorMap = BTreeMap<String, ModulatorDefinition>;
@@ -13,6 +13,46 @@ const DEFAULT_ENV_ATTACK: f32 = 12.0;
 const DEFAULT_ENV_DECAY: f32 = 24.0;
 const MAX_RESOLUTION: u32 = 8192;
 const MAX_FRAME_COUNT: u32 = 100_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParamType {
+    Float,
+    Int,
+    Color,
+    Vec2,
+    Bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ParamValue {
+    Float(f32),
+    Int(i64),
+    Color(ColorRgba),
+    Vec2(Vec2),
+    Bool(bool),
+}
+
+impl ParamValue {
+    pub fn as_expression_scalar(&self) -> Option<f32> {
+        match self {
+            Self::Float(value) => Some(*value),
+            Self::Int(value) => Some(*value as f32),
+            Self::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
+            Self::Color(_) | Self::Vec2(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ParamDefinition {
+    pub param_type: ParamType,
+    pub default: ParamValue,
+    pub min: Option<f32>,
+    pub max: Option<f32>,
+    pub description: Option<String>,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,6 +69,14 @@ pub struct Manifest {
     #[serde(default)]
     pub groups: Vec<Group>,
     pub layers: Vec<Layer>,
+    #[serde(skip)]
+    pub param_definitions: BTreeMap<String, ParamDefinition>,
+    #[serde(skip)]
+    pub resolved_params: BTreeMap<String, ParamValue>,
+    #[serde(skip)]
+    pub applied_param_overrides: BTreeMap<String, ParamValue>,
+    #[serde(skip)]
+    pub manifest_hash: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1255,7 +1303,7 @@ pub enum GradientDirection {
     Vertical,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ColorRgba {
     pub r: f32,
@@ -1360,7 +1408,7 @@ impl From<ColorRgba> for AnimatableColor {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq)]
 pub struct Vec2 {
     pub x: f32,
     pub y: f32,

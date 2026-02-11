@@ -127,6 +127,89 @@ Write WGSL fragment shaders directly in your manifest:
 
 Built-in uniforms: `time` (seconds), `frame` (index), `resolution` (vec2). Custom uniforms accessible as `u.custom[0..7]`.
 
+## Steerable Motion
+
+VCR now supports first-class control surfaces via typed manifest params and runtime overrides.
+For strict semantics (override precedence, substitution rules, escaping, and determinism guarantees), see `docs/PARAMS.md`.
+
+### 1) Declare typed params
+
+```yaml
+params:
+  speed:
+    type: float
+    default: 1.0
+    min: 0.4
+    max: 3.0
+    description: "Global motion speed"
+  accent_color:
+    type: color
+    default: { r: 0.95, g: 0.48, b: 0.22, a: 0.92 }
+  drift:
+    type: vec2
+    default: [180.0, 40.0]
+  invert_background:
+    type: bool
+    default: false
+```
+
+Legacy numeric params still work unchanged:
+
+```yaml
+params:
+  energy: 0.85
+  phase: 0.4
+```
+
+### 2) Reference params anywhere with `${param_name}`
+
+```yaml
+start_time: "${intro_start}"
+time_scale: "${speed}"
+position: "${drift}"
+opacity: "clamp(0.30 + glow_strength * 0.45, 0.0, 1.0)"
+start_color: "${accent_color}"
+```
+
+Expression variables continue to use bare names (`speed`, `glow_strength`, etc.).
+
+### 3) Override params at runtime
+
+```bash
+cargo run --release --bin vcr -- build examples/steerable_motion.vcr \
+  --set speed=2.2 \
+  --set glow_strength=1.1 \
+  --set accent_color=#4FE1B8 \
+  -o renders/steerable_fast.mov
+```
+
+### 4) Inspect params and resolved values
+
+```bash
+# Print param catalog (type/default/range/description)
+cargo run --release --bin vcr -- params examples/steerable_motion.vcr
+# JSON catalog for scripts/CI
+cargo run --release --bin vcr -- params examples/steerable_motion.vcr --json
+
+# Print resolved render inputs (after --set overrides)
+cargo run --release --bin vcr -- explain examples/steerable_motion.vcr --set speed=2.2
+# JSON explain output
+cargo run --release --bin vcr -- explain examples/steerable_motion.vcr --set speed=2.2 --json
+```
+
+Use `--quiet` on render/check/watch commands to suppress non-essential param dumps while keeping errors visible.
+
+### 5) Reproducible metadata sidecars
+
+Render commands emit a local `*.metadata.json` sidecar containing:
+
+- resolved params
+- frame count and frame window
+- resolution and fps
+- backend + reason
+- VCR version
+- manifest hash
+
 ## Getting Started
 
 ```bash
@@ -139,15 +222,15 @@ cd VCR
 cargo build --release
 
 # Validate a manifest
-cargo run --release --bin vcr -- lint examples/primitives_test.vcr
+cargo run --release --bin vcr -- lint examples/demo_scene.vcr
 
 # Preview frames
-cargo run --release --bin vcr -- preview examples/primitives_test.vcr --image-sequence -o ./preview_frames
+cargo run --release --bin vcr -- preview examples/demo_scene.vcr --image-sequence -o ./preview_frames
 
 # Interactive live preview
-cargo run --release --bin vcr -- play examples/primitives_test.vcr
+cargo run --release --bin vcr -- play examples/demo_scene.vcr
 # Start paused at a specific frame
-cargo run --release --bin vcr -- play examples/primitives_test.vcr --start-frame 48 --paused
+cargo run --release --bin vcr -- play examples/demo_scene.vcr --start-frame 48 --paused
 
 # Render to ProRes 4444
 cargo run --release --bin vcr -- build examples/welcome_terminal_scene.vcr -o output.mov
@@ -200,19 +283,19 @@ Achieve a high-quality render in three steps:
 2. **Lint:** Verify your scene manifest.
 
     ```bash
-    cargo run --release --bin vcr -- lint examples/white_test.vcr
+    cargo run --release --bin vcr -- lint examples/white_on_alpha.vcr
     ```
 
 3. **Preview:** View a fast image sequence (no FFmpeg involved).
 
     ```bash
-    cargo run --release --bin vcr -- preview examples/white_test.vcr --image-sequence
+    cargo run --release --bin vcr -- preview examples/white_on_alpha.vcr --image-sequence
     ```
 
 4. **Build:** Render the final ProRes 4444 `.mov`.
 
     ```bash
-    cargo run --release --bin vcr -- build examples/white_test.vcr -o final.mov
+    cargo run --release --bin vcr -- build examples/white_on_alpha.vcr -o final.mov
     ```
 
 ## CLI Reference
@@ -222,6 +305,8 @@ Achieve a high-quality render in three steps:
 | `check <manifest>` | Validate and summarize a manifest |
 | `lint <manifest>` | Report common scene issues |
 | `dump <manifest> --frame N` | Print resolved state at frame N |
+| `params <manifest>` | Print declared params (type/default/range/description), or `--json` |
+| `explain <manifest>` | Print resolved params + manifest hash (supports `--set`, `--json`) |
 | `preview <manifest>` | Render preview frames (`--image-sequence` skips FFmpeg) |
 | `play <manifest>` | Interactive real-time preview window with hot-reload |
 | `render-frame <manifest> --frame N -o frame.png` | Render a single frame |
@@ -231,6 +316,13 @@ Achieve a high-quality render in three steps:
 | `doctor` | Check FFmpeg, fonts, and backend status |
 
 Run `cargo run --release --bin vcr -- --help` for full options.
+Exit code contract: `docs/EXIT_CODES.md`.
+
+Most render and inspect commands accept repeatable runtime overrides:
+
+```bash
+--set name=value --set other_name=value
+```
 
 ## Interactive Preview (`play`)
 

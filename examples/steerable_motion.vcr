@@ -1,0 +1,81 @@
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 24
+  duration: { frames: 144 }
+
+seed: 2026
+params:
+  speed:
+    type: float
+    default: 1.0
+    min: 0.4
+    max: 3.0
+    description: "Global motion speed multiplier"
+  intro_start:
+    type: float
+    default: 0.2
+    min: 0.0
+    max: 2.0
+    description: "Layer reveal start time (seconds)"
+  drift:
+    type: vec2
+    default: [180.0, 40.0]
+    description: "Base translation offset in pixels"
+  glow_strength:
+    type: float
+    default: 0.65
+    min: 0.0
+    max: 1.5
+    description: "Glow opacity contribution"
+  accent_color:
+    type: color
+    default: { r: 0.95, g: 0.48, b: 0.22, a: 0.92 }
+    description: "Primary accent color"
+  invert_background:
+    type: bool
+    default: false
+    description: "Demonstrates bool params for inspectability"
+
+modulators:
+  swing:
+    expression: "sin(t * 0.09 * speed)"
+
+layers:
+  - id: bg
+    z_index: 0
+    opacity: "0.8 + invert_background * 0.2"
+    procedural:
+      kind: gradient
+      start_color: { r: 0.04, g: 0.06, b: 0.08, a: 1.0 }
+      end_color: { r: 0.01, g: 0.02, b: 0.03, a: 1.0 }
+      direction: vertical
+
+  - id: hero_plate
+    z_index: 1
+    start_time: "${intro_start}"
+    time_scale: "${speed}"
+    position: "${drift}"
+    rotation_degrees: "sin(t * 0.09 * speed) * 9.0"
+    opacity: "clamp(0.30 + glow_strength * 0.45, 0.0, 1.0)"
+    modulators:
+      - source: swing
+        weights:
+          x: 56.0
+          y: 18.0
+    procedural:
+      kind: gradient
+      start_color: "${accent_color}"
+      end_color: { r: 0.10, g: 0.20, b: 0.36, a: 0.12 }
+      direction: horizontal
+
+  - id: pulse_ring
+    z_index: 2
+    position: "${drift}"
+    opacity: "clamp(env(t * speed, 20, 90) * glow_strength, 0.0, 1.0)"
+    procedural:
+      kind: ring
+      center: { x: 0.5, y: 0.5 }
+      outer_radius: "0.20 + sin(t * 0.10 * speed) * 0.02"
+      inner_radius: 0.16
+      color: "${accent_color}"

@@ -1,6 +1,6 @@
 use std::fs;
-use vcr::manifest::load_and_validate_manifest;
 use std::process::Command;
+use vcr::manifest::load_and_validate_manifest;
 
 #[test]
 fn test_absolute_asset_path_rejected() {
@@ -8,7 +8,8 @@ fn test_absolute_asset_path_rejected() {
     let manifest_path = temp.path().join("test.vcr");
     let asset_path = "/etc/passwd";
 
-    let yaml = format!(r#"
+    let yaml = format!(
+        r#"
 version: 1
 environment:
   resolution: {{ width: 100, height: 100 }}
@@ -18,7 +19,9 @@ layers:
   - id: background
     image:
       path: {}
-"#, asset_path);
+"#,
+        asset_path
+    );
 
     fs::write(&manifest_path, yaml).unwrap();
 
@@ -33,14 +36,15 @@ fn test_path_traversal_asset_rejected() {
     let temp = tempfile::tempdir().unwrap();
     let manifest_dir = temp.path().join("manifests");
     fs::create_dir_all(&manifest_dir).unwrap();
-    
+
     let secret_file = temp.path().join("secret.txt");
     fs::write(&secret_file, "secret").unwrap();
-    
+
     let manifest_path = manifest_dir.join("test.vcr");
     let asset_path = "../secret.txt";
 
-    let yaml = format!(r#"
+    let yaml = format!(
+        r#"
 version: 1
 environment:
   resolution: {{ width: 100, height: 100 }}
@@ -50,7 +54,9 @@ layers:
   - id: background
     image:
       path: {}
-"#, asset_path);
+"#,
+        asset_path
+    );
 
     fs::write(&manifest_path, yaml).unwrap();
 
