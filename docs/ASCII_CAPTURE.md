@@ -16,13 +16,19 @@ vcr ascii capture --source <source> --out <output.mov> [options]
 1. Remote stream source:
 
 ```bash
---source ascii-live:earth
+--source ascii-live:<stream>
 ```
 
 Uses:
 
 ```bash
-curl -L --no-buffer https://ascii.live/earth
+curl -L --no-buffer https://ascii.live/<stream>
+```
+
+Known stream ids are listed by:
+
+```bash
+vcr ascii sources
 ```
 
 2. Local media via Chafa:
@@ -32,6 +38,22 @@ curl -L --no-buffer https://ascii.live/earth
 ```
 
 Uses `chafa` with fixed size and monochrome output (`--colors=none`), plus optional stable flags when available (`--symbols=ascii`, `--animate=on`, `--clear`).
+
+3. Offline built-in library sources:
+
+```bash
+--source library:<id>
+```
+
+Examples:
+
+```bash
+--source library:geist-wave
+--source library:geist-scan
+--source library:geist-blocks
+```
+
+These are deterministic in-process generators intended for local dev mode when remote streams/tools are unavailable.
 
 ## ProRes Encoder
 
@@ -53,18 +75,22 @@ ffmpeg -f rawvideo -pix_fmt rgba -s:v <WxH> -r <fps> -i - \
 - `--tmp-dir` optional working directory for ffmpeg
 - `--debug-txt-dir` optional directory for normalized `.txt` frame dumps
 - `--symbol-remap` symbol remap mode: `none`, `density`, `equalize` (default `equalize`)
-- `--symbol-ramp` output symbol ramp (default `.:-=+*#%@`)
+- `--symbol-ramp` output symbol ramp (default ` .,:;iltfrxnuvczXYUJCLQOZmwqpdbkhao*#MW&@$`)
 - `--fit-padding` safe border ratio for centering/contain fit (default `0.12`)
 - `--dry-run` print planned capture/encode pipeline without running
 
 ## Examples
 
 ```bash
-vcr ascii capture --source ascii-live:earth --out earth.mov --duration 8 --fps 30 --size 120x45
+vcr ascii capture --source ascii-live:parrot --out parrot.mov --duration 8 --fps 30 --size 120x45
 ```
 
 ```bash
 vcr ascii capture --source chafa:./assets/statue.gif --out statue.mov --duration 6 --fps 24 --size 120x45
+```
+
+```bash
+vcr ascii capture --source library:geist-wave --out library_wave.mov --duration 8 --fps 30 --size 120x45
 ```
 
 Golden manual command:

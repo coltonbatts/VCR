@@ -23,6 +23,7 @@ use vcr::ascii_render::{
 use vcr::ascii_stage::{
     parse_ascii_stage_size, render_ascii_stage_video, AsciiStageRenderArgs, CameraMode,
 };
+use vcr::ascii_sources::render_ascii_sources;
 use vcr::chat::{render_chat_video, ChatRenderArgs};
 use vcr::encoding::FfmpegPipe;
 use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions, ParamOverride};
@@ -238,6 +239,7 @@ enum ChatCommands {
 
 #[derive(Debug, Subcommand)]
 enum AsciiCommands {
+    Sources,
     Stage {
         #[arg(long = "in", value_name = "TRANSCRIPT")]
         input: PathBuf,
@@ -633,6 +635,10 @@ fn run_cli(cli: Cli) -> Result<()> {
             } => run_chat_render(&input, &output, &theme, fps, speed, seed, quiet),
         },
         Commands::Ascii { command } => match command {
+            AsciiCommands::Sources => {
+                print!("{}", render_ascii_sources());
+                Ok(())
+            }
             AsciiCommands::Stage {
                 input,
                 output,

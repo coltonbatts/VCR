@@ -12,6 +12,7 @@ use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
 use fontdue::{Font, FontSettings};
 
 use crate::ascii_frame::{AsciiFrame, AsciiFrameMetadata};
+use crate::ascii_sources::{ascii_live_stream_names, ascii_live_stream_url, library_source_names};
 
 pub const DEFAULT_CAPTURE_FPS: u32 = 30;
 pub const DEFAULT_CAPTURE_DURATION_SECONDS: f32 = 5.0;
@@ -24,7 +25,7 @@ const DEFAULT_CAPTURE_FONT_PATH_REL: &str = "assets/fonts/geist_pixel/GeistPixel
 const SOURCE_RECV_POLL_MS: u64 = 20;
 const SOURCE_SYMBOL_RAMP: &str =
     " .'`^\",:;Il!i~+_-?][}{1)(|\\/*tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
-const DEFAULT_TARGET_SYMBOL_RAMP: &str = ".:-=+*#%@";
+const DEFAULT_TARGET_SYMBOL_RAMP: &str = " .,:;iltfrxnuvczXYUJCLQOZmwqpdbkhao*#MW&@$";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolRemapMode {
@@ -36,6 +37,7 @@ pub enum SymbolRemapMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AsciiCaptureSource {
     AsciiLive { stream: String },
+    Library { id: String },
     Chafa { input: PathBuf },
 }
 
@@ -62,8 +64,16 @@ impl AsciiCaptureSource {
             });
         }
 
+        if let Some(id) = value.strip_prefix("library:") {
+            let id = id.trim().to_ascii_lowercase();
+            if id.is_empty() {
+                bail!("invalid --source '{}': missing library source id", raw);
+            }
+            return Ok(Self::Library { id });
+        }
+
         bail!(
-            "invalid --source '{}': expected 'ascii-live:<stream>' or 'chafa:<path>'",
+            "invalid --source '{}': expected 'ascii-live:<stream>', 'library:<id>', or 'chafa:<path>'",
             raw
         )
     }
@@ -71,6 +81,7 @@ impl AsciiCaptureSource {
     pub fn display_label(&self) -> String {
         match self {
             Self::AsciiLive { stream } => format!("ascii-live:{stream}"),
+            Self::Library { id } => format!("library:{id}"),
             Self::Chafa { input } => format!("chafa:{}", input.display()),
         }
     }
@@ -324,6 +335,11 @@ fn source_command_preview(
             preview.push(input.display().to_string());
             Ok(preview)
         }
+        AsciiCaptureSource::Library { id } => Ok(vec![
+            "builtin-library".to_owned(),
+            "render".to_owned(),
+            id.clone(),
+        ]),
     }
 }
 
@@ -334,6 +350,10 @@ fn capture_ascii_frames(
     cols: u32,
     rows: u32,
 ) -> Result<Vec<AsciiFrame>> {
+    if let AsciiCaptureSource::Library { id } = source {
+        return capture_library_frames(id, frame_count, fps, cols, rows);
+    }
+
     let mut child = spawn_source_process(source, cols, rows)?;
     let stdout = child
         .stdout
@@ -730,6 +750,7 @@ fn write_debug_ascii_frames(dir: &Path, frames: &[AsciiFrame]) -> Result<()> {
 fn spawn_source_process(source: &AsciiCaptureSource, cols: u32, rows: u32) -> Result<Child> {
     match source {
         AsciiCaptureSource::AsciiLive { stream } => spawn_ascii_live_process(stream),
+        AsciiCaptureSource::Library { .. } => bail!("library sources are generated in-process"),
         AsciiCaptureSource::Chafa { input } => spawn_chafa_process(input, cols, rows),
     }
 }
@@ -780,10 +801,113 @@ fn spawn_chafa_process(input: &Path, cols: u32, rows: u32) -> Result<Child> {
 }
 
 fn ascii_live_url(stream: &str) -> Result<&'static str> {
-    match stream {
-        "earth" => Ok("https://ascii.live/earth"),
-        other => bail!("unsupported ascii-live stream '{other}': currently only 'earth'"),
+    if let Some(url) = ascii_live_stream_url(stream) {
+        return Ok(url);
     }
+    let supported = ascii_live_stream_names().join(", ");
+    bail!("unsupported ascii-live stream '{stream}': supported streams: {supported}")
+}
+
+fn capture_library_frames(
+    id: &str,
+    frame_count: u32,
+    fps: u32,
+    cols: u32,
+    rows: u32,
+) -> Result<Vec<AsciiFrame>> {
+    let mut frames = Vec::with_capacity(frame_count as usize);
+    let cols = cols as usize;
+    let rows = rows as usize;
+
+    if !library_source_names().iter().any(|value| *value == id) {
+        let supported = library_source_names().join(", ");
+        bail!("unsupported library source '{id}': supported ids: {supported}");
+    }
+
+    for frame_index in 0..frame_count {
+        let t = frame_index as f32 / fps as f32;
+        let lines = match id {
+            "geist-wave" => library_frame_geist_wave(t, cols, rows),
+            "geist-scan" => library_frame_geist_scan(t, cols, rows),
+            "geist-blocks" => library_frame_geist_blocks(t, cols, rows),
+            _ => unreachable!("validated above"),
+        };
+        let timestamp_ms = ((frame_index as f64 / fps as f64) * 1000.0).round() as u64;
+        frames.push(AsciiFrame::from_lines(lines, cols, rows).with_metadata(AsciiFrameMetadata {
+            source_frame_index: Some(frame_index as u64),
+            source_timestamp_ms: Some(timestamp_ms),
+        }));
+    }
+
+    Ok(frames)
+}
+
+fn library_frame_geist_wave(t: f32, cols: usize, rows: usize) -> Vec<String> {
+    let ramp: Vec<char> = " etaoinshrdlucmfwypvbgkjqxz#@".chars().collect();
+    let mut lines = vec![" ".repeat(cols); rows];
+    for (row_idx, line) in lines.iter_mut().enumerate() {
+        let mut row = vec![b' '; cols];
+        let y = row_idx as f32 / rows as f32;
+        for (col_idx, cell) in row.iter_mut().enumerate() {
+            let x = col_idx as f32 / cols as f32;
+            let wave = ((x * 13.0 + t * 2.5).sin() + (y * 11.0 + t * 1.4).cos()) * 0.5;
+            let density = (wave * 0.5 + 0.5).clamp(0.0, 1.0);
+            let idx = (density * (ramp.len().saturating_sub(1)) as f32).round() as usize;
+            *cell = ramp[idx] as u8;
+        }
+        *line = String::from_utf8(row).unwrap_or_else(|_| " ".repeat(cols));
+    }
+    lines
+}
+
+fn library_frame_geist_scan(t: f32, cols: usize, rows: usize) -> Vec<String> {
+    let banner = "GEIST PIXEL VCR DEV MODE";
+    let mut lines = vec![" ".repeat(cols); rows];
+    let scan = ((t * 9.0) as usize) % rows.max(1);
+    for (row_idx, line) in lines.iter_mut().enumerate() {
+        let mut row = vec![b' '; cols];
+        if row_idx == scan || row_idx == (scan + 1).min(rows.saturating_sub(1)) {
+            for value in &mut row {
+                *value = b':';
+            }
+        }
+        if row_idx % 3 == 0 {
+            let offset = ((t * 7.0) as usize + row_idx * 2) % cols.max(1);
+            for (index, ch) in banner.as_bytes().iter().enumerate() {
+                let col = (offset + index) % cols.max(1);
+                row[col] = ch.to_ascii_uppercase();
+            }
+        }
+        *line = String::from_utf8(row).unwrap_or_else(|_| " ".repeat(cols));
+    }
+    lines
+}
+
+fn library_frame_geist_blocks(t: f32, cols: usize, rows: usize) -> Vec<String> {
+    let mut lines = vec![" ".repeat(cols); rows];
+    let block_w = (cols / 10).max(2);
+    let block_h = (rows / 6).max(2);
+    let x1 = ((t * 12.0) as usize) % cols.max(1);
+    let y1 = ((t * 7.0) as usize) % rows.max(1);
+    let x2 = ((t * 9.0 + 13.0) as usize) % cols.max(1);
+    let y2 = ((t * 5.0 + 5.0) as usize) % rows.max(1);
+
+    for (row_idx, line) in lines.iter_mut().enumerate() {
+        let mut row = vec![b' '; cols];
+        for (col_idx, cell) in row.iter_mut().enumerate() {
+            let in_block_1 = col_idx >= x1.saturating_sub(block_w / 2)
+                && col_idx < (x1 + block_w / 2).min(cols)
+                && row_idx >= y1.saturating_sub(block_h / 2)
+                && row_idx < (y1 + block_h / 2).min(rows);
+            let in_block_2 = col_idx >= x2.saturating_sub(block_w / 2)
+                && col_idx < (x2 + block_w / 2).min(cols)
+                && row_idx >= y2.saturating_sub(block_h / 2)
+                && row_idx < (y2 + block_h / 2).min(rows);
+            *cell = if in_block_1 || in_block_2 { b'#' } else { b'.' };
+        }
+        *line = String::from_utf8(row).unwrap_or_else(|_| " ".repeat(cols));
+    }
+    lines
 }
 
 fn chafa_optional_flags() -> Vec<String> {

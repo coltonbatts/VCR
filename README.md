@@ -80,15 +80,21 @@ See `docs/ASCII_STAGE.md` for format, flags, and presets.
 
 ## ASCII Capture (ASCII Animation -> ProRes)
 
-`vcr ascii capture` captures animated ASCII from a remote stream or a local media source (via `chafa`) and encodes ProRes 422 MOV output.
+`vcr ascii capture` captures animated ASCII from remote streams (`ascii-live:*`), offline built-in dev sources (`library:*`), or local media (via `chafa`), then encodes ProRes 422 MOV output.
 
 ```bash
 ./target/release/vcr ascii capture \
-  --source ascii-live:earth \
-  --out renders/earth.mov \
+  --source library:geist-wave \
+  --out renders/library_wave.mov \
   --duration 8 \
   --fps 30 \
   --size 120x45
+```
+
+List curated source ids:
+
+```bash
+./target/release/vcr ascii sources
 ```
 
 See `docs/ASCII_CAPTURE.md` for source formats, flags, parser limitations, and determinism scope.
@@ -185,6 +191,7 @@ Override at runtime:
 - `chat render`
 - `ascii stage`
 - `ascii capture`
+- `ascii sources`
 - `doctor`
 
 For full help:
@@ -211,6 +218,7 @@ Param semantics are documented in `docs/PARAMS.md`.
 - `docs/CHAT_RENDER.md` - tagged transcript to animated terminal video
 - `docs/ASCII_STAGE.md` - stylized `.vcrtxt` transcript rendering with camera/preset options
 - `docs/ASCII_CAPTURE.md` - animated ASCII capture (`ascii-live` / `chafa`) to ProRes MOV
+- `docs/ASCII_SOURCES.md` - curated static registry for animated ASCII stream/pack/tool sources
 - `docs/ASCII_CAPTURE_MILESTONE.md` - current Earth overlay quality/status and recommended command
 - `docs/deep-research-report.md` - imported deep research report on ASCII as a rendering medium
 - `docs/ascii_research_takeaways.md` - prioritized, codebase-specific pull-through items from the report
