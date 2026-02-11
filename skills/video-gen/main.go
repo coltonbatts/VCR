@@ -21,6 +21,8 @@ type IPCMessage struct {
 	Percent float64 `json:"percent,omitempty"`
 	Status  string  `json:"status,omitempty"`
 	Path    string  `json:"path,omitempty"`
+	Message string  `json:"message,omitempty"` // For errors
+	Code    int     `json:"code,omitempty"`    // For errors
 }
 
 func emit(msg IPCMessage) {
@@ -37,7 +39,7 @@ func debugLog(msg string) {
 
 func main() {
 	if len(os.Args) < 2 {
-		emit(IPCMessage{Type: "status", Status: "Error: No prompt provided."})
+		emit(IPCMessage{Type: "error", Message: "No prompt provided.", Code: 400})
 		os.Exit(1)
 	}
 	prompt := os.Args[1]
@@ -48,7 +50,7 @@ func main() {
 	emit(IPCMessage{Type: "status", Status: "Reading Intelligence Tree..."})
 	database, err := db.Open()
 	if err != nil {
-		emit(IPCMessage{Type: "status", Status: "Error opening DB"})
+		emit(IPCMessage{Type: "error", Message: "Internal Database Error", Code: 500})
 		os.Exit(1)
 	}
 	defer database.Conn.Close()
@@ -125,7 +127,7 @@ Generate the YAML manifest now:`, contextStr, prompt)
 	client := &http.Client{Timeout: 60 * time.Second} // Allow 60s for LLM thought
 	resp, err := client.Post("http://127.0.0.1:1234/v1/chat/completions", "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
-		emit(IPCMessage{Type: "status", Status: "LM Studio Request Timed Out or Failed."})
+		emit(IPCMessage{Type: "error", Message: "LM Studio Connection Failed", Code: 503})
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
@@ -143,7 +145,7 @@ Generate the YAML manifest now:`, contextStr, prompt)
 	json.Unmarshal(body, &aiResp)
 
 	if len(aiResp.Choices) == 0 {
-		emit(IPCMessage{Type: "status", Status: "Deeply sorry: The model returned nothing."})
+		emit(IPCMessage{Type: "error", Message: "LLM returned empty response", Code: 500})
 		os.Exit(1)
 	}
 

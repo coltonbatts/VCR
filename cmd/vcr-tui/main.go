@@ -43,6 +43,8 @@ type IPCMessage struct {
 	Percent float64 `json:"percent,omitempty"`
 	Status  string  `json:"status,omitempty"`
 	Path    string  `json:"path,omitempty"`
+	Message string  `json:"message,omitempty"`
+	Code    int     `json:"code,omitempty"`
 }
 
 type model struct {
@@ -270,6 +272,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case skillUpdateMsg:
+		if msg.msg.Type == "error" {
+			m.skillStatus = "ERROR: " + msg.msg.Message
+			return m, nil // Stop listening on error
+		}
 		m.skillStatus = msg.msg.Status
 		if msg.msg.Type == "progress" {
 			progCmd := m.progress.SetPercent(msg.msg.Percent)

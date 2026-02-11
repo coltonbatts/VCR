@@ -1,0 +1,27 @@
+version: 1
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 30
+  duration: 3.0
+
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 0.02, g: 0.02, b: 0.05, a: 1.0 }
+
+  - id: pulse_circle
+    anchor: center
+    pos_x: 960
+    pos_y: 540
+    procedural:
+      kind: circle
+      center: { x: 0.5, y: 0.5 }
+      radius: "0.12 + 0.04 * sin(t * 4.0)"
+      color:
+        r: "0.0 + t / 3.0"
+        g: "0.9 * (1.0 - t / 3.0)"
+        b: "1.0 - 0.3 * (t / 3.0)"
+        a: "0.8 + 0.2 * sin(t * 6.0)"

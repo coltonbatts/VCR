@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vcr": {
+      "command": "/Users/coltonbatts/Desktop/VCR/scripts/vcr-mcp-server/.venv/bin/python",
+      "args": ["/Users/coltonbatts/Desktop/VCR/scripts/vcr-mcp-server/server.py"]
+    }
+  }
+}

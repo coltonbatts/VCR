@@ -222,3 +222,6 @@ VCR Build Log: frame=   68 fps=0.0 q=-0.0 size=    2816KiB time=00:00:02.83 bitr
 VCR Build Log: [out#0/mov @ 0xc98c08600] video:5146KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.014366%
 VCR Build Log: frame=  120 fps=0.0 q=-0.0 Lsize=    5147KiB time=00:00:05.00 bitrate=8432.1kbits/s speed=6.43x elapsed=0:00:00.77    
 VCR Build Log: [VCR] timing parse=5.72ms layout=289.51ms render=730.26ms encode=576.00ms total=1.60s
+--- STARTING AGENTIC RUN ---
+Prompt: A pulsing neon circle on a dark background that slowly changes color from cyan to magenta over 3 seconds
+Detected Model: qwen/qwen3-coder-next
