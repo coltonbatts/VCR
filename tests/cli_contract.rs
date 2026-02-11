@@ -17,6 +17,16 @@ fn run_vcr(cwd: &Path, args: &[&str]) -> std::process::Output {
         .expect("vcr command should run")
 }
 
+fn command_available(name: &str, version_arg: &str) -> bool {
+    Command::new(name)
+        .arg(version_arg)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 #[test]
 fn params_json_output_is_stable_and_sorted() {
     let dir = tempdir().expect("tempdir should create");
@@ -299,6 +309,112 @@ layers:
 }
 
 #[test]
+fn ascii_lab_output_is_deterministic_and_includes_required_sections() {
+    let dir = tempdir().expect("tempdir should create");
+
+    let first = run_vcr(dir.path(), &["ascii", "lab"]);
+    assert!(first.status.success(), "ascii lab should succeed");
+    assert!(
+        first.stderr.is_empty(),
+        "ascii lab should not emit stderr on success"
+    );
+
+    let second = run_vcr(dir.path(), &["ascii", "lab"]);
+    assert!(second.status.success(), "ascii lab should succeed");
+    assert_eq!(
+        first.stdout, second.stdout,
+        "ascii lab output should be deterministic"
+    );
+
+    let stdout = String::from_utf8_lossy(&first.stdout);
+    assert!(stdout.contains("=== Pattern: Horizontal Gradient ==="));
+    assert!(stdout.contains("=== Pattern: Radial Gradient ==="));
+    assert!(stdout.contains("=== Pattern: Checkerboard ==="));
+    assert!(stdout.contains("=== Pattern: Vertical Edge ==="));
+    assert!(stdout.contains("=== Pattern: Moving Vertical Bar ==="));
+
+    assert!(stdout.contains("Mode: temporal=none, dither=none"));
+    assert!(stdout.contains("Mode: temporal=none, dither=FS"));
+    assert!(stdout.contains("Mode: temporal=hysteresis, dither=none, band=8"));
+    assert!(stdout.contains("Mode: temporal=hysteresis, dither=none, band=16"));
+    assert!(stdout.contains("Mode: temporal=hysteresis, dither=FS, band=8"));
+
+    assert!(stdout.contains("Hash: 0x"));
+    assert!(stdout.contains("Frame 0 Hash: 0x"));
+    assert!(stdout.contains("Canonical Sequence Hash: 0x"));
+    assert!(stdout.contains("----------------------------------------"));
+}
+
+#[test]
+fn ascii_lab_export_writes_txt_and_json_with_stage_hashes() {
+    let dir = tempdir().expect("tempdir should create");
+    let export_dir = "ascii_lab_exports";
+
+    let output = run_vcr(
+        dir.path(),
+        &[
+            "ascii",
+            "lab",
+            "--export-dir",
+            export_dir,
+            "--debug-stage-hashes",
+        ],
+    );
+    assert!(output.status.success(), "ascii lab export should succeed");
+
+    let export_root = dir.path().join(export_dir);
+    assert!(export_root.is_dir(), "export dir should be created");
+
+    let entries = fs::read_dir(&export_root)
+        .expect("export dir should be readable")
+        .filter_map(|entry| entry.ok())
+        .collect::<Vec<_>>();
+    let txt_count = entries
+        .iter()
+        .filter(|entry| entry.path().extension().and_then(|v| v.to_str()) == Some("txt"))
+        .count();
+    let json_count = entries
+        .iter()
+        .filter(|entry| entry.path().extension().and_then(|v| v.to_str()) == Some("json"))
+        .count();
+    assert_eq!(txt_count, 25, "expected one text export per pattern/mode");
+    assert_eq!(json_count, 25, "expected one json export per pattern/mode");
+
+    let sample_txt = export_root.join("horizontal_gradient_temporal_none__dither_none.txt");
+    let txt = fs::read_to_string(&sample_txt).expect("sample txt should be readable");
+    assert!(txt.contains("Mode: temporal=none, dither=none"));
+    assert!(txt.contains("Hash: 0x"));
+
+    let sample_json =
+        export_root.join("moving_vertical_bar_temporal_hysteresis_band_8__dither_fs.json");
+    let parsed: Value =
+        serde_json::from_slice(&fs::read(&sample_json).expect("sample json should be readable"))
+            .expect("sample json should parse");
+
+    assert_eq!(parsed["mode"]["temporal"], "hysteresis");
+    assert_eq!(parsed["mode"]["dither"], "FS");
+    assert_eq!(parsed["mode"]["band"], 8);
+    assert_eq!(
+        parsed["frame_hashes"]
+            .as_array()
+            .map(|value| value.len())
+            .unwrap_or_default(),
+        3
+    );
+    assert!(parsed["canonical_sequence_hash"]
+        .as_str()
+        .map(|value| value.starts_with("0x"))
+        .unwrap_or(false));
+    assert_eq!(
+        parsed["stage_hashes"]
+            .as_array()
+            .map(|value| value.len())
+            .unwrap_or_default(),
+        3
+    );
+}
+
+#[test]
 fn exit_codes_and_error_prefixes_are_consistent() {
     let dir = tempdir().expect("tempdir should create");
     let manifest_path = dir.path().join("scene.vcr");
@@ -364,4 +480,91 @@ layers:
         .expect("doctor command should run");
     assert_eq!(missing_dependency.status.code(), Some(4));
     assert!(String::from_utf8_lossy(&missing_dependency.stderr).contains("vcr doctor:"));
+}
+
+#[test]
+fn ascii_capture_help_lists_expected_flags() {
+    let dir = tempdir().expect("tempdir should create");
+    let output = run_vcr(dir.path(), &["ascii", "capture", "--help"]);
+    assert!(output.status.success(), "help should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--source"));
+    assert!(stdout.contains("--out"));
+    assert!(stdout.contains("--fps"));
+    assert!(stdout.contains("--duration"));
+    assert!(stdout.contains("--frames"));
+    assert!(stdout.contains("--size"));
+    assert!(stdout.contains("--font-path"));
+    assert!(stdout.contains("--font-size"));
+    assert!(stdout.contains("--tmp-dir"));
+    assert!(stdout.contains("--dry-run"));
+}
+
+#[test]
+fn ascii_capture_dry_run_prints_pipeline_plan() {
+    let dir = tempdir().expect("tempdir should create");
+    let output = run_vcr(
+        dir.path(),
+        &[
+            "ascii",
+            "capture",
+            "--source",
+            "ascii-live:earth",
+            "--out",
+            "earth.mov",
+            "--frames",
+            "3",
+            "--dry-run",
+        ],
+    );
+    assert!(output.status.success(), "dry-run should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Capture plan:"));
+    assert!(stdout.contains("source: ascii-live:earth"));
+    assert!(stdout.contains("source_command: curl -L --no-buffer https://ascii.live/earth"));
+    assert!(stdout.contains("frame_count: 3"));
+    assert!(stdout.contains("encoder: ffmpeg -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le"));
+}
+
+#[test]
+fn ascii_capture_writes_output_mov_when_tools_are_available() {
+    if !command_available("ffmpeg", "-version") || !command_available("chafa", "--version") {
+        return;
+    }
+
+    let dir = tempdir().expect("tempdir should create");
+    let input = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/welcome_terminal_scene.gif");
+    assert!(input.exists(), "fixture gif should exist");
+    let source = format!("chafa:{}", input.display());
+
+    let output = run_vcr(
+        dir.path(),
+        &[
+            "ascii",
+            "capture",
+            "--source",
+            &source,
+            "--out",
+            "capture.mov",
+            "--frames",
+            "3",
+            "--fps",
+            "24",
+            "--size",
+            "80x40",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "capture should succeed. stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mov = dir.path().join("capture.mov");
+    assert!(mov.is_file(), "capture output should exist");
+    let metadata = fs::metadata(&mov).expect("capture output metadata should load");
+    assert!(metadata.len() > 0, "capture output should not be empty");
 }

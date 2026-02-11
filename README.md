@@ -78,6 +78,21 @@ Use cases:
 
 See `docs/ASCII_STAGE.md` for format, flags, and presets.
 
+## ASCII Capture (ASCII Animation -> ProRes)
+
+`vcr ascii capture` captures animated ASCII from a remote stream or a local media source (via `chafa`) and encodes ProRes 422 MOV output.
+
+```bash
+./target/release/vcr ascii capture \
+  --source ascii-live:earth \
+  --out renders/earth.mov \
+  --duration 8 \
+  --fps 30 \
+  --size 120x45
+```
+
+See `docs/ASCII_CAPTURE.md` for source formats, flags, parser limitations, and determinism scope.
+
 ## One-Command Playground (9 Presets)
 
 ```bash
@@ -169,6 +184,7 @@ Override at runtime:
 - `watch`
 - `chat render`
 - `ascii stage`
+- `ascii capture`
 - `doctor`
 
 For full help:
@@ -194,6 +210,7 @@ Param semantics are documented in `docs/PARAMS.md`.
 - `docs/PLAYGROUND.md` - preset playground runner and outputs
 - `docs/CHAT_RENDER.md` - tagged transcript to animated terminal video
 - `docs/ASCII_STAGE.md` - stylized `.vcrtxt` transcript rendering with camera/preset options
+- `docs/ASCII_CAPTURE.md` - animated ASCII capture (`ascii-live` / `chafa`) to ProRes MOV
 - `docs/deep-research-report.md` - imported deep research report on ASCII as a rendering medium
 - `docs/ascii_research_takeaways.md` - prioritized, codebase-specific pull-through items from the report
 - `docs/SKILLS_PROTOCOL.md` - agent update protocol

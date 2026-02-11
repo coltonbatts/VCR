@@ -11,7 +11,15 @@ use clap::{Parser, Subcommand, ValueEnum};
 use image::RgbaImage;
 use serde::Serialize;
 
-use vcr::ascii_render::{run_ascii_render, AsciiRenderArgs};
+use vcr::ascii_capture::{
+    build_ascii_capture_plan, parse_capture_size, run_ascii_capture, AsciiCaptureArgs,
+    AsciiCaptureSource, DEFAULT_CAPTURE_DURATION_SECONDS, DEFAULT_CAPTURE_FONT_SIZE,
+    DEFAULT_CAPTURE_FPS,
+};
+use vcr::ascii_render::{
+    render_ascii_luma_sequence, run_ascii_render, AsciiDitherMode, AsciiLabRenderArgs,
+    AsciiLabSequenceResult, AsciiRenderArgs, AsciiTemporalMode, DEFAULT_HYSTERESIS_BAND,
+};
 use vcr::ascii_stage::{
     parse_ascii_stage_size, render_ascii_stage_video, AsciiStageRenderArgs, CameraMode,
 };
@@ -271,6 +279,44 @@ enum AsciiCommands {
         sidecar: bool,
         #[arg(long = "expected-hash")]
         expected_hash: Option<String>,
+        #[arg(long = "temporal-mode", value_enum, default_value_t = AsciiTemporalModeArg::None)]
+        temporal_mode: AsciiTemporalModeArg,
+        #[arg(long = "hysteresis-band", default_value_t = DEFAULT_HYSTERESIS_BAND)]
+        hysteresis_band: u8,
+        #[arg(long = "dither", value_enum, default_value_t = AsciiDitherModeArg::None)]
+        dither_mode: AsciiDitherModeArg,
+        #[arg(long = "debug-stage-hashes", default_value_t = false)]
+        debug_stage_hashes: bool,
+    },
+    Capture {
+        #[arg(long = "source", value_name = "SOURCE")]
+        source: String,
+        #[arg(long = "out", value_name = "OUTPUT")]
+        output: PathBuf,
+        #[arg(long = "fps", default_value_t = DEFAULT_CAPTURE_FPS)]
+        fps: u32,
+        #[arg(long = "duration", default_value_t = DEFAULT_CAPTURE_DURATION_SECONDS)]
+        duration: f32,
+        #[arg(long = "frames")]
+        frames: Option<u32>,
+        #[arg(long = "size", default_value = "80x40")]
+        size: String,
+        #[arg(long = "font-path", value_name = "FONT")]
+        font_path: Option<PathBuf>,
+        #[arg(long = "font-size", default_value_t = DEFAULT_CAPTURE_FONT_SIZE)]
+        font_size: f32,
+        #[arg(long = "tmp-dir", value_name = "DIR")]
+        tmp_dir: Option<PathBuf>,
+        #[arg(long = "debug-txt-dir", value_name = "DIR")]
+        debug_txt_dir: Option<PathBuf>,
+        #[arg(long = "dry-run", default_value_t = false)]
+        dry_run: bool,
+    },
+    Lab {
+        #[arg(long = "export-dir", value_name = "DIR")]
+        export_dir: Option<PathBuf>,
+        #[arg(long = "debug-stage-hashes", default_value_t = false)]
+        debug_stage_hashes: bool,
     },
 }
 
@@ -286,6 +332,19 @@ enum AsciiPresetArg {
     None,
     X,
     Yt,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AsciiTemporalModeArg {
+    None,
+    Hysteresis,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AsciiDitherModeArg {
+    None,
+    #[value(name = "floyd_steinberg_cell", alias = "floyd-steinberg-cell")]
+    FloydSteinbergCell,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -593,6 +652,10 @@ fn run_cli(cli: Cli) -> Result<()> {
                 bg_alpha,
                 sidecar,
                 expected_hash,
+                temporal_mode,
+                hysteresis_band,
+                dither_mode,
+                debug_stage_hashes,
             } => run_ascii_render_cli(
                 &input,
                 &output,
@@ -601,8 +664,42 @@ fn run_cli(cli: Cli) -> Result<()> {
                 bg_alpha,
                 sidecar,
                 expected_hash,
+                temporal_mode,
+                hysteresis_band,
+                dither_mode,
+                debug_stage_hashes,
                 quiet,
             ),
+            AsciiCommands::Capture {
+                source,
+                output,
+                fps,
+                duration,
+                frames,
+                size,
+                font_path,
+                font_size,
+                tmp_dir,
+                debug_txt_dir,
+                dry_run,
+            } => run_ascii_capture_cli(
+                &source,
+                &output,
+                fps,
+                duration,
+                frames,
+                &size,
+                font_path.as_deref(),
+                font_size,
+                tmp_dir.as_deref(),
+                debug_txt_dir.as_deref(),
+                dry_run,
+                quiet,
+            ),
+            AsciiCommands::Lab {
+                export_dir,
+                debug_stage_hashes,
+            } => run_ascii_lab(export_dir.as_deref(), debug_stage_hashes),
         },
         Commands::Doctor => run_doctor(),
     }
@@ -652,6 +749,8 @@ fn classify_exit_code(error: &anyhow::Error) -> VcrExitCode {
 
 fn is_missing_dependency_error(error: &anyhow::Error) -> bool {
     has_error_message_fragment(error, "ffmpeg was not found on path")
+        || has_error_message_fragment(error, "curl was not found on path")
+        || has_error_message_fragment(error, "chafa was not found on path")
         || has_error_message_fragment(error, "missing dependency")
         || has_error_message_fragment(error, "geist pixel font")
 }
@@ -671,7 +770,12 @@ fn is_usage_error(error: &anyhow::Error) -> bool {
         || has_error_message_fragment(error, "empty input transcript")
         || has_error_message_fragment(error, "unknown --theme")
         || has_error_message_fragment(error, "invalid --size")
+        || has_error_message_fragment(error, "invalid --source")
+        || has_error_message_fragment(error, "unsupported ascii-live stream")
+        || has_error_message_fragment(error, "invalid --export-dir")
         || has_error_message_fragment(error, "--fps must be > 0")
+        || has_error_message_fragment(error, "--duration must be > 0")
+        || has_error_message_fragment(error, "--font-size must be > 0")
         || has_error_message_fragment(error, "--speed must be > 0")
         || has_error_message_fragment(error, "start frame")
         || has_error_message_fragment(error, "out of bounds")
@@ -939,7 +1043,6 @@ fn run_ascii_stage_render(
     Ok(())
 }
 
-
 fn run_ascii_render_cli(
     input: &Path,
     output: &Path,
@@ -948,6 +1051,10 @@ fn run_ascii_render_cli(
     bg_alpha: f32,
     sidecar: bool,
     expected_hash: Option<String>,
+    temporal_mode: AsciiTemporalModeArg,
+    hysteresis_band: u8,
+    dither_mode: AsciiDitherModeArg,
+    debug_stage_hashes: bool,
     quiet: bool,
 ) -> Result<()> {
     let (width, height) = parse_ascii_stage_size(size)?;
@@ -971,9 +1078,22 @@ fn run_ascii_render_cli(
         None
     };
 
+    let temporal_mode = match temporal_mode {
+        AsciiTemporalModeArg::None => AsciiTemporalMode::None,
+        AsciiTemporalModeArg::Hysteresis => AsciiTemporalMode::Hysteresis {
+            band: hysteresis_band,
+        },
+    };
+    let dither_mode = match dither_mode {
+        AsciiDitherModeArg::None => AsciiDitherMode::None,
+        AsciiDitherModeArg::FloydSteinbergCell => AsciiDitherMode::FloydSteinbergCell,
+    };
+
     if !quiet {
-        println!("[VCR] ASCII render: size={}x{}, font={:?}, bg_alpha={}", 
-            width, height, font_variant, bg_alpha);
+        println!(
+            "[VCR] ASCII render: size={}x{}, font={:?}, bg_alpha={}, temporal={:?}, dither={:?}, debug_stage_hashes={}",
+            width, height, font_variant, bg_alpha, temporal_mode, dither_mode, debug_stage_hashes
+        );
     }
 
     run_ascii_render(AsciiRenderArgs {
@@ -985,7 +1105,567 @@ fn run_ascii_render_cli(
         bg_alpha,
         sidecar,
         expected_hash,
+        temporal_mode,
+        dither_mode,
+        debug_stage_hashes,
     })
+}
+
+fn run_ascii_capture_cli(
+    source: &str,
+    output: &Path,
+    fps: u32,
+    duration: f32,
+    frames: Option<u32>,
+    size: &str,
+    font_path: Option<&Path>,
+    font_size: f32,
+    tmp_dir: Option<&Path>,
+    debug_txt_dir: Option<&Path>,
+    dry_run: bool,
+    quiet: bool,
+) -> Result<()> {
+    let (cols, rows) = parse_capture_size(size)?;
+    let source = AsciiCaptureSource::parse(source)?;
+    let resolved_output = resolve_output_path(
+        Path::new("ascii_capture"),
+        Some(output.to_path_buf()),
+        "mov",
+        None,
+        quiet,
+    )?;
+    let args = AsciiCaptureArgs {
+        source,
+        output: resolved_output.clone(),
+        fps,
+        duration_seconds: duration,
+        max_frames: frames,
+        cols,
+        rows,
+        font_path: font_path.map(Path::to_path_buf),
+        font_size,
+        tmp_dir: tmp_dir.map(Path::to_path_buf),
+        debug_txt_dir: debug_txt_dir.map(Path::to_path_buf),
+    };
+
+    let plan = build_ascii_capture_plan(&args)?;
+    if dry_run {
+        println!("Capture plan:");
+        println!("  source: {}", plan.source_label);
+        println!("  source_command: {}", plan.source_command.join(" "));
+        println!("  output: {}", plan.output.display());
+        println!("  frame_count: {}", plan.frame_count);
+        println!("  fps: {}", plan.fps);
+        println!("  duration_seconds: {:.3}", plan.duration_seconds);
+        println!("  size: {}x{} cells", plan.cols, plan.rows);
+        println!(
+            "  font: {} @ {:.2}",
+            plan.font_path.display(),
+            plan.font_size
+        );
+        println!(
+            "  tmp_dir: {}",
+            plan.tmp_dir
+                .as_deref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "<none>".to_owned())
+        );
+        println!("  parser: {}", plan.parser_mode);
+        println!("  encoder: {}", plan.ffmpeg_encoder);
+        return Ok(());
+    }
+
+    progress_log(
+        quiet,
+        format_args!(
+            "[VCR] ASCII capture: source={}, fps={}, duration={:.2}, frames={}, size={}x{}, font_size={:.2}",
+            plan.source_label,
+            plan.fps,
+            plan.duration_seconds,
+            plan.frame_count,
+            plan.cols,
+            plan.rows,
+            plan.font_size
+        ),
+    );
+    progress_log(
+        quiet,
+        format_args!(
+            "[VCR] ASCII capture parser='{}', encoder='{}'",
+            plan.parser_mode, plan.ffmpeg_encoder
+        ),
+    );
+
+    let summary = run_ascii_capture(&args)?;
+    println!("Wrote {}", summary.output.display());
+    progress_log(
+        quiet,
+        format_args!(
+            "[VCR] ASCII capture complete: {} frames @ {} fps, grid={}x{}, output={}x{}",
+            summary.frame_count,
+            summary.fps,
+            summary.cols,
+            summary.rows,
+            summary.pixel_width,
+            summary.pixel_height
+        ),
+    );
+
+    Ok(())
+}
+
+const ASCII_LAB_COLS: u32 = 80;
+const ASCII_LAB_ROWS: u32 = 40;
+const ASCII_LAB_DELIMITER: &str = "----------------------------------------";
+
+#[derive(Debug, Clone)]
+struct AsciiLabPattern {
+    name: &'static str,
+    slug: &'static str,
+    frames: Vec<Vec<u8>>,
+    is_motion: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+struct AsciiLabModeConfig {
+    temporal: &'static str,
+    dither: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    band: Option<u8>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AsciiLabModeSpec {
+    slug: &'static str,
+    config: AsciiLabModeConfig,
+    temporal_mode: AsciiTemporalMode,
+    dither_mode: AsciiDitherMode,
+}
+
+#[derive(Debug, Serialize)]
+struct AsciiLabStageHashMetadata {
+    frame_index: u32,
+    luma_grid_hash: String,
+    mapped_grid_hash: String,
+    frame_chars_hash: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AsciiLabExportMetadata {
+    pattern: String,
+    cols: u32,
+    rows: u32,
+    mode: AsciiLabModeConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frame_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frame_hashes: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    canonical_sequence_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage_hashes: Option<Vec<AsciiLabStageHashMetadata>>,
+}
+
+fn run_ascii_lab(export_dir: Option<&Path>, debug_stage_hashes: bool) -> Result<()> {
+    let export_root = resolve_ascii_lab_export_dir(export_dir)?;
+    let patterns = ascii_lab_patterns(ASCII_LAB_COLS, ASCII_LAB_ROWS);
+    let modes = ascii_lab_modes();
+
+    for pattern in patterns {
+        println!("=== Pattern: {} ===", pattern.name);
+        for mode in modes {
+            let sequence = render_ascii_luma_sequence(AsciiLabRenderArgs {
+                luma_frames: &pattern.frames,
+                cols: ASCII_LAB_COLS,
+                rows: ASCII_LAB_ROWS,
+                font_variant: AsciiFontVariant::GeistPixelRegular,
+                temporal_mode: mode.temporal_mode,
+                dither_mode: mode.dither_mode,
+                debug_stage_hashes,
+            })?;
+
+            let mode_output =
+                ascii_lab_mode_output_text(&sequence, mode.config, pattern.is_motion)?;
+            println!("{mode_output}");
+            println!("{ASCII_LAB_DELIMITER}");
+
+            if let Some(root) = &export_root {
+                export_ascii_lab_mode(root, &pattern, mode, &sequence, debug_stage_hashes)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_ascii_lab_export_dir(export_dir: Option<&Path>) -> Result<Option<PathBuf>> {
+    let Some(dir) = export_dir else {
+        return Ok(None);
+    };
+
+    if dir.is_absolute() {
+        bail!(
+            "invalid --export-dir '{}': absolute paths are restricted; use a relative path",
+            dir.display()
+        );
+    }
+    if dir
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        bail!(
+            "invalid --export-dir '{}': directory traversal is not allowed",
+            dir.display()
+        );
+    }
+
+    fs::create_dir_all(dir).with_context(|| {
+        format!(
+            "failed to create ascii lab export directory '{}'",
+            dir.display()
+        )
+    })?;
+
+    Ok(Some(dir.to_path_buf()))
+}
+
+fn ascii_lab_patterns(cols: u32, rows: u32) -> Vec<AsciiLabPattern> {
+    vec![
+        AsciiLabPattern {
+            name: "Horizontal Gradient",
+            slug: "horizontal_gradient",
+            frames: vec![generate_horizontal_gradient(cols, rows)],
+            is_motion: false,
+        },
+        AsciiLabPattern {
+            name: "Radial Gradient",
+            slug: "radial_gradient",
+            frames: vec![generate_radial_gradient(cols, rows)],
+            is_motion: false,
+        },
+        AsciiLabPattern {
+            name: "Checkerboard",
+            slug: "checkerboard",
+            frames: vec![generate_checkerboard(cols, rows)],
+            is_motion: false,
+        },
+        AsciiLabPattern {
+            name: "Vertical Edge",
+            slug: "vertical_edge",
+            frames: vec![generate_vertical_edge(cols, rows)],
+            is_motion: false,
+        },
+        AsciiLabPattern {
+            name: "Moving Vertical Bar",
+            slug: "moving_vertical_bar",
+            frames: generate_moving_vertical_bar(cols, rows),
+            is_motion: true,
+        },
+    ]
+}
+
+fn ascii_lab_modes() -> [AsciiLabModeSpec; 5] {
+    [
+        AsciiLabModeSpec {
+            slug: "temporal_none__dither_none",
+            config: AsciiLabModeConfig {
+                temporal: "none",
+                dither: "none",
+                band: None,
+            },
+            temporal_mode: AsciiTemporalMode::None,
+            dither_mode: AsciiDitherMode::None,
+        },
+        AsciiLabModeSpec {
+            slug: "temporal_none__dither_fs",
+            config: AsciiLabModeConfig {
+                temporal: "none",
+                dither: "FS",
+                band: None,
+            },
+            temporal_mode: AsciiTemporalMode::None,
+            dither_mode: AsciiDitherMode::FloydSteinbergCell,
+        },
+        AsciiLabModeSpec {
+            slug: "temporal_hysteresis_band_8__dither_none",
+            config: AsciiLabModeConfig {
+                temporal: "hysteresis",
+                dither: "none",
+                band: Some(8),
+            },
+            temporal_mode: AsciiTemporalMode::Hysteresis { band: 8 },
+            dither_mode: AsciiDitherMode::None,
+        },
+        AsciiLabModeSpec {
+            slug: "temporal_hysteresis_band_16__dither_none",
+            config: AsciiLabModeConfig {
+                temporal: "hysteresis",
+                dither: "none",
+                band: Some(16),
+            },
+            temporal_mode: AsciiTemporalMode::Hysteresis { band: 16 },
+            dither_mode: AsciiDitherMode::None,
+        },
+        AsciiLabModeSpec {
+            slug: "temporal_hysteresis_band_8__dither_fs",
+            config: AsciiLabModeConfig {
+                temporal: "hysteresis",
+                dither: "FS",
+                band: Some(8),
+            },
+            temporal_mode: AsciiTemporalMode::Hysteresis { band: 8 },
+            dither_mode: AsciiDitherMode::FloydSteinbergCell,
+        },
+    ]
+}
+
+fn generate_horizontal_gradient(cols: u32, rows: u32) -> Vec<u8> {
+    let mut output = Vec::with_capacity((cols * rows) as usize);
+    let denom = cols.saturating_sub(1).max(1);
+
+    for _row in 0..rows {
+        for col in 0..cols {
+            let value = (col.saturating_mul(255) + (denom / 2)) / denom;
+            output.push(value as u8);
+        }
+    }
+
+    output
+}
+
+fn generate_radial_gradient(cols: u32, rows: u32) -> Vec<u8> {
+    let mut output = Vec::with_capacity((cols * rows) as usize);
+    let center_x2 = cols.saturating_sub(1);
+    let center_y2 = rows.saturating_sub(1);
+    let mut max_dist_sq =
+        u64::from(center_x2) * u64::from(center_x2) + u64::from(center_y2) * u64::from(center_y2);
+    if max_dist_sq == 0 {
+        max_dist_sq = 1;
+    }
+
+    for row in 0..rows {
+        for col in 0..cols {
+            let dx = u64::from(col.saturating_mul(2).abs_diff(center_x2));
+            let dy = u64::from(row.saturating_mul(2).abs_diff(center_y2));
+            let dist_sq = dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy));
+            let falloff =
+                ((dist_sq.saturating_mul(255) + (max_dist_sq / 2)) / max_dist_sq).min(255);
+            let value = 255_u8.saturating_sub(falloff as u8);
+            output.push(value);
+        }
+    }
+
+    output
+}
+
+fn generate_checkerboard(cols: u32, rows: u32) -> Vec<u8> {
+    let mut output = Vec::with_capacity((cols * rows) as usize);
+    for row in 0..rows {
+        for col in 0..cols {
+            let value = if (row + col) % 2 == 0 { 0 } else { 255 };
+            output.push(value);
+        }
+    }
+    output
+}
+
+fn generate_vertical_edge(cols: u32, rows: u32) -> Vec<u8> {
+    let mut output = Vec::with_capacity((cols * rows) as usize);
+    let edge = cols / 2;
+    for _row in 0..rows {
+        for col in 0..cols {
+            let value = if col < edge { 32 } else { 224 };
+            output.push(value);
+        }
+    }
+    output
+}
+
+fn generate_moving_vertical_bar(cols: u32, rows: u32) -> Vec<Vec<u8>> {
+    let bar_width = (cols / 10).max(1);
+    let centers = [cols / 4, cols / 2, cols.saturating_mul(3) / 4];
+    centers
+        .into_iter()
+        .map(|center| generate_vertical_bar_frame(cols, rows, center, bar_width))
+        .collect()
+}
+
+fn generate_vertical_bar_frame(cols: u32, rows: u32, center: u32, width: u32) -> Vec<u8> {
+    let mut output = Vec::with_capacity((cols * rows) as usize);
+    let half_width = width / 2;
+    for _row in 0..rows {
+        for col in 0..cols {
+            let value = if col.abs_diff(center) <= half_width {
+                240
+            } else {
+                24
+            };
+            output.push(value);
+        }
+    }
+    output
+}
+
+fn ascii_lab_mode_line(mode: AsciiLabModeConfig) -> String {
+    match mode.band {
+        Some(band) => format!(
+            "Mode: temporal={}, dither={}, band={band}",
+            mode.temporal, mode.dither
+        ),
+        None => format!("Mode: temporal={}, dither={}", mode.temporal, mode.dither),
+    }
+}
+
+fn ascii_lab_mode_output_text(
+    sequence: &AsciiLabSequenceResult,
+    mode: AsciiLabModeConfig,
+    is_motion: bool,
+) -> Result<String> {
+    let mut output = String::new();
+    output.push_str(&ascii_lab_mode_line(mode));
+    output.push('\n');
+
+    if is_motion {
+        for (index, frame) in sequence.frames.iter().enumerate() {
+            output.push_str(&format!(
+                "Frame {index} Hash: {}\n",
+                format_ascii_hash(frame.frame_hash)
+            ));
+            output.push_str(&ascii_frame_chars_to_text(
+                &frame.frame_chars,
+                sequence.cols,
+                sequence.rows,
+            )?);
+            output.push('\n');
+        }
+        output.push_str(&format!(
+            "Canonical Sequence Hash: {}",
+            format_ascii_hash(sequence.sequence_hash)
+        ));
+    } else {
+        let frame = sequence
+            .frames
+            .first()
+            .context("ascii lab expected a single frame for static pattern")?;
+        output.push_str(&format!("Hash: {}\n", format_ascii_hash(frame.frame_hash)));
+        output.push_str(&ascii_frame_chars_to_text(
+            &frame.frame_chars,
+            sequence.cols,
+            sequence.rows,
+        )?);
+    }
+
+    Ok(output)
+}
+
+fn ascii_frame_chars_to_text(frame_chars: &[u8], cols: u32, rows: u32) -> Result<String> {
+    let cols = cols as usize;
+    let rows = rows as usize;
+    let expected_len = cols
+        .checked_mul(rows)
+        .context("ascii lab frame dimensions overflow")?;
+    if frame_chars.len() != expected_len {
+        bail!(
+            "ascii lab frame char count mismatch (expected {}, got {})",
+            expected_len,
+            frame_chars.len()
+        );
+    }
+
+    let mut output = String::with_capacity(frame_chars.len() + rows.saturating_sub(1));
+    for row in 0..rows {
+        let start = row * cols;
+        let end = start + cols;
+        let row_text = std::str::from_utf8(&frame_chars[start..end])
+            .context("ascii lab frame contains non-utf8 characters")?;
+        output.push_str(row_text);
+        if row + 1 < rows {
+            output.push('\n');
+        }
+    }
+    Ok(output)
+}
+
+fn export_ascii_lab_mode(
+    export_root: &Path,
+    pattern: &AsciiLabPattern,
+    mode: AsciiLabModeSpec,
+    sequence: &AsciiLabSequenceResult,
+    debug_stage_hashes: bool,
+) -> Result<()> {
+    let output_text = ascii_lab_mode_output_text(sequence, mode.config, pattern.is_motion)?;
+    let file_stem = format!("{}_{}", pattern.slug, mode.slug);
+    let txt_path = export_root.join(format!("{file_stem}.txt"));
+    let json_path = export_root.join(format!("{file_stem}.json"));
+
+    fs::write(&txt_path, format!("{output_text}\n"))
+        .with_context(|| format!("failed to write ascii lab output {}", txt_path.display()))?;
+
+    let frame_hashes = sequence
+        .frames
+        .iter()
+        .map(|frame| format_ascii_hash(frame.frame_hash))
+        .collect::<Vec<_>>();
+    let stage_hashes = collect_ascii_lab_stage_hashes(sequence, debug_stage_hashes)?;
+
+    let metadata = AsciiLabExportMetadata {
+        pattern: pattern.name.to_owned(),
+        cols: sequence.cols,
+        rows: sequence.rows,
+        mode: mode.config,
+        frame_hash: if pattern.is_motion {
+            None
+        } else {
+            frame_hashes.first().cloned()
+        },
+        frame_hashes: if pattern.is_motion {
+            Some(frame_hashes)
+        } else {
+            None
+        },
+        canonical_sequence_hash: if pattern.is_motion {
+            Some(format_ascii_hash(sequence.sequence_hash))
+        } else {
+            None
+        },
+        stage_hashes,
+    };
+
+    let json =
+        serde_json::to_string_pretty(&metadata).context("failed to encode ascii lab metadata")?;
+    fs::write(&json_path, format!("{json}\n"))
+        .with_context(|| format!("failed to write ascii lab metadata {}", json_path.display()))?;
+
+    Ok(())
+}
+
+fn collect_ascii_lab_stage_hashes(
+    sequence: &AsciiLabSequenceResult,
+    debug_stage_hashes: bool,
+) -> Result<Option<Vec<AsciiLabStageHashMetadata>>> {
+    if !debug_stage_hashes {
+        return Ok(None);
+    }
+
+    let mut output = Vec::with_capacity(sequence.frames.len());
+    for (index, frame) in sequence.frames.iter().enumerate() {
+        let Some(stage) = frame.stage_hashes else {
+            bail!("ascii lab stage hashes missing for frame {index}");
+        };
+        let frame_index = u32::try_from(index).context("ascii lab frame index overflow")?;
+        output.push(AsciiLabStageHashMetadata {
+            frame_index,
+            luma_grid_hash: format_ascii_hash(stage.luma_grid_hash),
+            mapped_grid_hash: format_ascii_hash(stage.mapped_grid_hash),
+            frame_chars_hash: format_ascii_hash(stage.frame_chars_hash),
+        });
+    }
+
+    Ok(Some(output))
+}
+
+fn format_ascii_hash(hash: u64) -> String {
+    format!("0x{hash:016x}")
 }
 
 fn run_check(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<()> {

@@ -1,10 +1,12 @@
 pub mod ascii;
 pub mod ascii_atlas;
 pub mod ascii_atlas_data;
+pub mod ascii_capture;
+pub mod ascii_frame;
 pub mod ascii_render;
 pub mod ascii_stage;
-pub mod decoding;
 pub mod chat;
+pub mod decoding;
 pub mod encoding;
 pub mod manifest;
 pub mod play;
