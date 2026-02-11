@@ -1,6 +1,7 @@
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -365,8 +366,8 @@ struct AsciiGpu {
 struct GpuRenderer {
     adapter_name: String,
     adapter_backend: wgpu::Backend,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
     width: u32,
     height: u32,
     fps: u32,
@@ -374,7 +375,6 @@ struct GpuRenderer {
     params: Parameters,
     modulators: ModulatorMap,
     output_texture: wgpu::Texture,
-    output_view: wgpu::TextureView,
     readback_buffers: [wgpu::Buffer; READBACK_BUFFER_COUNT],
     next_readback_index: usize,
     pending_readback: Option<PendingReadback>,
@@ -396,12 +396,69 @@ const PREFERRED_BACKENDS: wgpu::Backends = wgpu::Backends::METAL;
 #[cfg(not(target_os = "macos"))]
 const PREFERRED_BACKENDS: wgpu::Backends = wgpu::Backends::PRIMARY;
 
-async fn request_best_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter> {
+pub struct RendererGpuContext {
+    _instance: wgpu::Instance,
+    pub adapter: wgpu::Adapter,
+    pub device: Arc<wgpu::Device>,
+    pub queue: Arc<wgpu::Queue>,
+    pub adapter_name: String,
+    pub adapter_backend: wgpu::Backend,
+}
+
+impl RendererGpuContext {
+    pub async fn headless() -> Result<Self> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: PREFERRED_BACKENDS,
+            ..Default::default()
+        });
+        Self::new_with_instance(instance, None).await
+    }
+
+    pub async fn for_surface(
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+    ) -> Result<Self> {
+        Self::new_with_instance(instance, Some(surface)).await
+    }
+
+    async fn new_with_instance(
+        instance: wgpu::Instance,
+        surface: Option<&wgpu::Surface<'_>>,
+    ) -> Result<Self> {
+        let adapter = request_best_adapter(&instance, surface).await?;
+        let adapter_info = adapter.get_info();
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("vcr-device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                },
+                None,
+            )
+            .await
+            .context("failed to request wgpu device")?;
+
+        Ok(Self {
+            _instance: instance,
+            adapter,
+            device: Arc::new(device),
+            queue: Arc::new(queue),
+            adapter_name: adapter_info.name,
+            adapter_backend: adapter_info.backend,
+        })
+    }
+}
+
+async fn request_best_adapter(
+    instance: &wgpu::Instance,
+    compatible_surface: Option<&wgpu::Surface<'_>>,
+) -> Result<wgpu::Adapter> {
     if let Some(adapter) = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
-            compatible_surface: None,
+            compatible_surface,
         })
         .await
     {
@@ -412,7 +469,7 @@ async fn request_best_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::LowPower,
             force_fallback_adapter: false,
-            compatible_surface: None,
+            compatible_surface,
         })
         .await
     {
@@ -423,7 +480,7 @@ async fn request_best_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::LowPower,
             force_fallback_adapter: true,
-            compatible_surface: None,
+            compatible_surface,
         })
         .await
     {
@@ -501,28 +558,28 @@ impl GpuRenderer {
         layers: &[Layer],
         scene: &RenderSceneData,
     ) -> Result<Self> {
+        let context = RendererGpuContext::headless().await?;
+        Self::new_with_context(
+            environment,
+            layers,
+            scene,
+            &context,
+            wgpu::TextureFormat::Rgba8Unorm,
+        )
+    }
+
+    pub fn new_with_context(
+        environment: &Environment,
+        layers: &[Layer],
+        scene: &RenderSceneData,
+        context: &RendererGpuContext,
+        render_format: wgpu::TextureFormat,
+    ) -> Result<Self> {
         let width = environment.resolution.width;
         let height = environment.resolution.height;
         let groups_by_id = resolve_groups_by_id(&scene.groups);
-
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: PREFERRED_BACKENDS,
-            ..Default::default()
-        });
-        let adapter = request_best_adapter(&instance).await?;
-        let adapter_info = adapter.get_info();
-
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("vcr-device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                },
-                None,
-            )
-            .await
-            .context("failed to request wgpu device")?;
+        let device = context.device.clone();
+        let queue = context.queue.clone();
 
         let output_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("vcr-render-target"),
@@ -534,11 +591,10 @@ impl GpuRenderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: render_format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let output_view = output_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let unpadded_bytes_per_row = checked_bytes_per_row(width, "frame width")?.get();
         let padded_bytes_per_row =
@@ -649,7 +705,7 @@ impl GpuRenderer {
                 module: &blend_shader,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    format: render_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -794,8 +850,8 @@ impl GpuRenderer {
         gpu_layers.sort_by_key(|layer| layer.z_index);
 
         Ok(Self {
-            adapter_name: adapter_info.name,
-            adapter_backend: adapter_info.backend,
+            adapter_name: context.adapter_name.clone(),
+            adapter_backend: context.adapter_backend,
             device,
             queue,
             width,
@@ -805,7 +861,6 @@ impl GpuRenderer {
             params: scene.params.clone(),
             modulators: scene.modulators.clone(),
             output_texture,
-            output_view,
             readback_buffers,
             next_readback_index: 0,
             pending_readback: None,
@@ -818,6 +873,9 @@ impl GpuRenderer {
     }
 
     pub fn render_frame(&mut self, frame_index: u32) -> Result<()> {
+        let output_view = self
+            .output_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let readback_index = self.next_readback_index;
         let mut encoder = self
             .device
@@ -826,46 +884,7 @@ impl GpuRenderer {
             });
 
         self.prepare_procedural_layers(frame_index, &mut encoder)?;
-
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("vcr-render-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.output_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
-
-            render_pass.set_pipeline(&self.blend_pipeline);
-            for layer in &mut self.layers {
-                let can_reuse_cached =
-                    frame_index > 0 && layer.all_properties_static && layer.source_is_cached();
-                if !can_reuse_cached {
-                    refresh_layer_draw_state(
-                        &self.queue,
-                        self.width,
-                        self.height,
-                        self.fps,
-                        self.seed,
-                        &self.params,
-                        &self.modulators,
-                        layer,
-                        frame_index,
-                    )?;
-                }
-
-                render_pass.set_bind_group(0, &layer.blend_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, layer.vertex_buffer.slice(..));
-                render_pass.draw(0..6, 0..1);
-            }
-        }
+        self.render_layers_to_view(frame_index, &output_view, &mut encoder)?;
 
         let padded_bytes_per_row = NonZeroU32::new(self.padded_bytes_per_row)
             .ok_or_else(|| anyhow!("invalid padded row size {}", self.padded_bytes_per_row))?;
@@ -900,6 +919,70 @@ impl GpuRenderer {
             submission_index,
         });
         self.next_readback_index = (self.next_readback_index + 1) % self.readback_buffers.len();
+        Ok(())
+    }
+
+    pub fn render_frame_to_view(
+        &mut self,
+        frame_index: u32,
+        target_view: &wgpu::TextureView,
+    ) -> Result<()> {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("vcr-preview-encoder"),
+            });
+
+        self.prepare_procedural_layers(frame_index, &mut encoder)?;
+        self.render_layers_to_view(frame_index, target_view, &mut encoder)?;
+        self.queue.submit(Some(encoder.finish()));
+        Ok(())
+    }
+
+    fn render_layers_to_view(
+        &mut self,
+        frame_index: u32,
+        target_view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<()> {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("vcr-render-pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        render_pass.set_pipeline(&self.blend_pipeline);
+        for layer in &mut self.layers {
+            let can_reuse_cached =
+                frame_index > 0 && layer.all_properties_static && layer.source_is_cached();
+            if !can_reuse_cached {
+                refresh_layer_draw_state(
+                    &self.queue,
+                    self.width,
+                    self.height,
+                    self.fps,
+                    self.seed,
+                    &self.params,
+                    &self.modulators,
+                    layer,
+                    frame_index,
+                )?;
+            }
+
+            render_pass.set_bind_group(0, &layer.blend_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, layer.vertex_buffer.slice(..));
+            render_pass.draw(0..6, 0..1);
+        }
+
         Ok(())
     }
 
@@ -1113,6 +1196,45 @@ impl Renderer {
         })
     }
 
+    pub fn new_with_scene_and_context(
+        environment: &Environment,
+        layers: &[Layer],
+        scene: RenderSceneData,
+        context: &RendererGpuContext,
+        render_format: wgpu::TextureFormat,
+    ) -> Result<Self> {
+        let gpu = match GpuRenderer::new_with_context(
+            environment,
+            layers,
+            &scene,
+            context,
+            render_format,
+        ) {
+            Ok(gpu) => gpu,
+            Err(error) => {
+                let error_message = error.to_string();
+                if can_use_software_fallback(&error_message, layers) {
+                    let software = SoftwareRenderer::new(environment, layers, &scene)
+                        .context("failed to initialize software renderer fallback")?;
+                    return Ok(Self {
+                        backend: RendererBackend::Software(software),
+                        backend_reason: error_message,
+                    });
+                }
+                return Err(error);
+            }
+        };
+
+        Ok(Self {
+            backend_reason: format!("adapter '{}' ({:?})", gpu.adapter_name, gpu.adapter_backend),
+            backend: RendererBackend::Gpu(gpu),
+        })
+    }
+
+    pub fn is_gpu_backend(&self) -> bool {
+        matches!(self.backend, RendererBackend::Gpu(_))
+    }
+
     pub fn backend_name(&self) -> &'static str {
         match self.backend {
             RendererBackend::Gpu(_) => "GPU",
@@ -1128,6 +1250,21 @@ impl Renderer {
         match &mut self.backend {
             RendererBackend::Gpu(renderer) => renderer.render_frame_rgba(frame_index),
             RendererBackend::Software(renderer) => renderer.render_frame_rgba(frame_index),
+        }
+    }
+
+    pub fn render_frame_to_view(
+        &mut self,
+        frame_index: u32,
+        target_view: &wgpu::TextureView,
+    ) -> Result<()> {
+        match &mut self.backend {
+            RendererBackend::Gpu(renderer) => {
+                renderer.render_frame_to_view(frame_index, target_view)
+            }
+            RendererBackend::Software(_) => {
+                bail!("direct rendering to window surface requires GPU backend")
+            }
         }
     }
 }

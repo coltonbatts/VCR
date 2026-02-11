@@ -3,6 +3,7 @@ mod ascii_atlas;
 mod ascii_atlas_data;
 mod encoding;
 mod manifest;
+mod play;
 mod renderer;
 mod schema;
 mod timeline;
@@ -19,6 +20,7 @@ use image::RgbaImage;
 
 use crate::encoding::FfmpegPipe;
 use crate::manifest::load_and_validate_manifest;
+use crate::play::{run_play, PlayArgs};
 use crate::renderer::Renderer;
 use crate::schema::{Duration as ManifestDuration, Environment};
 use crate::timeline::{evaluate_manifest_layers_at_frame, RenderSceneData};
@@ -69,6 +71,13 @@ enum Commands {
         scale: f32,
         #[arg(long = "image-sequence")]
         image_sequence: bool,
+    },
+    Play {
+        manifest: PathBuf,
+        #[arg(long = "start-frame", default_value_t = 0)]
+        start_frame: u32,
+        #[arg(long = "paused")]
+        paused: bool,
     },
     RenderFrame {
         manifest: PathBuf,
@@ -143,6 +152,17 @@ fn main() -> Result<()> {
                 frames,
                 scale,
                 image_sequence,
+            },
+        ),
+        Commands::Play {
+            manifest,
+            start_frame,
+            paused,
+        } => run_play(
+            &manifest,
+            PlayArgs {
+                start_frame,
+                paused,
             },
         ),
         Commands::RenderFrame {
