@@ -1666,7 +1666,12 @@ fn evaluate_function(
     match normalized.as_str() {
         "clamp" => {
             expect_arity(name, &evaluated, 3)?;
-            Ok(evaluated[0].clamp(evaluated[1], evaluated[2]))
+            let min = evaluated[1];
+            let max = evaluated[2];
+            if min > max {
+                bail!("function {name} requires min <= max");
+            }
+            Ok(evaluated[0].clamp(min, max))
         }
         "lerp" => {
             expect_arity(name, &evaluated, 3)?;
@@ -1895,6 +1900,17 @@ mod tests {
 
         // easeInOut(0.5) == 0.5, sin(0) == 0
         assert!((value - 3.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn expression_clamp_rejects_inverted_bounds() {
+        let expression = parse_expression("clamp(t, 5, 1)");
+        let params = std::collections::BTreeMap::new();
+
+        let error = expression
+            .evaluate_with_context(&ExpressionContext::new(2.0, &params, 0))
+            .expect_err("inverted clamp bounds should fail");
+        assert!(error.to_string().contains("requires min <= max"));
     }
 
     #[test]

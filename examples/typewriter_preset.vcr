@@ -1,0 +1,304 @@
+---
+version: 1
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 24
+  duration:
+    frames: 84
+
+layers:
+  - id: background
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.02, g: 0.02, b: 0.03, a: 1.0 }
+
+  - id: typed_01
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(4, t) * (1.0 - step(6, t))"
+    text:
+      content: "y"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_02
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(6, t) * (1.0 - step(8, t))"
+    text:
+      content: "ye"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_03
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(8, t) * (1.0 - step(10, t))"
+    text:
+      content: "yep"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_04
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(10, t) * (1.0 - step(12, t))"
+    text:
+      content: "yep."
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_05
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(12, t) * (1.0 - step(14, t))"
+    text:
+      content: "yep. "
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_06
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(14, t) * (1.0 - step(16, t))"
+    text:
+      content: "yep. T"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_07
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(16, t) * (1.0 - step(18, t))"
+    text:
+      content: "yep. Th"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_08
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(18, t) * (1.0 - step(20, t))"
+    text:
+      content: "yep. Thi"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_09
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(20, t) * (1.0 - step(22, t))"
+    text:
+      content: "yep. This"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_10
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(22, t) * (1.0 - step(24, t))"
+    text:
+      content: "yep. This "
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_11
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(24, t) * (1.0 - step(26, t))"
+    text:
+      content: "yep. This t"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_12
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(26, t) * (1.0 - step(28, t))"
+    text:
+      content: "yep. This to"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_13
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(28, t) * (1.0 - step(30, t))"
+    text:
+      content: "yep. This tot"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_14
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(30, t) * (1.0 - step(32, t))"
+    text:
+      content: "yep. This tota"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_15
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(32, t) * (1.0 - step(34, t))"
+    text:
+      content: "yep. This total"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_16
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(34, t) * (1.0 - step(36, t))"
+    text:
+      content: "yep. This totall"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_17
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(36, t) * (1.0 - step(38, t))"
+    text:
+      content: "yep. This totally"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_18
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(38, t) * (1.0 - step(40, t))"
+    text:
+      content: "yep. This totally "
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_19
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(40, t) * (1.0 - step(42, t))"
+    text:
+      content: "yep. This totally w"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_20
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(42, t) * (1.0 - step(44, t))"
+    text:
+      content: "yep. This totally wo"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_21
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(44, t) * (1.0 - step(46, t))"
+    text:
+      content: "yep. This totally wor"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_22
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(46, t) * (1.0 - step(48, t))"
+    text:
+      content: "yep. This totally work"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: typed_23
+    z_index: 1
+    pos_x: 220
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(48, t)"
+    text:
+      content: "yep. This totally works"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }
+
+  - id: cursor
+    z_index: 2
+    pos_x: 1186
+    pos_y: 360
+    anchor: top_left
+    opacity: "step(48, t) * step(0.5, fract((t - 48) / 24.0))"
+    text:
+      content: "|"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 0.95, g: 1.0, b: 0.98, a: 1.0 }

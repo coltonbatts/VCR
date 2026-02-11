@@ -1,6 +1,8 @@
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -131,8 +133,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
 
     if !(has_neg && has_pos) {
-      return transparent;
+      return procedural.color_a;
     }
+    return transparent;
   }
 
   // 3: Circle
@@ -196,7 +199,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
   }
 
   // Default fallback
-  return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+  return transparent;
 }
 "#;
 
@@ -246,6 +249,9 @@ struct ShaderUniform {
 
 const EPSILON: f32 = 0.0001;
 const NO_GPU_ADAPTER_ERR: &str = "no suitable GPU adapter found";
+const READBACK_BUFFER_COUNT: usize = 2;
+const READBACK_MAP_TIMEOUT: Duration = Duration::from_secs(5);
+const READBACK_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -331,6 +337,7 @@ struct CustomShaderGpu {
     view: wgpu::TextureView,
     has_rendered: bool,
     is_static: bool,
+    last_rendered_frame: Option<u32>,
 }
 
 struct ProceduralGpu {
@@ -357,12 +364,19 @@ struct GpuRenderer {
     modulators: ModulatorMap,
     output_texture: wgpu::Texture,
     output_view: wgpu::TextureView,
-    readback_buffer: wgpu::Buffer,
+    readback_buffers: [wgpu::Buffer; READBACK_BUFFER_COUNT],
+    next_readback_index: usize,
+    pending_readback: Option<PendingReadback>,
     unpadded_bytes_per_row: u32,
     padded_bytes_per_row: u32,
     blend_pipeline: wgpu::RenderPipeline,
     procedural_pipeline: wgpu::RenderPipeline,
     layers: Vec<GpuLayer>,
+}
+
+struct PendingReadback {
+    buffer_index: usize,
+    submission_index: wgpu::SubmissionIndex,
 }
 
 #[cfg(target_os = "macos")]
@@ -514,18 +528,26 @@ impl GpuRenderer {
         });
         let output_view = output_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let unpadded_bytes_per_row = width
-            .checked_mul(4)
-            .ok_or_else(|| anyhow!("frame width overflow when computing row bytes"))?;
+        let unpadded_bytes_per_row = checked_bytes_per_row(width, "frame width")?.get();
         let padded_bytes_per_row =
-            align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        let readback_size = u64::from(padded_bytes_per_row) * u64::from(height);
-        let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("vcr-readback-buffer"),
-            size: readback_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+            align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+                .context("failed to align frame row bytes for GPU readback")?;
+        let readback_size = frame_size_bytes_u64(padded_bytes_per_row, height)
+            .context("failed to compute GPU readback buffer size")?;
+        let readback_buffers = [
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("vcr-readback-buffer-0"),
+                size: readback_size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            }),
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("vcr-readback-buffer-1"),
+                size: readback_size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            }),
+        ];
 
         let blend_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -758,7 +780,9 @@ impl GpuRenderer {
             modulators: scene.modulators.clone(),
             output_texture,
             output_view,
-            readback_buffer,
+            readback_buffers,
+            next_readback_index: 0,
+            pending_readback: None,
             unpadded_bytes_per_row,
             padded_bytes_per_row,
             blend_pipeline,
@@ -768,6 +792,7 @@ impl GpuRenderer {
     }
 
     pub fn render_frame(&mut self, frame_index: u32) -> Result<()> {
+        let readback_index = self.next_readback_index;
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -829,7 +854,7 @@ impl GpuRenderer {
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::ImageCopyBuffer {
-                buffer: &self.readback_buffer,
+                buffer: &self.readback_buffers[readback_index],
                 layout: wgpu::ImageDataLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_bytes_per_row.get()),
@@ -843,23 +868,47 @@ impl GpuRenderer {
             },
         );
 
-        self.queue.submit(Some(encoder.finish()));
+        let submission_index = self.queue.submit(Some(encoder.finish()));
+        self.pending_readback = Some(PendingReadback {
+            buffer_index: readback_index,
+            submission_index,
+        });
+        self.next_readback_index = (self.next_readback_index + 1) % self.readback_buffers.len();
         Ok(())
     }
 
     pub fn read_buffer(&mut self) -> Result<Vec<u8>> {
-        let buffer_slice = self.readback_buffer.slice(..);
+        let pending = self
+            .pending_readback
+            .take()
+            .ok_or_else(|| anyhow!("readback requested before any rendered frame was submitted"))?;
+        let buffer_slice = self.readback_buffers[pending.buffer_index].slice(..);
         let (sender, receiver) = mpsc::channel();
 
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        let start = Instant::now();
+        let map_result = loop {
+            match receiver.try_recv() {
+                Ok(result) => break result,
+                Err(mpsc::TryRecvError::Empty) => {
+                    if start.elapsed() >= READBACK_MAP_TIMEOUT {
+                        return Err(anyhow!(
+                            "timed out waiting for GPU readback (submission {:?})",
+                            pending.submission_index
+                        ));
+                    }
+                    self.device.poll(wgpu::Maintain::Poll);
+                    thread::sleep(READBACK_POLL_INTERVAL);
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(anyhow!("failed receiving GPU map callback"));
+                }
+            }
+        };
 
-        receiver
-            .recv()
-            .map_err(|_| anyhow!("failed receiving GPU map callback"))?
-            .context("GPU buffer mapping failed")?;
+        map_result.context("GPU buffer mapping failed")?;
 
         let mapped = buffer_slice.get_mapped_range();
         let frame = copy_tight_rows(
@@ -870,7 +919,7 @@ impl GpuRenderer {
         )?;
 
         drop(mapped);
-        self.readback_buffer.unmap();
+        self.readback_buffers[pending.buffer_index].unmap();
         Ok(frame)
     }
 
@@ -936,7 +985,7 @@ impl GpuRenderer {
                 continue;
             };
 
-            let needs_update = !shader.has_rendered || !shader.is_static;
+            let needs_update = shader_layer_needs_update(shader.last_rendered_frame, frame_index);
             if !needs_update {
                 continue;
             }
@@ -976,6 +1025,7 @@ impl GpuRenderer {
             }
 
             shader.has_rendered = true;
+            shader.last_rendered_frame = Some(frame_index);
         }
 
         Ok(())
@@ -988,24 +1038,31 @@ impl Renderer {
         layers: &[Layer],
         scene: RenderSceneData,
     ) -> Result<Self> {
-        match GpuRenderer::new(environment, layers, &scene).await {
-            Ok(gpu) => Ok(Self {
-                backend_reason: format!(
-                    "adapter '{}' ({:?})",
-                    gpu.adapter_name, gpu.adapter_backend
-                ),
-                backend: RendererBackend::Gpu(gpu),
-            }),
-            Err(error) if error.to_string().contains(NO_GPU_ADAPTER_ERR) => {
-                let software = SoftwareRenderer::new(environment, layers, &scene)
-                    .context("failed to initialize software renderer fallback")?;
-                Ok(Self {
-                    backend: RendererBackend::Software(software),
-                    backend_reason: error.to_string(),
-                })
+        let gpu = match GpuRenderer::new(environment, layers, &scene).await {
+            Ok(gpu) => gpu,
+            Err(error) => {
+                let error_message = error.to_string();
+                if can_use_software_fallback(&error_message, layers) {
+                    let software = SoftwareRenderer::new(environment, layers, &scene)
+                        .context("failed to initialize software renderer fallback")?;
+                    return Ok(Self {
+                        backend: RendererBackend::Software(software),
+                        backend_reason: error_message,
+                    });
+                }
+                if error_message.contains(NO_GPU_ADAPTER_ERR) && has_shader_layers(layers) {
+                    return Err(error.context(
+                        "software fallback is disabled because the manifest contains shader layers",
+                    ));
+                }
+                return Err(error);
             }
-            Err(error) => Err(error),
-        }
+        };
+
+        Ok(Self {
+            backend_reason: format!("adapter '{}' ({:?})", gpu.adapter_name, gpu.adapter_backend),
+            backend: RendererBackend::Gpu(gpu),
+        })
     }
 
     pub fn backend_name(&self) -> &'static str {
@@ -1264,8 +1321,8 @@ fn build_bitmap_layer(
         view_formats: &[],
     });
 
-    let bytes_per_row = NonZeroU32::new(layer_width.saturating_mul(4))
-        .ok_or_else(|| anyhow!("layer '{}' has invalid width {}", common.id, layer_width))?;
+    let bytes_per_row =
+        checked_bytes_per_row(layer_width, &format!("layer '{}' width", common.id))?;
     let rows_per_image = NonZeroU32::new(layer_height)
         .ok_or_else(|| anyhow!("layer '{}' has invalid height {}", common.id, layer_height))?;
 
@@ -1856,9 +1913,43 @@ fn to_clip(x: f32, y: f32, width: u32, height: u32) -> [f32; 2] {
     [clip_x, clip_y]
 }
 
-fn align_to(value: u32, alignment: u32) -> u32 {
+fn align_to(value: u32, alignment: u32) -> Result<u32> {
+    if alignment == 0 {
+        bail!("alignment must be non-zero");
+    }
+    if !alignment.is_power_of_two() {
+        bail!("alignment must be a power of two, got {alignment}");
+    }
     let mask = alignment - 1;
-    (value + mask) & !mask
+    value
+        .checked_add(mask)
+        .map(|aligned| aligned & !mask)
+        .ok_or_else(|| anyhow!("overflow while aligning {value} to {alignment}"))
+}
+
+fn checked_bytes_per_row(width: u32, label: &str) -> Result<NonZeroU32> {
+    let bytes_per_row = width
+        .checked_mul(4)
+        .ok_or_else(|| anyhow!("{label} overflows when computing bytes_per_row"))?;
+    NonZeroU32::new(bytes_per_row).ok_or_else(|| anyhow!("{label} must be greater than zero"))
+}
+
+fn frame_size_bytes_u64(bytes_per_row: u32, height: u32) -> Result<u64> {
+    u64::from(bytes_per_row)
+        .checked_mul(u64::from(height))
+        .ok_or_else(|| anyhow!("frame size overflow for {bytes_per_row}x{height} bytes"))
+}
+
+fn shader_layer_needs_update(last_rendered_frame: Option<u32>, frame_index: u32) -> bool {
+    last_rendered_frame != Some(frame_index)
+}
+
+fn has_shader_layers(layers: &[Layer]) -> bool {
+    layers.iter().any(|layer| matches!(layer, Layer::Shader(_)))
+}
+
+fn can_use_software_fallback(gpu_error_message: &str, layers: &[Layer]) -> bool {
+    gpu_error_message.contains(NO_GPU_ADAPTER_ERR) && !has_shader_layers(layers)
 }
 
 fn copy_tight_rows(
@@ -1867,7 +1958,20 @@ fn copy_tight_rows(
     padded_bytes_per_row: u32,
     height: u32,
 ) -> Result<Vec<u8>> {
-    let required_len = padded_bytes_per_row as usize * height as usize;
+    if unpadded_bytes_per_row > padded_bytes_per_row {
+        bail!(
+            "unpadded row size ({unpadded_bytes_per_row}) cannot exceed padded row size ({padded_bytes_per_row})"
+        );
+    }
+    let height = usize::try_from(height).context("frame height does not fit platform usize")?;
+    let unpadded_bytes_per_row = usize::try_from(unpadded_bytes_per_row)
+        .context("unpadded row bytes do not fit platform usize")?;
+    let padded_bytes_per_row = usize::try_from(padded_bytes_per_row)
+        .context("padded row bytes do not fit platform usize")?;
+
+    let required_len = padded_bytes_per_row
+        .checked_mul(height)
+        .ok_or_else(|| anyhow!("mapped frame size overflow while validating row copy"))?;
     if mapped.len() < required_len {
         return Err(anyhow!(
             "mapped frame too small: expected at least {} bytes, got {}",
@@ -1876,12 +1980,23 @@ fn copy_tight_rows(
         ));
     }
 
-    let mut frame = vec![0_u8; (unpadded_bytes_per_row * height) as usize];
-    for row_index in 0..height as usize {
-        let src_start = row_index * padded_bytes_per_row as usize;
-        let src_end = src_start + unpadded_bytes_per_row as usize;
-        let dst_start = row_index * unpadded_bytes_per_row as usize;
-        let dst_end = dst_start + unpadded_bytes_per_row as usize;
+    let frame_len = unpadded_bytes_per_row
+        .checked_mul(height)
+        .ok_or_else(|| anyhow!("tight frame size overflow while copying mapped rows"))?;
+    let mut frame = vec![0_u8; frame_len];
+    for row_index in 0..height {
+        let src_start = row_index
+            .checked_mul(padded_bytes_per_row)
+            .ok_or_else(|| anyhow!("source row offset overflow during mapped row copy"))?;
+        let src_end = src_start
+            .checked_add(unpadded_bytes_per_row)
+            .ok_or_else(|| anyhow!("source row end overflow during mapped row copy"))?;
+        let dst_start = row_index
+            .checked_mul(unpadded_bytes_per_row)
+            .ok_or_else(|| anyhow!("destination row offset overflow during mapped row copy"))?;
+        let dst_end = dst_start
+            .checked_add(unpadded_bytes_per_row)
+            .ok_or_else(|| anyhow!("destination row end overflow during mapped row copy"))?;
         frame[dst_start..dst_end].copy_from_slice(&mapped[src_start..src_end]);
     }
 
@@ -1979,7 +2094,8 @@ fn render_procedural_pixmap(
     height: u32,
     context: &ExpressionContext<'_>,
 ) -> Result<Pixmap> {
-    let mut pixmap = Pixmap::new(width, height).unwrap();
+    let mut pixmap = Pixmap::new(width, height)
+        .ok_or_else(|| anyhow!("failed to allocate procedural pixmap {width}x{height}"))?;
     pixmap.fill(Color::TRANSPARENT);
 
     match source {
@@ -2013,12 +2129,9 @@ fn render_procedural_pixmap(
                 Transform::identity(),
             )
             .ok_or_else(|| anyhow!("failed to create gradient"))?;
-            pixmap.fill_rect(
-                Rect::from_xywh(0.0, 0.0, width as f32, height as f32).unwrap(),
-                &paint,
-                Transform::identity(),
-                None,
-            );
+            let fill_rect = Rect::from_xywh(0.0, 0.0, width as f32, height as f32)
+                .ok_or_else(|| anyhow!("failed to build gradient fill rect {width}x{height}"))?;
+            pixmap.fill_rect(fill_rect, &paint, Transform::identity(), None);
         }
         ProceduralSource::Triangle { p0, p1, p2, color } => {
             let c = color.evaluate(context)?;
@@ -2307,7 +2420,8 @@ fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
 
     let glyphs = layout.glyphs();
     if glyphs.is_empty() {
-        return Ok(Pixmap::new(1, 1).unwrap());
+        return Pixmap::new(1, 1)
+            .ok_or_else(|| anyhow!("failed to allocate fallback pixmap for empty text layer"));
     }
 
     let mut min_x = f32::MAX;
@@ -2375,7 +2489,12 @@ fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
                                 out_b as u8,
                                 (out_a * 255.0).round() as u8,
                             )
-                            .expect("premultiplied color should be valid");
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "invalid premultiplied color while rasterizing text layer '{}'",
+                                    layer.common.id
+                                )
+                            })?;
                         }
                     }
                 }
@@ -2568,6 +2687,7 @@ fn build_shader_layer(
         view,
         has_rendered: false,
         is_static,
+        last_rendered_frame: None,
     };
 
     Ok(GpuLayer {
@@ -2639,7 +2759,13 @@ fn build_text_layer(
         pixmap.data(),
         wgpu::ImageDataLayout {
             offset: 0,
-            bytes_per_row: Some(layer_width * 4),
+            bytes_per_row: Some(
+                checked_bytes_per_row(
+                    layer_width,
+                    &format!("text layer '{}' width", layer.common.id),
+                )?
+                .get(),
+            ),
             rows_per_image: Some(layer_height),
         },
         wgpu::Extent3d {
@@ -2713,7 +2839,10 @@ fn build_text_layer(
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_tight_rows, SoftwareRenderer};
+    use super::{
+        align_to, can_use_software_fallback, checked_bytes_per_row, copy_tight_rows,
+        shader_layer_needs_update, SoftwareRenderer, PROCEDURAL_SHADER,
+    };
     use crate::schema::Manifest;
     use crate::timeline::RenderSceneData;
 
@@ -2733,6 +2862,116 @@ mod tests {
         let mapped = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let tight = copy_tight_rows(&mapped, 4, 4, 2).expect("expected tight copy");
         assert_eq!(tight, mapped);
+    }
+
+    #[test]
+    fn copy_tight_rows_rejects_unpadded_rows_larger_than_padded_rows() {
+        let mapped = vec![0_u8; 8];
+        let error = copy_tight_rows(&mapped, 8, 4, 1)
+            .expect_err("unpadded row larger than padded row should fail");
+        assert!(error.to_string().contains("cannot exceed"));
+    }
+
+    #[test]
+    fn align_to_returns_error_on_overflow() {
+        let error = align_to(u32::MAX, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            .expect_err("alignment overflow should return error");
+        assert!(error.to_string().contains("overflow"));
+    }
+
+    #[test]
+    fn checked_bytes_per_row_rejects_width_overflow() {
+        let error = checked_bytes_per_row(u32::MAX, "test width")
+            .expect_err("bytes_per_row overflow should return error");
+        assert!(error.to_string().contains("overflows"));
+    }
+
+    #[test]
+    fn shader_layer_needs_update_when_frame_advances() {
+        assert!(shader_layer_needs_update(None, 0));
+        assert!(!shader_layer_needs_update(Some(0), 0));
+        assert!(shader_layer_needs_update(Some(0), 1));
+    }
+
+    #[test]
+    fn software_fallback_is_rejected_for_no_gpu_error_when_manifest_has_shader_layers() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: shader-only
+    shader:
+      fragment: |
+        fn shade(uv: vec2<f32>, uniforms: ShaderUniforms) -> vec4<f32> {
+          return vec4<f32>(uv.x, uv.y, 0.0, 1.0);
+        }
+"#,
+        )
+        .expect("manifest should parse");
+
+        assert!(!can_use_software_fallback(
+            "failed: no suitable GPU adapter found",
+            &manifest.layers
+        ));
+    }
+
+    #[test]
+    fn procedural_shader_triangle_path_returns_color_for_interior_pixels() {
+        assert!(PROCEDURAL_SHADER
+            .contains("if !(has_neg && has_pos) {\n      return procedural.color_a;"));
+        assert!(PROCEDURAL_SHADER.contains("return transparent;\n  }\n\n  // 3: Circle"));
+    }
+
+    #[test]
+    fn procedural_shader_default_fallback_is_transparent() {
+        assert!(PROCEDURAL_SHADER.contains("// Default fallback\n  return transparent;"));
+        assert!(!PROCEDURAL_SHADER.contains("vec4<f32>(0.0, 0.0, 0.0, 1.0)"));
+    }
+
+    #[test]
+    fn software_triangle_fill_has_opaque_interior_and_transparent_exterior() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: tri
+    procedural:
+      kind: triangle
+      p0: [0.1, 0.1]
+      p1: [0.9, 0.1]
+      p2: [0.5, 0.9]
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+"#,
+        )
+        .expect("manifest should parse");
+
+        let mut renderer = SoftwareRenderer::new(
+            &manifest.environment,
+            &manifest.layers,
+            &RenderSceneData::from_manifest(&manifest),
+        )
+        .expect("software renderer should initialize");
+
+        let frame = renderer
+            .render_frame_rgba(0)
+            .expect("triangle frame render should succeed");
+        assert!(
+            pixel_at(&frame, 8, 4, 4)[3] > 0,
+            "triangle interior should be opaque"
+        );
+        assert_eq!(
+            pixel_at(&frame, 8, 0, 7)[3],
+            0,
+            "triangle exterior should stay transparent"
+        );
     }
 
     #[test]
@@ -2794,6 +3033,16 @@ layers:
             .expect("frame render should succeed");
         let checksum = fnv1a64(&frame);
         assert_eq!(checksum, 2991149225877046887);
+    }
+
+    fn pixel_at(frame: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
+        let offset = (y * width + x) * 4;
+        [
+            frame[offset],
+            frame[offset + 1],
+            frame[offset + 2],
+            frame[offset + 3],
+        ]
     }
 
     fn fnv1a64(bytes: &[u8]) -> u64 {
