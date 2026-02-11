@@ -1,0 +1,30 @@
+@system
+Night run. One render pass. No retries.
+
+@user
+Can we ship this before sunrise?
+
+@assistant
+Yes.
+We trim, we lock, we render.
+
+::pause 700ms
+
+@assistant
+Frame check: done.
+Audio check: done.
+Export check: done.
+
+::type slow
+
+@assistant
+And now... the final command:
+
+@tool ffmpeg
+ffmpeg -i cut.mov -vf scale=1080:1920 -c:v libx264 trailer.mp4
+
+::pause 1.1s
+
+@assistant
+Render complete.
+Want me to queue the upload too?

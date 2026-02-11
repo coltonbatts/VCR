@@ -57,6 +57,27 @@ cargo build --release --bin vcr --bin figma-vcr-workflow
 ./target/release/vcr build examples/welcome_terminal_scene.vcr -o renders/output.mov
 ```
 
+## ASCII Stage (Transcript -> Terminal Cinema)
+
+`vcr ascii stage` renders a plain-text `.vcrtxt` chat transcript into a stylized terminal video with deterministic timing.
+
+```bash
+./target/release/vcr ascii stage \
+  --in examples/ascii/demo.vcrtxt \
+  --out renders/ascii_demo_x.mp4 \
+  --preset x \
+  --camera slow-zoom \
+  --seed 0
+```
+
+Use cases:
+
+- Social-friendly vertical clips (`--preset x`)
+- Tool-call heavy interaction replays (`examples/ascii/tool-heavy.vcrtxt`)
+- Scripted dramatic pacing (`examples/ascii/drama.vcrtxt`)
+
+See `docs/ASCII_STAGE.md` for format, flags, and presets.
+
 ## One-Command Playground (9 Presets)
 
 ```bash
@@ -147,6 +168,7 @@ Override at runtime:
 - `render-frames`
 - `watch`
 - `chat render`
+- `ascii stage`
 - `doctor`
 
 For full help:
@@ -171,6 +193,7 @@ Param semantics are documented in `docs/PARAMS.md`.
 - `docs/PARAMS.md` - typed params and `--set` semantics
 - `docs/PLAYGROUND.md` - preset playground runner and outputs
 - `docs/CHAT_RENDER.md` - tagged transcript to animated terminal video
+- `docs/ASCII_STAGE.md` - stylized `.vcrtxt` transcript rendering with camera/preset options
 - `docs/SKILLS_PROTOCOL.md` - agent update protocol
 - `docs/EXIT_CODES.md` - CLI exit code contract
 

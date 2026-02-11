@@ -7,10 +7,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use image::RgbaImage;
 use serde::Serialize;
 
+use vcr::ascii_stage::{
+    parse_ascii_stage_size, render_ascii_stage_video, AsciiStageRenderArgs, CameraMode,
+};
 use vcr::chat::{render_chat_video, ChatRenderArgs};
 use vcr::encoding::FfmpegPipe;
 use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions, ParamOverride};
@@ -198,6 +201,10 @@ enum Commands {
         #[command(subcommand)]
         command: ChatCommands,
     },
+    Ascii {
+        #[command(subcommand)]
+        command: AsciiCommands,
+    },
     Doctor,
 }
 
@@ -219,6 +226,119 @@ enum ChatCommands {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum AsciiCommands {
+    Stage {
+        #[arg(long = "in", value_name = "TRANSCRIPT")]
+        input: PathBuf,
+        #[arg(long = "out", value_name = "OUTPUT")]
+        output: PathBuf,
+        #[arg(long = "fps")]
+        fps: Option<u32>,
+        #[arg(long = "size")]
+        size: Option<String>,
+        #[arg(long = "seed", default_value_t = 0)]
+        seed: u64,
+        #[arg(long = "speed")]
+        speed: Option<f32>,
+        #[arg(long = "theme")]
+        theme: Option<String>,
+        #[arg(
+            long = "chrome",
+            default_value_t = true,
+            action = clap::ArgAction::Set
+        )]
+        chrome: bool,
+        #[arg(long = "camera", default_value = "static")]
+        camera: AsciiCameraArg,
+        #[arg(long = "preset", default_value = "none")]
+        preset: AsciiPresetArg,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AsciiCameraArg {
+    Static,
+    SlowZoom,
+    Follow,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AsciiPresetArg {
+    None,
+    X,
+    Yt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AsciiPresetDefaults {
+    fps: u32,
+    size: &'static str,
+    speed: f32,
+    theme: &'static str,
+    font_scale: f32,
+}
+
+fn ascii_preset_defaults(preset: AsciiPresetArg) -> AsciiPresetDefaults {
+    match preset {
+        AsciiPresetArg::None => AsciiPresetDefaults {
+            fps: 30,
+            size: "1920x1080",
+            speed: 1.0,
+            theme: "void",
+            font_scale: 1.0,
+        },
+        AsciiPresetArg::X => AsciiPresetDefaults {
+            fps: 30,
+            size: "1080x1920",
+            speed: 1.2,
+            theme: "void",
+            font_scale: 1.18,
+        },
+        AsciiPresetArg::Yt => AsciiPresetDefaults {
+            fps: 30,
+            size: "1920x1080",
+            speed: 1.0,
+            theme: "void",
+            font_scale: 1.0,
+        },
+    }
+}
+
+fn ascii_camera_mode(value: AsciiCameraArg) -> CameraMode {
+    match value {
+        AsciiCameraArg::Static => CameraMode::Static,
+        AsciiCameraArg::SlowZoom => CameraMode::SlowZoom,
+        AsciiCameraArg::Follow => CameraMode::Follow,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ResolvedAsciiStageOptions {
+    fps: u32,
+    size: String,
+    speed: f32,
+    theme: String,
+    font_scale: f32,
+}
+
+fn resolve_ascii_stage_options(
+    preset: AsciiPresetArg,
+    fps: Option<u32>,
+    size: Option<&str>,
+    speed: Option<f32>,
+    theme: Option<&str>,
+) -> ResolvedAsciiStageOptions {
+    let defaults = ascii_preset_defaults(preset);
+    ResolvedAsciiStageOptions {
+        fps: fps.unwrap_or(defaults.fps),
+        size: size.unwrap_or(defaults.size).to_owned(),
+        speed: speed.unwrap_or(defaults.speed),
+        theme: theme.unwrap_or(defaults.theme).to_owned(),
+        font_scale: defaults.font_scale,
+    }
+}
+
 impl Commands {
     fn name(&self) -> &'static str {
         match self {
@@ -234,6 +354,7 @@ impl Commands {
             Self::RenderFrames { .. } => "render-frames",
             Self::Watch { .. } => "watch",
             Self::Chat { .. } => "chat",
+            Self::Ascii { .. } => "ascii",
             Self::Doctor => "doctor",
         }
     }
@@ -421,6 +542,32 @@ fn run_cli(cli: Cli) -> Result<()> {
                 seed,
             } => run_chat_render(&input, &output, &theme, fps, speed, seed, quiet),
         },
+        Commands::Ascii { command } => match command {
+            AsciiCommands::Stage {
+                input,
+                output,
+                fps,
+                size,
+                seed,
+                speed,
+                theme,
+                chrome,
+                camera,
+                preset,
+            } => run_ascii_stage_render(
+                &input,
+                &output,
+                fps,
+                size.as_deref(),
+                speed,
+                theme.as_deref(),
+                seed,
+                chrome,
+                camera,
+                preset,
+                quiet,
+            ),
+        },
         Commands::Doctor => run_doctor(),
     }
 }
@@ -483,8 +630,11 @@ fn is_usage_error(error: &anyhow::Error) -> bool {
         || has_error_message_fragment(error, "--interval-ms must be > 0")
         || has_error_message_fragment(error, "preview --scale must be in")
         || has_error_message_fragment(error, "invalid .vcrchat format")
+        || has_error_message_fragment(error, "invalid .vcrtxt format")
         || has_error_message_fragment(error, "empty input script")
+        || has_error_message_fragment(error, "empty input transcript")
         || has_error_message_fragment(error, "unknown --theme")
+        || has_error_message_fragment(error, "invalid --size")
         || has_error_message_fragment(error, "--fps must be > 0")
         || has_error_message_fragment(error, "--speed must be > 0")
         || has_error_message_fragment(error, "start frame")
@@ -681,6 +831,69 @@ fn run_chat_render(
         quiet,
         format_args!(
             "[VCR] Chat render complete: {}x{}, {} frames, {:.2}s",
+            summary.width,
+            summary.height,
+            summary.frame_count,
+            summary.duration_ms as f64 / 1000.0
+        ),
+    );
+    Ok(())
+}
+
+fn run_ascii_stage_render(
+    input_path: &Path,
+    output_path: &Path,
+    fps: Option<u32>,
+    size: Option<&str>,
+    speed: Option<f32>,
+    theme: Option<&str>,
+    seed: u64,
+    chrome: bool,
+    camera: AsciiCameraArg,
+    preset: AsciiPresetArg,
+    quiet: bool,
+) -> Result<()> {
+    let resolved = resolve_ascii_stage_options(preset, fps, size, speed, theme);
+    let (width, height) = parse_ascii_stage_size(&resolved.size)?;
+    let resolved_output = resolve_output_path(
+        input_path,
+        Some(output_path.to_path_buf()),
+        "mp4",
+        None,
+        quiet,
+    )?;
+    if let Some(parent) = resolved_output.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create output directory {}", parent.display()))?;
+    }
+
+    progress_log(
+        quiet,
+        format_args!(
+            "[VCR] ASCII stage: theme={}, fps={}, size={}x{}, speed={:.2}, seed={}, camera={:?}, preset={:?}",
+            resolved.theme, resolved.fps, width, height, resolved.speed, seed, camera, preset
+        ),
+    );
+
+    let summary = render_ascii_stage_video(&AsciiStageRenderArgs {
+        input: input_path.to_path_buf(),
+        output: resolved_output.clone(),
+        theme: resolved.theme.clone(),
+        fps: resolved.fps,
+        speed: resolved.speed,
+        seed,
+        width,
+        height,
+        chrome,
+        camera_mode: ascii_camera_mode(camera),
+        font_scale: resolved.font_scale,
+    })?;
+
+    println!("Wrote {}", resolved_output.display());
+    progress_log(
+        quiet,
+        format_args!(
+            "[VCR] ASCII stage complete: {}x{}, {} frames, {:.2}s",
             summary.width,
             summary.height,
             summary.frame_count,
@@ -1831,7 +2044,10 @@ fn print_timing_summary(quiet: bool, timing: RenderTimingSummary) {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_exit_code, should_emit_nonessential_logs, VcrExitCode};
+    use super::{
+        classify_exit_code, resolve_ascii_stage_options, should_emit_nonessential_logs,
+        AsciiPresetArg, VcrExitCode,
+    };
     use anyhow::anyhow;
 
     #[test]
@@ -1844,5 +2060,25 @@ mod tests {
     fn exit_code_classifier_maps_usage_errors() {
         let error = anyhow!("invalid --set for param 'speed': expected float, got 'fast'");
         assert_eq!(classify_exit_code(&error), VcrExitCode::Usage);
+    }
+
+    #[test]
+    fn ascii_preset_defaults_apply_but_explicit_flags_win() {
+        let x_defaults = resolve_ascii_stage_options(AsciiPresetArg::X, None, None, None, None);
+        assert_eq!(x_defaults.fps, 30);
+        assert_eq!(x_defaults.size, "1080x1920");
+        assert!((x_defaults.speed - 1.2).abs() < f32::EPSILON);
+
+        let explicit = resolve_ascii_stage_options(
+            AsciiPresetArg::X,
+            Some(24),
+            Some("1280x720"),
+            Some(0.9),
+            Some("void"),
+        );
+        assert_eq!(explicit.fps, 24);
+        assert_eq!(explicit.size, "1280x720");
+        assert!((explicit.speed - 0.9).abs() < f32::EPSILON);
+        assert_eq!(explicit.theme, "void");
     }
 }

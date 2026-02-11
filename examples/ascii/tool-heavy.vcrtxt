@@ -1,0 +1,36 @@
+@user
+Build a launch trailer teaser from the repo README.
+
+@assistant
+Working on it. I will gather copy, key visuals, and render targets.
+
+@tool repo-scan
+files: README.md, docs/ASCII_STAGE.md
+headings: 7
+issues: 0
+
+@assistant
+Great. Now I will create three story beats.
+
+@tool script-gen
+beat_1: hook line
+beat_2: proof montage
+beat_3: CTA
+status: ok
+
+::pause 450ms
+
+@tool ffmpeg-plan
+ratio: 9:16
+deliverables: 3
+codec: h264
+
+@assistant
+Pipeline is staged. Generating preview frames.
+
+@tool render-preview
+frames: 96
+warnings: 0
+
+@assistant
+Preview complete. Want a punchier alt with denser cuts?
