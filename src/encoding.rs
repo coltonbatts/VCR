@@ -74,6 +74,9 @@ fn encoding_worker(
     }
 
     let mut child = Command::new("ffmpeg")
+        .arg("-hide_banner")
+        .arg("-loglevel")
+        .arg("error")
         .arg("-y")
         .arg("-f")
         .arg("rawvideo")

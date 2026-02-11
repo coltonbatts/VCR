@@ -287,7 +287,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             set,
         } => {
             let resolved_output = if image_sequence {
-                let default_dir = PathBuf::from("renders/preview");
+                let default_dir = default_preview_sequence_output_dir(&manifest);
                 Some(output.unwrap_or(default_dir))
             } else {
                 Some(resolve_output_path(
@@ -362,7 +362,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             set,
         } => {
             let resolved_output = if image_sequence {
-                let default_dir = PathBuf::from("renders/preview");
+                let default_dir = default_preview_sequence_output_dir(&manifest);
                 Some(output.unwrap_or(default_dir))
             } else {
                 Some(resolve_output_path(
@@ -514,6 +514,15 @@ fn resolve_output_path(
 
     progress_log(quiet, format_args!("[VCR] Output path: {}", path.display()));
     Ok(path)
+}
+
+fn default_preview_sequence_output_dir(manifest_path: &Path) -> PathBuf {
+    let stem = manifest_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("scene");
+    PathBuf::from(format!("renders/{}_preview", stem))
 }
 
 fn run_doctor() -> Result<()> {
@@ -808,18 +817,43 @@ fn run_explain(manifest_path: &Path, set_values: &[String], json: bool) -> Resul
         manifest.environment.fps,
         manifest.environment.total_frames()
     );
-    if manifest.applied_param_overrides.is_empty() {
+    let non_default_overrides = manifest
+        .applied_param_overrides
+        .iter()
+        .filter(|(name, value)| {
+            manifest
+                .param_definitions
+                .get(*name)
+                .map_or(true, |definition| definition.default != **value)
+        })
+        .collect::<Vec<_>>();
+    if non_default_overrides.is_empty() {
         println!("- overrides=<none>");
     } else {
-        println!("- overrides:");
-        for (name, value) in &manifest.applied_param_overrides {
+        println!("- overrides (non-default):");
+        for (name, value) in non_default_overrides {
             println!("  {}={}", name, format_param_value(value));
         }
     }
-    println!("- resolved_params:");
-    for (name, value) in &manifest.resolved_params {
+    let non_default_resolved = manifest
+        .resolved_params
+        .iter()
+        .filter(|(name, value)| {
+            manifest
+                .param_definitions
+                .get(*name)
+                .map_or(true, |definition| definition.default != **value)
+        })
+        .collect::<Vec<_>>();
+    if non_default_resolved.is_empty() {
+        println!("- resolved_non_default_params=<none>");
+    } else {
+        println!("- resolved_non_default_params:");
+    }
+    for (name, value) in non_default_resolved {
         println!("  {}={}", name, format_param_value(value));
     }
+    println!("- resolved_param_total={}", manifest.resolved_params.len());
     Ok(())
 }
 
@@ -971,7 +1005,7 @@ fn run_preview(
     let metadata_path = if args.image_sequence {
         let output_dir = output
             .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("preview_frames"));
+            .unwrap_or_else(|| default_preview_sequence_output_dir(manifest_path));
         metadata_sidecar_for_directory(&output_dir, "preview")
     } else {
         let output_path = output
@@ -982,7 +1016,7 @@ fn run_preview(
     if args.image_sequence {
         let output_dir = output
             .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("preview_frames"));
+            .unwrap_or_else(|| default_preview_sequence_output_dir(manifest_path));
         fs::create_dir_all(&output_dir).with_context(|| {
             format!(
                 "failed to create preview output directory {}",

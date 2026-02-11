@@ -176,6 +176,129 @@ layers:
 }
 
 #[test]
+fn preview_image_sequence_default_output_is_manifest_scoped() {
+    let dir = tempdir().expect("tempdir should create");
+
+    let scene_a = dir.path().join("scene_a.vcr");
+    write_manifest(
+        &scene_a,
+        r#"
+version: 1
+environment:
+  resolution: { width: 16, height: 16 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1, g: 1, b: 1, a: 1 }
+"#,
+    );
+
+    let scene_b = dir.path().join("scene_b.vcr");
+    write_manifest(
+        &scene_b,
+        r#"
+version: 1
+environment:
+  resolution: { width: 16, height: 16 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 0, g: 0, b: 0, a: 1 }
+"#,
+    );
+
+    let first = run_vcr(
+        dir.path(),
+        &[
+            "preview",
+            "scene_a.vcr",
+            "--image-sequence",
+            "--frames",
+            "1",
+        ],
+    );
+    assert!(first.status.success(), "first preview should succeed");
+
+    let second = run_vcr(
+        dir.path(),
+        &[
+            "preview",
+            "scene_b.vcr",
+            "--image-sequence",
+            "--frames",
+            "1",
+        ],
+    );
+    assert!(second.status.success(), "second preview should succeed");
+
+    assert!(dir.path().join("renders/scene_a_preview").is_dir());
+    assert!(dir.path().join("renders/scene_b_preview").is_dir());
+    assert!(dir
+        .path()
+        .join("renders/scene_a_preview/frame_000000.png")
+        .is_file());
+    assert!(dir
+        .path()
+        .join("renders/scene_b_preview/frame_000000.png")
+        .is_file());
+}
+
+#[test]
+fn explain_text_output_shows_only_non_default_changes() {
+    let dir = tempdir().expect("tempdir should create");
+    let manifest_path = dir.path().join("scene.vcr");
+    write_manifest(
+        &manifest_path,
+        r#"
+version: 1
+environment:
+  resolution: { width: 32, height: 32 }
+  fps: 24
+  duration: { frames: 2 }
+params:
+  speed:
+    type: float
+    default: 1.0
+  gain:
+    type: float
+    default: 2.0
+layers:
+  - id: bg
+    opacity: "0.4 + speed * 0.0 + gain * 0.0"
+    procedural:
+      kind: solid_color
+      color: { r: 1, g: 1, b: 1, a: 1 }
+"#,
+    );
+
+    let output = run_vcr(
+        dir.path(),
+        &[
+            "explain",
+            "scene.vcr",
+            "--set",
+            "speed=1.0",
+            "--set",
+            "gain=3.0",
+        ],
+    );
+    assert!(output.status.success(), "explain should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("- overrides (non-default):"));
+    assert!(stdout.contains("gain=3.000000"));
+    assert!(!stdout.contains("speed=1.000000"));
+    assert!(stdout.contains("- resolved_non_default_params:"));
+    assert!(stdout.contains("- resolved_param_total=2"));
+}
+
+#[test]
 fn exit_codes_and_error_prefixes_are_consistent() {
     let dir = tempdir().expect("tempdir should create");
     let manifest_path = dir.path().join("scene.vcr");

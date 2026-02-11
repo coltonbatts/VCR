@@ -1,0 +1,73 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 24
+  duration: { frames: 84 }
+
+seed: 9001
+params:
+  reveal_duration:
+    type: float
+    default: 1.0
+    min: 0.40
+    max: 2.2
+    description: "Seconds until the logo reaches full visibility"
+  reveal_bias:
+    type: float
+    default: 0.70
+    min: 0.0
+    max: 1.0
+    description: "0=linear feel, 1=ease-in-out feel"
+  accent_color:
+    type: color
+    default: { r: 0.96, g: 0.44, b: 0.20, a: 1.0 }
+    description: "Logo accent color"
+
+layers:
+  - id: logo_shadow
+    z_index: 1
+    anchor: center
+    pos_x: "960 - (1.0 - lerp(clamp(t / reveal_duration, 0.0, 1.0), easeInOut(clamp(t / reveal_duration, 0.0, 1.0)), reveal_bias)) * 300"
+    pos_y: 530
+    opacity: "clamp(lerp(clamp(t / reveal_duration, 0.0, 1.0), easeInOut(clamp(t / reveal_duration, 0.0, 1.0)), reveal_bias) * 0.48, 0.0, 0.48)"
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Square"
+      font_size: 294
+      color: "${accent_color}"
+
+  - id: logo_core
+    z_index: 2
+    anchor: center
+    pos_x: "960 - (1.0 - lerp(clamp(t / reveal_duration, 0.0, 1.0), easeInOut(clamp(t / reveal_duration, 0.0, 1.0)), reveal_bias)) * 220"
+    pos_y: 510
+    opacity: "clamp(lerp(clamp(t / reveal_duration, 0.0, 1.0), easeInOut(clamp(t / reveal_duration, 0.0, 1.0)), reveal_bias), 0.0, 1.0)"
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Square"
+      font_size: 280
+      color: { r: 0.99, g: 0.99, b: 1.0, a: 1.0 }
+
+  - id: wipe_bar
+    z_index: 3
+    pos_x: "760 + lerp(clamp(t / reveal_duration, 0.0, 1.0), easeInOut(clamp(t / reveal_duration, 0.0, 1.0)), reveal_bias) * 420"
+    pos_y: 690
+    opacity: "clamp(0.12 + (1.0 - smoothstep(0.82, 1.0, clamp(t / reveal_duration, 0.0, 1.0))) * 0.64, 0.0, 0.76)"
+    procedural:
+      kind: rounded_rect
+      center: { x: 0.5, y: 0.5 }
+      size: { x: 0.18, y: 0.015 }
+      corner_radius: 0.006
+      color: "${accent_color}"
+
+  - id: tagline
+    z_index: 4
+    anchor: center
+    pos_x: 960
+    pos_y: 710
+    opacity: "clamp(smoothstep(reveal_duration * 0.55, reveal_duration * 1.2, t), 0.0, 1.0)"
+    text:
+      content: "VIDEO COMPONENT RENDERER"
+      font_family: "GeistPixel-Line"
+      font_size: 56
+      color: "${accent_color}"

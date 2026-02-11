@@ -210,6 +210,29 @@ Render commands emit a local `*.metadata.json` sidecar containing:
 - VCR version
 - manifest hash
 
+## Playground Preset Runner
+
+To regenerate all steerable playground previews in one pass:
+
+```bash
+./scripts/run_playground.sh
+```
+
+This runs all 9 presets across:
+
+- `examples/instrument_typography.vcr`
+- `examples/instrument_grid.vcr`
+- `examples/instrument_logo_reveal.vcr`
+
+Outputs are written to `renders/playground/<scene>/<preset>/` with:
+
+- frame sequences (`frame_*.png`)
+- per-preset metadata (`preview.metadata.json`)
+- `renders/playground/index.json` (scene/preset/output/params/metadata index)
+- optional per-scene contact sheets (`contact_sheet.png`) when `ffmpeg` is installed
+
+For preset editing and output details, see `docs/PLAYGROUND.md`.
+
 ## Getting Started
 
 ```bash
