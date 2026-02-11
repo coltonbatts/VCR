@@ -46,6 +46,57 @@ Given ramp length `N`, index MUST be:
 
 with clamp to `[0, N-1]`.
 
+Reconstructed quantized luma for mapped index `i` is:
+
+`Yq = floor((i * 255 + floor((N - 1)/2)) / (N - 1))` for `N > 1` (else `Yq = 0`).
+
+### 4.4 Temporal Coherence (`hysteresis`)
+
+Temporal mode is explicitly configured:
+
+- `none`: no cross-frame state
+- `hysteresis`: per-cell hold against prior mapped index
+
+For `hysteresis`, with previous index `p`, nearest index `n`, effective luma `Yeff`, and configured band `B`:
+
+- If `p == n`, output `n`
+- Else let `center = Yq(p)`, `low = max(0, center - B)`, `high = min(255, center + B)`
+- If `Yeff` in `[low, high]`, output `p`; otherwise output `n`
+
+Traversal and state update MUST be row-major and deterministic.
+
+### 4.5 Cell Dithering (`floyd_steinberg_cell`)
+
+Dither mode is explicitly configured:
+
+- `none`: direct quantization
+- `floyd_steinberg_cell`: deterministic error diffusion on cell grid
+
+For `floyd_steinberg_cell`, implementation MUST use:
+
+- Scan order: top-to-bottom, left-to-right (row-major)
+- Boundary handling: drop contributions outside grid (intentional deterministic edge bias)
+- Error kernel (same-row/next-row): `7/16`, `3/16`, `5/16`, `1/16`
+- Fixed-point accumulator in `1/16` units
+- Error-to-luma adjustment with explicit helper:
+  - `div_round_nearest_ties_away_from_zero(numer, denom)`:
+    - `abs_q = floor((abs(numer) + floor(denom/2)) / denom)`
+    - return `-abs_q` if `numer < 0`, else `abs_q`
+  - `Yeff = clamp(Ycell + div_round_nearest_ties_away_from_zero(err16, 16), 0, 255)`
+- Quantization error: `e = Yeff - Yq(mapped_index)`
+- Diffusion adds integer numerators: `7e, 3e, 5e, 1e` to the four kernel neighbors
+
+### 4.6 Canonical Mapping Order
+
+Canonical per-cell order (row-major) is:
+
+1. Start from `Ycell` (post BT.709 + cell averaging + alpha gate + boost)
+2. Apply dither accumulator (`err16`) to get `Yeff` with the helper above
+3. Compute nearest index from `Yeff`
+4. Apply hysteresis decision using `Yeff` and previous mapped index (if enabled)
+5. Emit final mapped index and glyph byte
+6. Compute quantization error from final mapped index and diffuse to future cells
+
 ## 5. Glyph Selection Rules
 
 - Output glyphs MUST be bytes from configured ramp
@@ -84,6 +135,13 @@ Conforming implementations MUST document:
 
 Terminal emulator choice MUST NOT alter generated ASCII bytes because rendering is computed in software before output.
 
+Scope clarity:
+
+- Covered by this spec (deterministic when inputs/config are fixed):
+  - Luma math, averaging, quantization, dither/hysteresis logic, traversal order, frame/sequence hashing
+- Not covered unless separately locked:
+  - Decode output bytes, font rasterization/runtime font fallback, terminal emulator display differences, Unicode width/grapheme policy, locale-dependent behavior
+
 ## 9. Compliance Tests
 
 A deterministic implementation MUST pass:
@@ -102,6 +160,12 @@ For each run, sidecar SHOULD include:
 - Ramp hash
 - Per-frame hash list
 - Sequence hash
+
+When debug stage hashes are enabled, sidecar SHOULD also include per-frame:
+
+- `luma_grid_hash` over row-major post-alpha/boost `Ycell` bytes
+- `mapped_grid_hash` over row-major mapped index bytes (little-endian `u16`)
+- `frame_chars_hash` over row-major final frame character bytes
 
 ## 11. Non-Conformance Conditions
 

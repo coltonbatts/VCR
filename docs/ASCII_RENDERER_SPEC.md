@@ -19,6 +19,10 @@ Optional:
 
 - `pre_luma_transform` (must be deterministic if enabled)
 - `background_policy`
+- `temporal_mode` (`none` or `hysteresis`)
+- `hysteresis_band` (`u8`, only used when `temporal_mode=hysteresis`)
+- `dither_mode` (`none` or `floyd_steinberg_cell`)
+- `debug_stage_hashes` (`bool`, diagnostic only)
 
 ### 1.2 Outputs
 
@@ -54,6 +58,15 @@ Implementation SHOULD:
 - Use integer luminance and quantization
 - Use stable row-major traversal
 - Use canonical serialization for hash input
+- Keep canonical output hash independent from optional debug hash emission
+
+Canonical mapping order:
+
+1. Compute per-cell `Ycell`
+2. Apply dither accumulator (if enabled) to obtain `Yeff`
+3. Quantize nearest index from `Yeff`
+4. Apply hysteresis (if enabled) using `Yeff` and previous mapped index
+5. Emit final index/glyph, then diffuse quantization error (if enabled)
 
 ## 4. Backend Model
 

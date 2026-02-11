@@ -38,7 +38,10 @@ impl FfmpegInput {
             .spawn()
             .context("failed to spawn ffmpeg decoder")?;
 
-        let mut stdout = child.stdout.take().ok_or_else(|| anyhow!("failed to capture ffmpeg stdout"))?;
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("failed to capture ffmpeg stdout"))?;
         let frame_size = (width * height * 4) as usize;
 
         let worker = thread::Builder::new()
@@ -74,7 +77,7 @@ impl FfmpegInput {
     pub fn finish(mut self) -> Result<()> {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        
+
         if let Some(handle) = self.worker.take() {
             match handle.join() {
                 Ok(result) => result,

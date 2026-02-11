@@ -530,7 +530,7 @@ fn ascii_capture_dry_run_prints_pipeline_plan() {
     assert!(stdout.contains("frame_count: 3"));
     assert!(stdout.contains("encoder: ffmpeg -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le"));
     assert!(stdout.contains("symbol_remap: Equalize"));
-    assert!(stdout.contains("symbol_ramp: .:-=+*#%@"));
+    assert!(stdout.contains("symbol_ramp: .,:;iltfrxnuvczXYUJCLQOZmwqpdbkhao*#MW&@$"));
     assert!(stdout.contains("fit_padding: 0.120"));
 }
 

@@ -43,9 +43,7 @@ fn main() -> Result<()> {
     if let Some(expected_raw) = &cli.expected_hash {
         let expected = parse_u64_hex_or_decimal(expected_raw)?;
         if hash != expected {
-            bail!(
-                "hash mismatch: expected 0x{expected:016x}, actual 0x{hash:016x}"
-            );
+            bail!("hash mismatch: expected 0x{expected:016x}, actual 0x{hash:016x}");
         }
         println!("regression_check=pass");
     }

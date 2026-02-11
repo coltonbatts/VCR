@@ -203,9 +203,7 @@ fn synthesize_frames(count: u32) -> Result<Vec<InputFrame>> {
             for x in 0..width {
                 let idx = ((y * width + x) * 4) as usize;
 
-                let base = ((x.wrapping_mul(11)
-                    + y.wrapping_mul(7)
-                    + frame_index.wrapping_mul(13))
+                let base = ((x.wrapping_mul(11) + y.wrapping_mul(7) + frame_index.wrapping_mul(13))
                     & 0xFF) as u8;
                 let r = base;
                 let g = base.wrapping_add(((frame_index * 3) & 0xFF) as u8);

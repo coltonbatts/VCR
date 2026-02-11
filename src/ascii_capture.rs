@@ -833,10 +833,12 @@ fn capture_library_frames(
             _ => unreachable!("validated above"),
         };
         let timestamp_ms = ((frame_index as f64 / fps as f64) * 1000.0).round() as u64;
-        frames.push(AsciiFrame::from_lines(lines, cols, rows).with_metadata(AsciiFrameMetadata {
-            source_frame_index: Some(frame_index as u64),
-            source_timestamp_ms: Some(timestamp_ms),
-        }));
+        frames.push(
+            AsciiFrame::from_lines(lines, cols, rows).with_metadata(AsciiFrameMetadata {
+                source_frame_index: Some(frame_index as u64),
+                source_timestamp_ms: Some(timestamp_ms),
+            }),
+        );
     }
 
     Ok(frames)

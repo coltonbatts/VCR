@@ -20,10 +20,10 @@ use vcr::ascii_render::{
     render_ascii_luma_sequence, run_ascii_render, AsciiDitherMode, AsciiLabRenderArgs,
     AsciiLabSequenceResult, AsciiRenderArgs, AsciiTemporalMode, DEFAULT_HYSTERESIS_BAND,
 };
+use vcr::ascii_sources::render_ascii_sources;
 use vcr::ascii_stage::{
     parse_ascii_stage_size, render_ascii_stage_video, AsciiStageRenderArgs, CameraMode,
 };
-use vcr::ascii_sources::render_ascii_sources;
 use vcr::chat::{render_chat_video, ChatRenderArgs};
 use vcr::encoding::FfmpegPipe;
 use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions, ParamOverride};

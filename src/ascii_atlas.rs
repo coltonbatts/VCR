@@ -47,12 +47,12 @@ impl GeistPixelAtlas {
         // Deterministic sorting rule from docs/ascii_perception_and_density.md:
         // 1. on_pixels ascending
         // 2. codepoint ascending
-        
+
         // We use the full printable ASCII range to allow for maximum tonal depth,
-        // or a curated set if we want more "dope" results. 
+        // or a curated set if we want more "dope" results.
         // Let's use the printable ASCII range but filter for common tonal chars for a clean vibe,
         // OR just follow the spec literally and use all printable ASCII.
-        // Actually, the experiment used " .:-=+*#%@". 
+        // Actually, the experiment used " .:-=+*#%@".
         // I'll use the printable ASCII range but ensure it's sorted as per spec.
         let mut ramp: Vec<(u8, u32)> = (ASCII_START..=ASCII_END)
             .map(|ch| {
