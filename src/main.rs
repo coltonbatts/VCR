@@ -13,8 +13,8 @@ use serde::Serialize;
 
 use vcr::ascii_capture::{
     build_ascii_capture_plan, parse_capture_size, run_ascii_capture, AsciiCaptureArgs,
-    AsciiCaptureSource, DEFAULT_CAPTURE_DURATION_SECONDS, DEFAULT_CAPTURE_FONT_SIZE,
-    DEFAULT_CAPTURE_FPS,
+    AsciiCaptureSource, SymbolRemapMode, DEFAULT_CAPTURE_DURATION_SECONDS,
+    DEFAULT_CAPTURE_FONT_SIZE, DEFAULT_CAPTURE_FPS,
 };
 use vcr::ascii_render::{
     render_ascii_luma_sequence, run_ascii_render, AsciiDitherMode, AsciiLabRenderArgs,
@@ -309,6 +309,10 @@ enum AsciiCommands {
         tmp_dir: Option<PathBuf>,
         #[arg(long = "debug-txt-dir", value_name = "DIR")]
         debug_txt_dir: Option<PathBuf>,
+        #[arg(long = "symbol-remap", value_enum, default_value_t = AsciiSymbolRemapArg::Equalize)]
+        symbol_remap: AsciiSymbolRemapArg,
+        #[arg(long = "symbol-ramp", value_name = "CHARS")]
+        symbol_ramp: Option<String>,
         #[arg(long = "dry-run", default_value_t = false)]
         dry_run: bool,
     },
@@ -345,6 +349,13 @@ enum AsciiDitherModeArg {
     None,
     #[value(name = "floyd_steinberg_cell", alias = "floyd-steinberg-cell")]
     FloydSteinbergCell,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AsciiSymbolRemapArg {
+    None,
+    Density,
+    Equalize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -681,6 +692,8 @@ fn run_cli(cli: Cli) -> Result<()> {
                 font_size,
                 tmp_dir,
                 debug_txt_dir,
+                symbol_remap,
+                symbol_ramp,
                 dry_run,
             } => run_ascii_capture_cli(
                 &source,
@@ -693,6 +706,8 @@ fn run_cli(cli: Cli) -> Result<()> {
                 font_size,
                 tmp_dir.as_deref(),
                 debug_txt_dir.as_deref(),
+                symbol_remap,
+                symbol_ramp.as_deref(),
                 dry_run,
                 quiet,
             ),
@@ -1122,6 +1137,8 @@ fn run_ascii_capture_cli(
     font_size: f32,
     tmp_dir: Option<&Path>,
     debug_txt_dir: Option<&Path>,
+    symbol_remap: AsciiSymbolRemapArg,
+    symbol_ramp: Option<&str>,
     dry_run: bool,
     quiet: bool,
 ) -> Result<()> {
@@ -1146,6 +1163,12 @@ fn run_ascii_capture_cli(
         font_size,
         tmp_dir: tmp_dir.map(Path::to_path_buf),
         debug_txt_dir: debug_txt_dir.map(Path::to_path_buf),
+        symbol_remap: match symbol_remap {
+            AsciiSymbolRemapArg::None => SymbolRemapMode::None,
+            AsciiSymbolRemapArg::Density => SymbolRemapMode::Density,
+            AsciiSymbolRemapArg::Equalize => SymbolRemapMode::Equalize,
+        },
+        symbol_ramp: symbol_ramp.map(ToOwned::to_owned),
     };
 
     let plan = build_ascii_capture_plan(&args)?;
@@ -1172,20 +1195,23 @@ fn run_ascii_capture_cli(
         );
         println!("  parser: {}", plan.parser_mode);
         println!("  encoder: {}", plan.ffmpeg_encoder);
+        println!("  symbol_remap: {:?}", plan.symbol_remap);
+        println!("  symbol_ramp: {}", plan.symbol_ramp);
         return Ok(());
     }
 
     progress_log(
         quiet,
         format_args!(
-            "[VCR] ASCII capture: source={}, fps={}, duration={:.2}, frames={}, size={}x{}, font_size={:.2}",
+            "[VCR] ASCII capture: source={}, fps={}, duration={:.2}, frames={}, size={}x{}, font_size={:.2}, symbol_remap={:?}",
             plan.source_label,
             plan.fps,
             plan.duration_seconds,
             plan.frame_count,
             plan.cols,
             plan.rows,
-            plan.font_size
+            plan.font_size,
+            plan.symbol_remap
         ),
     );
     progress_log(

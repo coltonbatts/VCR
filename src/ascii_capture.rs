@@ -21,6 +21,16 @@ pub const DEFAULT_CAPTURE_FONT_SIZE: f32 = 16.0;
 
 const DEFAULT_CAPTURE_FONT_PATH_REL: &str = "assets/fonts/geist_pixel/GeistPixel-Line.ttf";
 const SOURCE_RECV_POLL_MS: u64 = 20;
+const SOURCE_SYMBOL_RAMP: &str =
+    " .'`^\",:;Il!i~+_-?][}{1)(|\\/*tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
+const DEFAULT_TARGET_SYMBOL_RAMP: &str = ".:-=+*#%@";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolRemapMode {
+    None,
+    Density,
+    Equalize,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AsciiCaptureSource {
@@ -78,6 +88,8 @@ pub struct AsciiCaptureArgs {
     pub font_size: f32,
     pub tmp_dir: Option<PathBuf>,
     pub debug_txt_dir: Option<PathBuf>,
+    pub symbol_remap: SymbolRemapMode,
+    pub symbol_ramp: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +107,8 @@ pub struct AsciiCapturePlan {
     pub tmp_dir: Option<PathBuf>,
     pub parser_mode: &'static str,
     pub ffmpeg_encoder: &'static str,
+    pub symbol_remap: SymbolRemapMode,
+    pub symbol_ramp: String,
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +147,7 @@ pub fn build_ascii_capture_plan(args: &AsciiCaptureArgs) -> Result<AsciiCaptureP
     let frame_count = resolve_target_frame_count(args.fps, args.duration_seconds, args.max_frames)?;
     let source_command = source_command_preview(&args.source, args.cols, args.rows)?;
     let font_path = resolve_font_path(args.font_path.as_deref())?;
+    let symbol_ramp = resolve_target_symbol_ramp(args.symbol_ramp.as_deref())?;
     Ok(AsciiCapturePlan {
         source_label: args.source.display_label(),
         source_command,
@@ -147,6 +162,8 @@ pub fn build_ascii_capture_plan(args: &AsciiCaptureArgs) -> Result<AsciiCaptureP
         tmp_dir: args.tmp_dir.clone(),
         parser_mode: "best-effort ANSI parser with sampled latest-frame fallback",
         ffmpeg_encoder: "ffmpeg -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le",
+        symbol_remap: args.symbol_remap,
+        symbol_ramp,
     })
 }
 
@@ -162,6 +179,7 @@ pub fn run_ascii_capture(args: &AsciiCaptureArgs) -> Result<AsciiCaptureSummary>
     .with_context(|| format!("failed to capture source '{}'", plan.source_label))?;
 
     let frames = fit_frames_to_canvas(raw_frames, plan.cols as usize, plan.rows as usize);
+    let frames = remap_frames_symbols(frames, plan.symbol_remap, &plan.symbol_ramp);
 
     if let Some(debug_dir) = &args.debug_txt_dir {
         write_debug_ascii_frames(debug_dir, &frames)?;
@@ -226,6 +244,18 @@ fn validate_capture_args(args: &AsciiCaptureArgs) -> Result<()> {
         bail!("--font-size must be > 0");
     }
     Ok(())
+}
+
+fn resolve_target_symbol_ramp(value: Option<&str>) -> Result<String> {
+    let raw = value.unwrap_or(DEFAULT_TARGET_SYMBOL_RAMP);
+    let ramp = raw
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    if ramp.is_empty() {
+        bail!("--symbol-ramp must include at least one non-space character");
+    }
+    Ok(ramp)
 }
 
 fn resolve_target_frame_count(
@@ -500,6 +530,117 @@ fn fit_single_frame_to_bounds(
         fitted = fitted.with_metadata(metadata);
     }
     fitted
+}
+
+fn remap_frames_symbols(
+    frames: Vec<AsciiFrame>,
+    mode: SymbolRemapMode,
+    target_ramp: &str,
+) -> Vec<AsciiFrame> {
+    if mode == SymbolRemapMode::None {
+        return frames;
+    }
+    let target = target_ramp.as_bytes().to_vec();
+    if target.is_empty() {
+        return frames;
+    }
+
+    frames
+        .into_iter()
+        .map(|frame| remap_single_frame_symbols(frame, mode, &target))
+        .collect()
+}
+
+fn remap_single_frame_symbols(
+    frame: AsciiFrame,
+    mode: SymbolRemapMode,
+    target_ramp: &[u8],
+) -> AsciiFrame {
+    let cols = frame.width();
+    let rows = frame.height();
+    let lines = frame.lines();
+    let mut output = vec![vec![b' '; cols]; rows];
+    let mut source_density = Vec::with_capacity(cols * rows);
+
+    for (row, line) in lines.iter().enumerate().take(rows) {
+        let bytes = line.as_bytes();
+        for col in 0..cols {
+            let ch = bytes.get(col).copied().unwrap_or(b' ');
+            if ch == b' ' {
+                continue;
+            }
+            source_density.push(((row, col), density_for_symbol(ch)));
+        }
+    }
+
+    if source_density.is_empty() {
+        return frame;
+    }
+
+    let mapped = match mode {
+        SymbolRemapMode::None => unreachable!("early-returned"),
+        SymbolRemapMode::Density => source_density
+            .into_iter()
+            .map(|(pos, value)| (pos, value))
+            .collect::<Vec<_>>(),
+        SymbolRemapMode::Equalize => equalize_density(source_density),
+    };
+
+    for ((row, col), value) in mapped {
+        let clamped = value.clamp(0.0, 1.0);
+        let idx = ((clamped * (target_ramp.len() - 1) as f32).round() as usize)
+            .min(target_ramp.len() - 1);
+        output[row][col] = target_ramp[idx];
+    }
+
+    let mapped_lines = output
+        .into_iter()
+        .map(|line| String::from_utf8(line).unwrap_or_else(|_| " ".repeat(cols)))
+        .collect::<Vec<_>>();
+
+    let mut mapped_frame = AsciiFrame::from_lines(mapped_lines, cols, rows);
+    if let Some(metadata) = frame.metadata {
+        mapped_frame = mapped_frame.with_metadata(metadata);
+    }
+    mapped_frame
+}
+
+fn equalize_density(values: Vec<((usize, usize), f32)>) -> Vec<((usize, usize), f32)> {
+    let mut sorted = values.iter().map(|(_, value)| *value).collect::<Vec<_>>();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let denom = (sorted.len().saturating_sub(1)).max(1) as f32;
+
+    values
+        .into_iter()
+        .map(|(pos, value)| {
+            let index = sorted.partition_point(|probe| *probe <= value);
+            let rank = index.saturating_sub(1);
+            (pos, rank as f32 / denom)
+        })
+        .collect()
+}
+
+fn density_for_symbol(symbol: u8) -> f32 {
+    if symbol == b' ' {
+        return 0.0;
+    }
+    let bytes = SOURCE_SYMBOL_RAMP.as_bytes();
+    if let Some(index) = bytes.iter().position(|value| *value == symbol) {
+        if bytes.len() <= 1 {
+            return 1.0;
+        }
+        return index as f32 / (bytes.len() - 1) as f32;
+    }
+
+    if symbol.is_ascii_digit() {
+        0.65
+    } else if symbol.is_ascii_uppercase() {
+        0.7
+    } else if symbol.is_ascii_lowercase() {
+        0.55
+    } else {
+        0.5
+    }
 }
 
 fn write_debug_ascii_frames(dir: &Path, frames: &[AsciiFrame]) -> Result<()> {
@@ -1095,8 +1236,8 @@ fn parse_cursor_position(raw: &str) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::{
-        fit_frames_to_canvas, parse_capture_size, resolve_target_frame_count,
-        BestEffortAnsiFrameParser,
+        density_for_symbol, fit_frames_to_canvas, parse_capture_size, remap_frames_symbols,
+        resolve_target_frame_count, BestEffortAnsiFrameParser, SymbolRemapMode,
     };
     use crate::ascii_frame::AsciiFrame;
 
@@ -1130,5 +1271,24 @@ mod tests {
         assert_eq!(fitted[0].lines()[1], " AABB ");
         assert_eq!(fitted[0].lines()[2], " CCDD ");
         assert_eq!(fitted[0].lines()[3], " CCDD ");
+    }
+
+    #[test]
+    fn density_for_symbol_orders_darker_symbols_higher() {
+        assert!(density_for_symbol(b'.') < density_for_symbol(b'+'));
+        assert!(density_for_symbol(b'+') < density_for_symbol(b'@'));
+    }
+
+    #[test]
+    fn symbol_remap_equalize_spreads_symbols_across_target_ramp() {
+        let frame = AsciiFrame::from_lines(["..++@@", "..++@@"], 6, 2);
+        let remapped = remap_frames_symbols(vec![frame], SymbolRemapMode::Equalize, ".:-=+*#%@");
+        let joined = remapped[0].to_text();
+        let unique = joined
+            .bytes()
+            .filter(|byte| *byte != b' ' && *byte != b'\n')
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(unique.len() >= 3);
+        assert!(unique.contains(&b'@'));
     }
 }

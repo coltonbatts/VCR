@@ -52,6 +52,8 @@ ffmpeg -f rawvideo -pix_fmt rgba -s:v <WxH> -r <fps> -i - \
 - `--font-size` (default `16`)
 - `--tmp-dir` optional working directory for ffmpeg
 - `--debug-txt-dir` optional directory for normalized `.txt` frame dumps
+- `--symbol-remap` symbol remap mode: `none`, `density`, `equalize` (default `equalize`)
+- `--symbol-ramp` output symbol ramp (default `.:-=+*#%@`)
 - `--dry-run` print planned capture/encode pipeline without running
 
 ## Examples
