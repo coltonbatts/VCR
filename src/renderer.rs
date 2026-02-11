@@ -1,5 +1,5 @@
 use std::num::NonZeroU32;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -2592,19 +2592,31 @@ fn unpremultiply_rgba_in_place(bytes: &mut [u8]) {
     }
 }
 fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
-    let font_path = match layer.text.font_family.to_lowercase().as_str() {
-        "geistpixel-line" | "line" => "/Users/coltonbatts/Library/Fonts/GeistPixel-Line.ttf",
-        "geistpixel-square" | "square" => "/Users/coltonbatts/Library/Fonts/GeistPixel-Square.ttf",
-        "geistpixel-grid" | "grid" => "/Users/coltonbatts/Library/Fonts/GeistPixel-Grid.ttf",
-        "geistpixel-circle" | "circle" => "/Users/coltonbatts/Library/Fonts/GeistPixel-Circle.ttf",
-        "geistpixel-triangle" | "triangle" => {
-            "/Users/coltonbatts/Library/Fonts/GeistPixel-Triangle.ttf"
-        }
-        _ => "/Users/coltonbatts/Library/Fonts/GeistPixel-Line.ttf",
+    let font_file = match layer.text.font_family.to_lowercase().as_str() {
+        "geistpixel-line" | "line" => "GeistPixel-Line.ttf",
+        "geistpixel-square" | "square" => "GeistPixel-Square.ttf",
+        "geistpixel-grid" | "grid" => "GeistPixel-Grid.ttf",
+        "geistpixel-circle" | "circle" => "GeistPixel-Circle.ttf",
+        "geistpixel-triangle" | "triangle" => "GeistPixel-Triangle.ttf",
+        _ => "GeistPixel-Line.ttf",
     };
 
-    let font_data = std::fs::read(font_path)
-        .with_context(|| format!("failed to read font file {}", font_path))?;
+    let repo_font_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/fonts/geist_pixel")
+        .join(font_file);
+    let home_font_path = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join("Library/Fonts").join(font_file));
+    let font_path = if repo_font_path.exists() {
+        repo_font_path
+    } else if let Some(home_path) = home_font_path {
+        home_path
+    } else {
+        repo_font_path
+    };
+
+    let font_data = std::fs::read(&font_path)
+        .with_context(|| format!("failed to read font file {}", font_path.display()))?;
     let font = fontdue::Font::from_bytes(font_data, fontdue::FontSettings::default())
         .map_err(|e| anyhow!("failed to parse font: {}", e))?;
 
