@@ -1,6 +1,6 @@
 # VCR (Video Component Renderer)
 
-![Welcome to VCR](welcome%20to%20VCR.jpg)
+![Welcome to VCR](assets/welcome%20to%20VCR.jpg)
 
 A headless motion graphics renderer that compiles declarative YAML scenes into broadcast-quality ProRes 4444 video with alpha transparency.
 Built in Rust, GPU-accelerated on Apple Silicon, and designed to render in seconds.
@@ -155,10 +155,40 @@ cargo run --release --bin vcr -- build examples/welcome_terminal_scene.vcr -o ou
 
 ## Requirements
 
-- Rust (stable)
-- FFmpeg (required for `.mov`/ProRes encoding)
-- macOS recommended for Apple Silicon Metal acceleration
-- Linux/Windows: CPU fallback available, not officially tested
+- **Rust (stable)**
+- **FFmpeg** (required for `.mov`/ProRes encoding)
+  - If missing, `vcr build` will fail with an actionable error.
+  - Check state with `vcr doctor`.
+- **macOS** (recommended for Apple Silicon Metal acceleration)
+- **Linux/Windows**: CPU fallback available.
+
+## The 5-Minute Golden Path
+
+Achieve a high-quality render in three steps:
+
+1. **Diagnose:** Ensure your system is ready.
+
+    ```bash
+    cargo run --release --bin vcr -- doctor
+    ```
+
+2. **Lint:** Verify your scene manifest.
+
+    ```bash
+    cargo run --release --bin vcr -- lint examples/white_test.vcr
+    ```
+
+3. **Preview:** View a fast image sequence (no FFmpeg involved).
+
+    ```bash
+    cargo run --release --bin vcr -- preview examples/white_test.vcr --image-sequence
+    ```
+
+4. **Build:** Render the final ProRes 4444 `.mov`.
+
+    ```bash
+    cargo run --release --bin vcr -- build examples/white_test.vcr -o final.mov
+    ```
 
 ## CLI Reference
 
@@ -173,6 +203,7 @@ cargo run --release --bin vcr -- build examples/welcome_terminal_scene.vcr -o ou
 | `render-frames <manifest> --start-frame N --frames X -o dir` | Render a frame range |
 | `build <manifest> -o output.mov` | Full ProRes 4444 render |
 | `watch <manifest>` | Hot-reload preview on manifest changes |
+| `doctor` | Check FFmpeg, fonts, and backend status |
 
 Run `cargo run --release --bin vcr -- --help` for full options.
 
@@ -214,6 +245,28 @@ cargo run --release --bin figma-vcr-workflow -- \
 ```
 
 Requires `FIGMA_TOKEN` environment variable. See `--help` for full options.
+
+## Determinism & Testing
+
+VCR is designed to be deterministic: the same manifest always produces the same frames. To ensure this remains true as the codebase evolves, we run regression tests that compare the FNV-1a hash of rendered frames against "golden" values.
+
+Tests are performed using the **Software Renderer** to ensure cross-platform stability in CI environments.
+
+```bash
+# Run all tests (including determinism)
+cargo test
+
+# Run only determinism tests
+cargo test --test determinism
+```
+
+### Updating Golden Hashes
+
+If you intentionally change rendering logic (e.g., fixing a rounding bug or adjusting a primitive's default behavior), the regression tests will fail. To update the hashes:
+
+1. Run the tests and capture the "Actual" hash from the failure message.
+2. Update the corresponding `expected_hash` in `tests/determinism.rs`.
+3. Commit the change with a description of why the output changed.
 
 ## Performance
 

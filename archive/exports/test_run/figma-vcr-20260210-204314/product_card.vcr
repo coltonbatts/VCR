@@ -1,0 +1,47 @@
+version: 1
+environment:
+  resolution:
+    width: 2560
+    height: 1440
+  fps: 24
+  duration:
+    frames: 96
+params: {}
+modulators: {}
+groups: []
+layers:
+  - id: product_image
+    z_index: 1
+    pos_x: "lerp(-920, 180, smoothstep(0, 22, t))"
+    pos_y: 220
+    opacity: "smoothstep(0, 14, t) * (1.0 - smoothstep(86, 96, t))"
+    image:
+      path: "./product_image.png"
+
+  - id: product_name
+    z_index: 2
+    pos_x: 1320
+    pos_y: 430
+    opacity: "smoothstep(18, 34, t) * (1.0 - smoothstep(86, 96, t))"
+    image:
+      path: "./product_name.png"
+
+  - id: price
+    z_index: 3
+    pos_x: 1320
+    pos_y: 590
+    opacity: "smoothstep(24, 40, t) * (1.0 - smoothstep(86, 96, t))"
+    image:
+      path: "./price.png"
+
+  - id: description
+    z_index: 4
+    pos_x: 1320
+    pos_y: 730
+    opacity: "smoothstep(30, 48, t) * (1.0 - smoothstep(86, 96, t))"
+    image:
+      path: "./description.png"
+
+# Extracted visual hints from Figma (tracked for downstream automation)
+# accent_color: #1F1F1F
+# text_color: #474747

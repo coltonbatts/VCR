@@ -1,13 +1,3 @@
-mod ascii;
-mod ascii_atlas;
-mod ascii_atlas_data;
-mod encoding;
-mod manifest;
-mod play;
-mod renderer;
-mod schema;
-mod timeline;
-
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -18,12 +8,12 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use image::RgbaImage;
 
-use crate::encoding::FfmpegPipe;
-use crate::manifest::load_and_validate_manifest;
-use crate::play::{run_play, PlayArgs};
-use crate::renderer::Renderer;
-use crate::schema::{Duration as ManifestDuration, Environment};
-use crate::timeline::{evaluate_manifest_layers_at_frame, RenderSceneData};
+use vcr::encoding::FfmpegPipe;
+use vcr::manifest::load_and_validate_manifest;
+use vcr::play::{run_play, PlayArgs};
+use vcr::renderer::Renderer;
+use vcr::schema::{Duration as ManifestDuration, Environment, Resolution};
+use vcr::timeline::{evaluate_manifest_layers_at_frame, RenderSceneData};
 
 #[derive(Debug, Parser)]
 #[command(name = "vcr")]
@@ -38,7 +28,7 @@ enum Commands {
     Build {
         manifest: PathBuf,
         #[arg(short = 'o', long = "output")]
-        output: PathBuf,
+        output: Option<PathBuf>,
         #[arg(long = "start-frame", default_value_t = 0)]
         start_frame: u32,
         #[arg(long = "end-frame")]
@@ -84,7 +74,7 @@ enum Commands {
         #[arg(long = "frame")]
         frame: u32,
         #[arg(short = 'o', long = "output")]
-        output: PathBuf,
+        output: Option<PathBuf>,
     },
     RenderFrames {
         manifest: PathBuf,
@@ -93,7 +83,7 @@ enum Commands {
         #[arg(long = "frames")]
         frames: u32,
         #[arg(short = 'o', long = "output-dir")]
-        output_dir: PathBuf,
+        output_dir: Option<PathBuf>,
     },
     Watch {
         manifest: PathBuf,
@@ -110,6 +100,7 @@ enum Commands {
         #[arg(long = "interval-ms", default_value_t = 300)]
         interval_ms: u64,
     },
+    Doctor,
 }
 
 fn main() -> Result<()> {
@@ -123,6 +114,7 @@ fn main() -> Result<()> {
             end_frame,
             frames,
         } => {
+            let output = resolve_output_path(&manifest, output, "mov", None)?;
             let frame_window = FrameWindowArgs {
                 start_frame,
                 end_frame,
@@ -144,38 +136,54 @@ fn main() -> Result<()> {
             frames,
             scale,
             image_sequence,
-        } => run_preview(
-            &manifest,
-            output.as_deref(),
-            PreviewArgs {
-                start_frame,
-                frames,
-                scale,
-                image_sequence,
-            },
-        ),
+        } => {
+            let resolved_output = if image_sequence {
+                let default_dir = PathBuf::from("renders/preview");
+                Some(output.unwrap_or(default_dir))
+            } else {
+                Some(resolve_output_path(&manifest, output, "mov", Some("preview"))?)
+            };
+            run_preview(
+                &manifest,
+                resolved_output.as_deref(),
+                PreviewArgs {
+                    start_frame,
+                    frames,
+                    scale,
+                    image_sequence,
+                },
+            )
+        }
         Commands::Play {
             manifest,
             start_frame,
             paused,
-        } => run_play(
-            &manifest,
-            PlayArgs {
-                start_frame,
-                paused,
-            },
-        ),
+        } => run_play(&manifest, PlayArgs { start_frame, paused }),
         Commands::RenderFrame {
             manifest,
             frame,
             output,
-        } => run_render_frame(&manifest, frame, &output),
+        } => {
+            let output = resolve_output_path(
+                &manifest,
+                output,
+                "png",
+                Some(&format!("frame_{frame:06}")),
+            )?;
+            run_render_frame(&manifest, frame, &output)
+        }
         Commands::RenderFrames {
             manifest,
             start_frame,
             frames,
             output_dir,
-        } => run_render_frames(&manifest, start_frame, frames, &output_dir),
+        } => {
+            let output_dir = output_dir.unwrap_or_else(|| {
+                let stem = manifest.file_stem().unwrap_or_default().to_string_lossy();
+                PathBuf::from(format!("renders/{}_frames", stem))
+            });
+            run_render_frames(&manifest, start_frame, frames, &output_dir)
+        }
         Commands::Watch {
             manifest,
             output,
@@ -184,17 +192,122 @@ fn main() -> Result<()> {
             scale,
             image_sequence,
             interval_ms,
-        } => run_watch(
-            &manifest,
-            output,
-            PreviewArgs {
-                start_frame,
-                frames,
-                scale,
-                image_sequence,
-            },
-            interval_ms,
-        ),
+        } => {
+            let resolved_output = if image_sequence {
+                let default_dir = PathBuf::from("renders/preview");
+                Some(output.unwrap_or(default_dir))
+            } else {
+                Some(resolve_output_path(&manifest, output, "mov", Some("preview"))?)
+            };
+            run_watch(
+                &manifest,
+                resolved_output,
+                PreviewArgs {
+                    start_frame,
+                    frames,
+                    scale,
+                    image_sequence,
+                },
+                interval_ms,
+            )
+        }
+        Commands::Doctor => run_doctor(),
+    }
+}
+
+fn resolve_output_path(
+    manifest_path: &Path,
+    provided_output: Option<PathBuf>,
+    extension: &str,
+    suffix: Option<&str>,
+) -> Result<PathBuf> {
+    fs::create_dir_all("renders").context("failed to create 'renders' directory")?;
+    let _renders_dir = fs::canonicalize("renders").context("failed to canonicalize 'renders' directory")?;
+
+    let path = if let Some(p) = provided_output {
+        if p.is_absolute() {
+            bail!("Absolute output paths are restricted for security. Please use a relative path. Got: {}", p.display());
+        }
+        
+        let _resolved = std::env::current_dir()?.join(&p);
+        // We don't use canonicalize here because the file might not exist yet.
+        // But we can check for ".." in the components.
+        if p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+             bail!("Directory traversal in output path is not allowed: {}", p.display());
+        }
+        p
+    } else {
+        let stem = manifest_path
+            .file_stem()
+            .context("manifest path has no filename")?
+            .to_string_lossy();
+
+        let filename = if let Some(s) = suffix {
+            format!("{}_{}.{}", stem, s, extension)
+        } else {
+            format!("{}.{}", stem, extension)
+        };
+        PathBuf::from("renders").join(filename)
+    };
+
+    eprintln!("[VCR] Output path: {}", path.display());
+    Ok(path)
+}
+
+
+fn run_doctor() -> Result<()> {
+    println!("[VCR] Running system check...");
+    let mut all_ok = true;
+
+    // 1. Check FFmpeg
+    print!("- FFmpeg: ");
+    match std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        Ok(status) if status.success() => println!("OK"),
+        _ => {
+            println!("MISSING (required for 'build' and 'preview' video output)");
+            all_ok = false;
+        }
+    }
+
+    // 2. Check Fonts
+    print!("- Fonts (Geist Pixel): ");
+    let font_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/geist_pixel/GeistPixel-Line.ttf");
+    if font_path.exists() {
+        println!("OK");
+    } else {
+        println!("MISSING ({})", font_path.display());
+        all_ok = false;
+    }
+
+    // 3. Check Backend
+    print!("- Backend: ");
+    let temp_env = Environment {
+        resolution: Resolution { width: 16, height: 16 },
+        fps: 24,
+        duration: ManifestDuration::Frames { frames: 1 },
+        color_space: Default::default(),
+    };
+    match pollster::block_on(Renderer::new_with_scene(&temp_env, &[], RenderSceneData::default())) {
+        Ok(renderer) => {
+            println!("OK ({} - {})", renderer.backend_name(), renderer.backend_reason());
+        }
+        Err(e) => {
+            println!("ERROR ({e})");
+            all_ok = false;
+        }
+    }
+
+    if all_ok {
+        println!("\n[VCR] Doctor: System is healthy. Ready to render.");
+        Ok(())
+    } else {
+        println!("\n[VCR] Doctor: Some checks failed. Please address the issues above.");
+        bail!("doctor check failed")
     }
 }
 
@@ -334,6 +447,13 @@ fn run_build(manifest_path: &Path, output_path: &Path, args: FrameWindowArgs) ->
     ))?;
     let layout_elapsed = layout_start.elapsed();
     eprintln!(
+        "[VCR] Build: {}x{}, {} fps, {} frames",
+        manifest.environment.resolution.width,
+        manifest.environment.resolution.height,
+        manifest.environment.fps,
+        window.count
+    );
+    eprintln!(
         "[VCR] Backend: {} ({})",
         renderer.backend_name(),
         renderer.backend_reason()
@@ -398,17 +518,18 @@ fn run_preview(manifest_path: &Path, output: Option<&Path>, args: PreviewArgs) -
     let layout_elapsed = layout_start.elapsed();
 
     eprintln!(
-        "[VCR] Backend: {} ({})",
-        renderer.backend_name(),
-        renderer.backend_reason()
-    );
-    eprintln!(
-        "[VCR] Preview: {}x{}, frames {}..{} ({} total)",
+        "[VCR] Preview: {}x{}, {} fps, frames {}..{} ({} total)",
         preview_environment.resolution.width,
         preview_environment.resolution.height,
+        preview_environment.fps,
         window.start_frame,
         window.start_frame + window.count.saturating_sub(1),
         window.count
+    );
+    eprintln!(
+        "[VCR] Backend: {} ({})",
+        renderer.backend_name(),
+        renderer.backend_reason()
     );
 
     let mut render_elapsed = Duration::ZERO;
@@ -655,7 +776,7 @@ fn scaled_environment(environment: &Environment, scale: f32) -> Environment {
         .max(1.0) as u32;
 
     Environment {
-        resolution: crate::schema::Resolution {
+        resolution: Resolution {
             width: scaled_width,
             height: scaled_height,
         },

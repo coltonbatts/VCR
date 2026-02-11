@@ -1,7 +1,11 @@
 /target
 .DS_Store
-/exports
+/renders/
+/exports/
+/preview_frames/
 *.mov
 *.png
-!assets/*.png
+!assets/**/*.png
+!assets/**/*.jpg
+!assets/**/*.gif
 *.backup*

@@ -122,11 +122,16 @@ fn resolve_and_validate_asset_path(
     layer_id: &str,
     field_name: &str,
 ) -> Result<PathBuf> {
-    let resolved = if source_path.is_absolute() {
-        source_path.to_path_buf()
-    } else {
-        manifest_dir.join(source_path)
-    };
+    if source_path.is_absolute() {
+        bail!(
+            "layer '{}' {}: absolute paths are not allowed for security reasons. Use relative paths within the manifest directory. Got: {}",
+            layer_id,
+            field_name,
+            source_path.display()
+        );
+    }
+
+    let resolved = manifest_dir.join(source_path);
 
     if !resolved.exists() {
         bail!(
@@ -137,7 +142,23 @@ fn resolve_and_validate_asset_path(
         );
     }
 
-    if !resolved.is_file() {
+    // Harden against path traversal: canonicalize both and ensure asset is within manifest dir
+    let canonical_manifest_dir = fs::canonicalize(manifest_dir)
+        .with_context(|| format!("failed to canonicalize manifest directory {}", manifest_dir.display()))?;
+    let canonical_asset_path = fs::canonicalize(&resolved)
+        .with_context(|| format!("failed to canonicalize asset path {}", resolved.display()))?;
+
+    if !canonical_asset_path.starts_with(&canonical_manifest_dir) {
+        bail!(
+            "layer '{}' {}: security violation - asset path '{}' escapes the manifest directory '{}'",
+            layer_id,
+            field_name,
+            source_path.display(),
+            manifest_dir.display()
+        );
+    }
+
+    if !canonical_asset_path.is_file() {
         bail!(
             "layer '{}' {} is not a file: {}",
             layer_id,

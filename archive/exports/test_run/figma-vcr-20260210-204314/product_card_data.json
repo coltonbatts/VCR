@@ -1,0 +1,46 @@
+{
+  "figma_file_key": "gcB8t5jBx16v1i8eb19n1T",
+  "card_node_id": "37503:24471",
+  "card_name": "2x2",
+  "product_name": "Result website title 2 lines of title maximum ",
+  "price": "$65",
+  "description": "Site title",
+  "colors": {
+    "background": "#00000008",
+    "accent": "#1F1F1F",
+    "text": "#474747"
+  },
+  "fonts": {
+    "product_name": {
+      "family": "Google Sans",
+      "size": 14.0,
+      "weight": 500,
+      "line_height": 20.0
+    },
+    "price": {
+      "family": "Google Sans",
+      "size": 14.0,
+      "weight": 500,
+      "line_height": 20.0
+    },
+    "description": {
+      "family": "Roboto",
+      "size": 12.0,
+      "weight": 400,
+      "line_height": 16.0
+    }
+  },
+  "node_ids": {
+    "product_image": "37503:24476",
+    "product_name": "37503:24479",
+    "price": "37516:28160",
+    "description": "37503:24482",
+    "background": "37503:24476"
+  },
+  "asset_urls": {
+    "product_image": "https://figma-alpha-api.s3.us-west-2.amazonaws.com/images/fa13d073-3433-42bd-9d9d-f0ba825d99c2",
+    "product_name": "https://figma-alpha-api.s3.us-west-2.amazonaws.com/images/fdf92c78-2889-4952-b7a8-3350a7981992",
+    "price": "https://figma-alpha-api.s3.us-west-2.amazonaws.com/images/ddd603df-896b-4af9-b59f-ff8631d3ee6c",
+    "description": "https://figma-alpha-api.s3.us-west-2.amazonaws.com/images/dd583157-5514-4e13-aa9f-244ba525fb13"
+  }
+}

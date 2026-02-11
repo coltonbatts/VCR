@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 
 use crate::schema::Environment;
 
@@ -64,6 +64,15 @@ fn encoding_worker(
     fps: String,
     output_path: &Path,
 ) -> Result<()> {
+    // Basic sanity check on output path
+    let path_str = output_path.to_string_lossy();
+    if path_str.len() > 1024 {
+        bail!("Output path is suspiciously long");
+    }
+    if path_str.chars().any(|c| c.is_control()) {
+        bail!("Output path contains invalid control characters");
+    }
+
     let mut child = Command::new("ffmpeg")
         .arg("-y")
         .arg("-f")

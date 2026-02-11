@@ -26,3 +26,6 @@ winit = "0.29"
 egui = "0.28"
 egui-wgpu = "0.28"
 egui-winit = "0.28"
+
+[dev-dependencies]
+tempfile = "3.10"

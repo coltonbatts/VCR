@@ -11,6 +11,8 @@ pub type ModulatorMap = BTreeMap<String, ModulatorDefinition>;
 const DEFAULT_MANIFEST_VERSION: u32 = 1;
 const DEFAULT_ENV_ATTACK: f32 = 12.0;
 const DEFAULT_ENV_DECAY: f32 = 24.0;
+const MAX_RESOLUTION: u32 = 8192;
+const MAX_FRAME_COUNT: u32 = 100_000;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -49,6 +51,16 @@ impl Environment {
             );
         }
 
+        if self.resolution.width > MAX_RESOLUTION || self.resolution.height > MAX_RESOLUTION {
+            bail!(
+                "resolution exceeds maximum allowed ({}x{}), got {}x{}",
+                MAX_RESOLUTION,
+                MAX_RESOLUTION,
+                self.resolution.width,
+                self.resolution.height
+            );
+        }
+
         if self.fps == 0 {
             bail!("fps must be > 0");
         }
@@ -63,7 +75,23 @@ impl Environment {
                 if frames == 0 {
                     bail!("duration frames must be > 0");
                 }
+                if frames > MAX_FRAME_COUNT {
+                    bail!(
+                        "duration frames exceeds maximum allowed ({}), got {}",
+                        MAX_FRAME_COUNT,
+                        frames
+                    );
+                }
             }
+        }
+
+        let total_frames = self.total_frames();
+        if total_frames > MAX_FRAME_COUNT {
+            bail!(
+                "total calculated frames exceeds maximum allowed ({}), got {}",
+                MAX_FRAME_COUNT,
+                total_frames
+            );
         }
 
         Ok(())

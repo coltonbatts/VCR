@@ -1164,6 +1164,19 @@ impl GpuRenderer {
 }
 
 impl Renderer {
+    pub fn new_software(
+        environment: &Environment,
+        layers: &[Layer],
+        scene: RenderSceneData,
+    ) -> Result<Self> {
+        let software = SoftwareRenderer::new(environment, layers, &scene)
+            .context("failed to initialize software renderer")?;
+        Ok(Self {
+            backend: RendererBackend::Software(software),
+            backend_reason: "forced software backend".to_owned(),
+        })
+    }
+
     pub async fn new_with_scene(
         environment: &Environment,
         layers: &[Layer],
