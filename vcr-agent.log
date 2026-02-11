@@ -100,3 +100,125 @@ layers:
     anchor: center
     style:
       fill: {type: gradient, colors: ["#FFD700", "#1A1A1A"], direction: horizontal}
+--- STARTING AGENTIC RUN ---
+Prompt: Can you make me a "Hello World" in Geist? 
+Detected Model: qwen/qwen3-coder-next
+Raw AI Output: {
+  "id": "chatcmpl-13dwu4nv3wvkyhrq5rweg9",
+  "object": "chat.completion",
+  "created": 1770782991,
+  "model": "qwen/qwen3-coder-next",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "version: 1\nenvironment:\n  resolution: {width: 1280, height: 720}\n  fps: 24\n  duration: 5.0\nlayers:\n  - id: background\n    procedural: {type: solid, color: {r: 26, g: 26, b: 26, a: 255}}\n  - id: hello_world\n    text: {content: \"HELLO WORLD\", size: 120, font_variant: line}\n    position: {x: 640, y: 360}\n    anchor: center",
+        "tool_calls": []
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 323,
+    "completion_tokens": 138,
+    "total_tokens": 461
+  },
+  "stats": {},
+  "system_fingerprint": "qwen/qwen3-coder-next"
+}
+Final Manifest:
+version: 1
+environment:
+  resolution: {width: 1280, height: 720}
+  fps: 24
+  duration: 5.0
+layers:
+  - id: background
+    procedural: {type: solid, color: {r: 26, g: 26, b: 26, a: 255}}
+  - id: hello_world
+    text: {content: "HELLO WORLD", size: 120, font_variant: line}
+    position: {x: 640, y: 360}
+    anchor: center
+VCR Build Log: [VCR] Output path: renders/agentic_result.mov
+VCR Build Log: Error: failed to parse yaml in agent_manifest.yaml at line 8, column 17: layers[0].procedural: missing field `kind` at line 8 column 17
+--- STARTING AGENTIC RUN ---
+Prompt: Can you make me white text on alpha that says "We finally did it!"? 
+Detected Model: qwen/qwen3-coder-next
+Raw AI Output: {
+  "id": "chatcmpl-tp9886h3m4dqlnbe2k75k",
+  "object": "chat.completion",
+  "created": 1770783127,
+  "model": "qwen/qwen3-coder-next",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "version: 1\nenvironment:\n  resolution: {width: 1280, height: 720}\n  fps: 24\n  duration: 5.0\nlayers:\n  - id: background\n    procedural:\n      kind: solid_color\n      color: {r: 0.10588235294117647, g: 0.10588235294117647, b: 0.10588235294117647, a: 1.0}\n  - id: sample_text\n    text:\n      content: \"We finally did it!\"\n      font_size: 72\n      font_family: \"GeistPixel-Line\"\n      color: {r: 1.0, g: 1.0, b: 1.0, a: 1.0}\n    position: {x: 640, y: 360}\n    anchor: center",
+        "tool_calls": []
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 392,
+    "completion_tokens": 230,
+    "total_tokens": 622
+  },
+  "stats": {},
+  "system_fingerprint": "qwen/qwen3-coder-next"
+}
+Final Manifest:
+version: 1
+environment:
+  resolution: {width: 1280, height: 720}
+  fps: 24
+  duration: 5.0
+layers:
+  - id: background
+    procedural:
+      kind: solid_color
+      color: {r: 0.10588235294117647, g: 0.10588235294117647, b: 0.10588235294117647, a: 1.0}
+  - id: sample_text
+    text:
+      content: "We finally did it!"
+      font_size: 72
+      font_family: "GeistPixel-Line"
+      color: {r: 1.0, g: 1.0, b: 1.0, a: 1.0}
+    position: {x: 640, y: 360}
+    anchor: center
+VCR Build Log: [VCR] Output path: renders/agentic_result.mov
+VCR Build Log: [VCR] Build: 1280x720, 24 fps, 120 frames
+VCR Build Log: [VCR] Backend: GPU (adapter 'Apple M1 Max' (Metal))
+VCR Build Log: rendered frame 1/120
+VCR Build Log: ffmpeg version 8.0.1 Copyright (c) 2000-2025 the FFmpeg developers
+VCR Build Log:   built with Apple clang version 17.0.0 (clang-1700.6.3.2)
+VCR Build Log:   configuration: --prefix=/opt/homebrew/Cellar/ffmpeg/8.0.1_1 --enable-shared --enable-pthreads --enable-version3 --cc=clang --host-cflags= --host-ldflags= --enable-ffplay --enable-gpl --enable-libsvtav1 --enable-libopus --enable-libx264 --enable-libmp3lame --enable-libdav1d --enable-libvpx --enable-libx265 --enable-videotoolbox --enable-audiotoolbox --enable-neon
+VCR Build Log:   libavutil      60.  8.100 / 60.  8.100
+VCR Build Log:   libavcodec     62. 11.100 / 62. 11.100
+VCR Build Log:   libavformat    62.  3.100 / 62.  3.100
+VCR Build Log:   libavdevice    62.  1.100 / 62.  1.100
+VCR Build Log:   libavfilter    11.  4.100 / 11.  4.100
+VCR Build Log:   libswscale      9.  1.100 /  9.  1.100
+VCR Build Log:   libswresample   6.  1.100 /  6.  1.100
+VCR Build Log: Input #0, rawvideo, from 'fd:':
+VCR Build Log:   Duration: N/A, start: 0.000000, bitrate: 707788 kb/s
+VCR Build Log:   Stream #0:0: Video: rawvideo (RGBA / 0x41424752), rgba, 1280x720, 707788 kb/s, 24 tbr, 24 tbn
+VCR Build Log: Stream mapping:
+VCR Build Log:   Stream #0:0 -> #0:0 (rawvideo (native) -> prores (prores_ks))
+VCR Build Log: Output #0, mov, to 'renders/agentic_result.mov':
+VCR Build Log:   Metadata:
+VCR Build Log:     encoder         : Lavf62.3.100
+VCR Build Log:   Stream #0:0: Video: prores (4444) (ap4h / 0x68347061), yuva444p10le(tv, progressive), 1280x720, q=2-31, 200 kb/s, 24 fps, 12288 tbn
+VCR Build Log:     Metadata:
+VCR Build Log:       encoder         : Lavc62.11.100 prores_ks
+VCR Build Log: rendered frame 25/120
+VCR Build Log: rendered frame 49/120
+VCR Build Log: rendered frame 73/120
+VCR Build Log: frame=   68 fps=0.0 q=-0.0 size=    2816KiB time=00:00:02.83 bitrate=8142.0kbits/s speed=5.62x elapsed=0:00:00.50    rendered frame 97/120
+VCR Build Log: [out#0/mov @ 0xc98c08600] video:5146KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.014366%
+VCR Build Log: frame=  120 fps=0.0 q=-0.0 Lsize=    5147KiB time=00:00:05.00 bitrate=8432.1kbits/s speed=6.43x elapsed=0:00:00.77    
+VCR Build Log: [VCR] timing parse=5.72ms layout=289.51ms render=730.26ms encode=576.00ms total=1.60s

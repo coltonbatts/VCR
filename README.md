@@ -17,17 +17,17 @@ VCR is not a replacement for a full motion design GUI. It is best when you want 
 
 ## Feature Highlights
 
+- **VCR HUB (TUI)**: A brutalist, editorial terminal interface for managing your motion assets and hardware.
+- **Agentic Prompting**: Generate full video manifests from natural language using local LLMs (LM Studio / Ollama).
+- **Intelligence Tree**: A SQLite-backed context layer that "remembers" your creative style and project nodes.
 - **YAML scene manifests** (`.vcr`) that are human-readable and version-controllable.
 - **Metal-backed GPU rendering** on Apple Silicon, with CPU fallback.
-- **Deterministic rendering:** same input produces the same output.
-- **Expression-driven animation:** `sin`, `cos`, `clamp`, `lerp`, `smoothstep`, `easeInOut`, `noise1d`, `env`, `saw`, `tri`, `glitch`, `random`, and more.
-- **8 procedural primitives:** `solid_color`, `gradient`, `triangle`, `circle`, `rounded_rect`, `ring`, `line`, `polygon` — all available on both GPU and CPU backends.
-- **Animatable procedural parameters:** colors, radii, thickness, and corner radius can be driven by expressions (e.g. `"sin(t) * 0.5"`).
-- **Custom WGSL shader layers:** write your own fragment shaders inline or from file, with up to 8 expression-driven uniforms.
-- **Native text rendering** via fontdue with Geist Pixel font family (Line, Square, Grid, Circle, Triangle variants).
-- **Layered compositing** with z-order, transforms, rotation, groups, modulators, and alpha blending.
+- **Deterministic rendering**: same input produces the same output.
+- **Expression-driven animation**: `sin`, `cos`, `clamp`, `lerp`, `smoothstep`, `easeInOut`, `noise1d`, `env`, `saw`, `tri`, `glitch`, `random`, and more.
+- **8 procedural primitives**: `solid_color`, `gradient`, `triangle`, `circle`, `rounded_rect`, `ring`, `line`, `polygon`.
+- **Native text rendering** via fontdue with Geist Pixel font family.
 - **ProRes 4444 output** with transparent alpha channel.
-- **CLI-first workflow:** no GUI dependency, no Electron overhead.
+- **Offline-first & Privacy-focused**: Everything runs locally. No clouds, no subscriptions.
 
 ## Quick Example
 
@@ -153,14 +153,39 @@ cargo run --release --bin vcr -- play examples/primitives_test.vcr --start-frame
 cargo run --release --bin vcr -- build examples/welcome_terminal_scene.vcr -o output.mov
 ```
 
+## VCR HUB (Terminal OS)
+
+Launch the VCR Hub to manage your hardware, context, and generation pipeline in a high-tension, brutalist terminal interface.
+
+```bash
+# Launch the Hub
+go run ./cmd/vcr-tui/main.go
+```
+
+The Hub performs a "Cold Start" sequence:
+
+- **Hardware Scan**: Detects GPU acceleration (WGPU) and local LLM endpoints.
+- **Brain Handshake**: Proactively verifies connectivity and model readiness.
+- **Intelligence Tree**: Syncs your creative context from a local SQLite database.
+
+## Agentic Prompting
+
+Generate broadcast-quality motion graphics using natural language. VCR connects to **LM Studio** or **Ollama** to translate your intent into valid VCR YAML.
+
+1. **Speak**: *"Make me a Title safe lower third with a dark gradient."*
+2. **Context**: The Hub pulls your previous style nodes from the **Intelligence Tree**.
+3. **Draft**: The local model generates a strict VCR manifest.
+4. **Render**: The Rust engine compiles the ProRes 4444 artifact in real-time.
+
+---
+
 ## Requirements
 
 - **Rust (stable)**
-- **FFmpeg** (required for `.mov`/ProRes encoding)
-  - If missing, `vcr build` will fail with an actionable error.
-  - Check state with `vcr doctor`.
-- **macOS** (recommended for Apple Silicon Metal acceleration)
-- **Linux/Windows**: CPU fallback available.
+- **Go 1.21+** (for the TUI Hub)
+- **FFmpeg** (required for ProRes encoding)
+- **macOS** (Metal acceleration) or **Linux/Windows** (CPU fallback)
+- **LM Studio** or **Ollama** (for Agentic features)
 
 ## The 5-Minute Golden Path
 
@@ -193,7 +218,7 @@ Achieve a high-quality render in three steps:
 ## CLI Reference
 
 | Command | Description |
-|---------|-------------|
+| --- | --- |
 | `check <manifest>` | Validate and summarize a manifest |
 | `lint <manifest>` | Report common scene issues |
 | `dump <manifest> --frame N` | Print resolved state at frame N |
