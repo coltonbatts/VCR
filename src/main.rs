@@ -1,4 +1,5 @@
 mod ascii;
+mod ascii_atlas;
 mod encoding;
 mod manifest;
 mod renderer;
