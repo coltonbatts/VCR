@@ -1,0 +1,179 @@
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 30
+  duration: { frames: 90 }
+
+seed: 11
+
+layers:
+  - id: bg
+    z_index: 0
+    procedural:
+      kind: gradient
+      start_color: { r: 0.03, g: 0.04, b: 0.08, a: 1.0 }
+      end_color: { r: 0.01, g: 0.02, b: 0.04, a: 1.0 }
+      direction: vertical
+
+  - id: title
+    z_index: 1
+    anchor: center
+    pos_x: 640
+    pos_y: 120
+    text:
+      content: "SIE // GEIST PIXEL"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 0.72, g: 0.88, b: 1.0, a: 1.0 }
+
+  - id: hand_shadow
+    z_index: 2
+    anchor: top_left
+    pos_x: 540
+    pos_y: 224
+    opacity: 0.45
+    text:
+      content: |
+        ......##....
+        ....######..
+        ..##########
+        ..##########
+        ..##########
+        .....####...
+        .....####...
+        ....######..
+      font_family: "GeistPixel-Line"
+      font_size: 34
+      color: { r: 0.02, g: 0.04, b: 0.08, a: 1.0 }
+
+  - id: pose_1
+    z_index: 3
+    anchor: top_left
+    pos_x: 520
+    pos_y: 204
+    opacity: "step(0, t) * (1.0 - step(15, t))"
+    text:
+      content: |
+        ....##......
+        ..######....
+        ##########..
+        ##########..
+        ##########..
+        ...####.....
+        ...####.....
+        ..######....
+      font_family: "GeistPixel-Line"
+      font_size: 34
+      color: { r: 1.0, g: 0.9, b: 0.62, a: 1.0 }
+
+  - id: pose_2
+    z_index: 3
+    anchor: top_left
+    pos_x: 520
+    pos_y: 204
+    opacity: "step(15, t) * (1.0 - step(30, t))"
+    text:
+      content: |
+        ......##....
+        ....######..
+        ..##########
+        ..##########
+        ..##########
+        .....####...
+        .....####...
+        ....######..
+      font_family: "GeistPixel-Line"
+      font_size: 34
+      color: { r: 1.0, g: 0.9, b: 0.62, a: 1.0 }
+
+  - id: pose_3
+    z_index: 3
+    anchor: top_left
+    pos_x: 520
+    pos_y: 204
+    opacity: "step(30, t) * (1.0 - step(45, t))"
+    text:
+      content: |
+        ........##..
+        ......######
+        ....########
+        ....########
+        ....########
+        .......####.
+        .......####.
+        ......######
+      font_family: "GeistPixel-Line"
+      font_size: 34
+      color: { r: 1.0, g: 0.9, b: 0.62, a: 1.0 }
+
+  - id: pose_4
+    z_index: 3
+    anchor: top_left
+    pos_x: 520
+    pos_y: 204
+    opacity: "step(45, t) * (1.0 - step(60, t))"
+    text:
+      content: |
+        ......##....
+        ....######..
+        ..##########
+        ..##########
+        ..##########
+        .....####...
+        .....####...
+        ....######..
+      font_family: "GeistPixel-Line"
+      font_size: 34
+      color: { r: 1.0, g: 0.9, b: 0.62, a: 1.0 }
+
+  - id: pose_5
+    z_index: 3
+    anchor: top_left
+    pos_x: 520
+    pos_y: 204
+    opacity: "step(60, t) * (1.0 - step(75, t))"
+    text:
+      content: |
+        ....##......
+        ..######....
+        ##########..
+        ##########..
+        ##########..
+        ...####.....
+        ...####.....
+        ..######....
+      font_family: "GeistPixel-Line"
+      font_size: 34
+      color: { r: 1.0, g: 0.9, b: 0.62, a: 1.0 }
+
+  - id: pose_6
+    z_index: 3
+    anchor: top_left
+    pos_x: 520
+    pos_y: 204
+    opacity: "step(75, t)"
+    text:
+      content: |
+        ......##....
+        ....######..
+        ..##########
+        ..##########
+        ..##########
+        .....####...
+        .....####...
+        ....######..
+      font_family: "GeistPixel-Line"
+      font_size: 34
+      color: { r: 1.0, g: 0.9, b: 0.62, a: 1.0 }
+
+  - id: footer
+    z_index: 4
+    anchor: center
+    pos_x: 640
+    pos_y: 618
+    opacity: "0.65 + sin(t * 0.08) * 0.15"
+    text:
+      content: "hand wave // 3s"
+      font_family: "GeistPixel-Line"
+      font_size: 28
+      color: { r: 0.63, g: 0.86, b: 0.97, a: 1.0 }

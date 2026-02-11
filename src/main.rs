@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use image::RgbaImage;
 use serde::Serialize;
 
+use vcr::ascii_render::{run_ascii_render, AsciiRenderArgs};
 use vcr::ascii_stage::{
     parse_ascii_stage_size, render_ascii_stage_video, AsciiStageRenderArgs, CameraMode,
 };
@@ -20,7 +21,8 @@ use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions
 use vcr::play::{run_play, PlayArgs};
 use vcr::renderer::Renderer;
 use vcr::schema::{
-    Duration as ManifestDuration, Environment, Manifest, ParamType, ParamValue, Resolution,
+    AsciiFontVariant, Duration as ManifestDuration, Environment, Manifest, ParamType, ParamValue,
+    Resolution,
 };
 use vcr::timeline::{evaluate_manifest_layers_at_frame, RenderSceneData};
 
@@ -253,6 +255,22 @@ enum AsciiCommands {
         camera: AsciiCameraArg,
         #[arg(long = "preset", default_value = "none")]
         preset: AsciiPresetArg,
+    },
+    Render {
+        #[arg(long = "in", value_name = "VIDEO")]
+        input: PathBuf,
+        #[arg(long = "out", value_name = "OUTPUT")]
+        output: PathBuf,
+        #[arg(long = "size", default_value = "1280x720")]
+        size: String,
+        #[arg(long = "font", default_value = "geist-pixel-regular")]
+        font: String,
+        #[arg(long = "bg-alpha", default_value_t = 0.0)]
+        bg_alpha: f32,
+        #[arg(long = "sidecar", default_value_t = false)]
+        sidecar: bool,
+        #[arg(long = "expected-hash")]
+        expected_hash: Option<String>,
     },
 }
 
@@ -565,6 +583,24 @@ fn run_cli(cli: Cli) -> Result<()> {
                 chrome,
                 camera,
                 preset,
+                quiet,
+            ),
+            AsciiCommands::Render {
+                input,
+                output,
+                size,
+                font,
+                bg_alpha,
+                sidecar,
+                expected_hash,
+            } => run_ascii_render_cli(
+                &input,
+                &output,
+                &size,
+                &font,
+                bg_alpha,
+                sidecar,
+                expected_hash,
                 quiet,
             ),
         },
@@ -901,6 +937,55 @@ fn run_ascii_stage_render(
         ),
     );
     Ok(())
+}
+
+
+fn run_ascii_render_cli(
+    input: &Path,
+    output: &Path,
+    size: &str,
+    font: &str,
+    bg_alpha: f32,
+    sidecar: bool,
+    expected_hash: Option<String>,
+    quiet: bool,
+) -> Result<()> {
+    let (width, height) = parse_ascii_stage_size(size)?;
+    let font_variant = match font.to_lowercase().as_str() {
+        "geist-pixel-regular" | "regular" => AsciiFontVariant::GeistPixelRegular,
+        "geist-pixel-medium" | "medium" => AsciiFontVariant::GeistPixelMedium,
+        "geist-pixel-bold" | "bold" => AsciiFontVariant::GeistPixelBold,
+        "geist-pixel-light" | "light" => AsciiFontVariant::GeistPixelLight,
+        "geist-pixel-mono" | "mono" => AsciiFontVariant::GeistPixelMono,
+        _ => bail!("unknown font variant '{}'", font),
+    };
+
+    let expected_hash = if let Some(h) = expected_hash {
+        let h = h.trim();
+        if let Some(hex) = h.strip_prefix("0x") {
+            Some(u64::from_str_radix(hex, 16).context("invalid hex hash")?)
+        } else {
+            Some(h.parse::<u64>().context("invalid decimal hash")?)
+        }
+    } else {
+        None
+    };
+
+    if !quiet {
+        println!("[VCR] ASCII render: size={}x{}, font={:?}, bg_alpha={}", 
+            width, height, font_variant, bg_alpha);
+    }
+
+    run_ascii_render(AsciiRenderArgs {
+        input,
+        output,
+        width,
+        height,
+        font_variant,
+        bg_alpha,
+        sidecar,
+        expected_hash,
+    })
 }
 
 fn run_check(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<()> {
