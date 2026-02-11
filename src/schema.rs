@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashSet};
+use std::fs;
 use std::path::PathBuf;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use serde::{de::Error as DeError, Deserialize, Deserializer};
 
 pub type Parameters = BTreeMap<String, f32>;
@@ -529,6 +530,7 @@ pub enum Layer {
     Procedural(ProceduralLayer),
     Shader(ShaderLayer),
     Text(TextLayer),
+    Ascii(AsciiLayer),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -546,6 +548,8 @@ struct LayerWire {
     shader: Option<ShaderSource>,
     #[serde(default)]
     text: Option<TextSource>,
+    #[serde(default)]
+    ascii: Option<AsciiSource>,
 }
 
 impl<'de> Deserialize<'de> for Layer {
@@ -560,7 +564,7 @@ impl<'de> Deserialize<'de> for Layer {
             wire.common.id.as_str()
         };
 
-        let mut present_sources = Vec::with_capacity(5);
+        let mut present_sources = Vec::with_capacity(6);
         if wire.source_path.is_some() {
             present_sources.push("source_path");
         }
@@ -576,16 +580,19 @@ impl<'de> Deserialize<'de> for Layer {
         if wire.text.is_some() {
             present_sources.push("text");
         }
+        if wire.ascii.is_some() {
+            present_sources.push("ascii");
+        }
 
         if present_sources.is_empty() {
             return Err(DeError::custom(format!(
-                "layer '{layer_id}' must define exactly one source block: `source_path` (legacy image path), `image`, `procedural`, `shader`, or `text`"
+                "layer '{layer_id}' must define exactly one source block: `source_path` (legacy image path), `image`, `procedural`, `shader`, `text`, or `ascii`"
             )));
         }
 
         if present_sources.len() > 1 {
             return Err(DeError::custom(format!(
-                "layer '{layer_id}' defines multiple source blocks ({}) but exactly one is required: `source_path` (legacy image path), `image`, `procedural`, `shader`, or `text`",
+                "layer '{layer_id}' defines multiple source blocks ({}) but exactly one is required: `source_path` (legacy image path), `image`, `procedural`, `shader`, `text`, or `ascii`",
                 present_sources.join(", ")
             )));
         }
@@ -597,21 +604,29 @@ impl<'de> Deserialize<'de> for Layer {
             procedural,
             shader,
             text,
+            ascii,
         } = wire;
 
-        match (source_path, image, procedural, shader, text) {
-            (Some(source_path), None, None, None, None) => Ok(Self::Asset(AssetLayer {
+        match (source_path, image, procedural, shader, text, ascii) {
+            (Some(source_path), None, None, None, None, None) => Ok(Self::Asset(AssetLayer {
                 common,
                 source_path,
             })),
-            (None, Some(image), None, None, None) => Ok(Self::Image(ImageLayer { common, image })),
-            (None, None, Some(procedural), None, None) => {
+            (None, Some(image), None, None, None, None) => {
+                Ok(Self::Image(ImageLayer { common, image }))
+            }
+            (None, None, Some(procedural), None, None, None) => {
                 Ok(Self::Procedural(ProceduralLayer { common, procedural }))
             }
-            (None, None, None, Some(shader), None) => {
+            (None, None, None, Some(shader), None, None) => {
                 Ok(Self::Shader(ShaderLayer { common, shader }))
             }
-            (None, None, None, None, Some(text)) => Ok(Self::Text(TextLayer { common, text })),
+            (None, None, None, None, Some(text), None) => {
+                Ok(Self::Text(TextLayer { common, text }))
+            }
+            (None, None, None, None, None, Some(ascii)) => {
+                Ok(Self::Ascii(AsciiLayer { common, ascii }))
+            }
             _ => Err(DeError::custom(
                 "failed to decode layer source; define exactly one source block",
             )),
@@ -635,6 +650,7 @@ impl Layer {
             Self::Procedural(layer) => &layer.common,
             Self::Shader(layer) => &layer.common,
             Self::Text(layer) => &layer.common,
+            Self::Ascii(layer) => &layer.common,
         }
     }
 
@@ -652,8 +668,277 @@ impl Layer {
             Self::Procedural(layer) => layer.validate(params, seed),
             Self::Shader(layer) => layer.validate(params, seed),
             Self::Text(layer) => layer.validate(),
+            Self::Ascii(layer) => layer.validate(),
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AsciiLayer {
+    #[serde(flatten)]
+    pub common: LayerCommon,
+    pub ascii: AsciiSource,
+}
+
+impl AsciiLayer {
+    fn validate(&self) -> Result<()> {
+        self.ascii.validate_schema(&self.common.id)
+    }
+
+    pub fn validate_content_source(&self) -> Result<()> {
+        self.ascii
+            .compile_base_cells(&self.common.id)
+            .map(|_| ())
+            .map_err(|error| anyhow!("layer '{}': {error}", self.common.id))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AsciiSource {
+    pub grid: AsciiGrid,
+    pub cell: AsciiCellMetrics,
+    pub font_variant: AsciiFontVariant,
+    pub foreground: ColorRgba,
+    pub background: ColorRgba,
+    #[serde(default)]
+    pub inline: Option<Vec<String>>,
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+    #[serde(default)]
+    pub cells: Vec<AsciiCellOverride>,
+    #[serde(default)]
+    pub reveal: Option<AsciiReveal>,
+}
+
+impl AsciiSource {
+    fn validate_schema(&self, layer_id: &str) -> Result<()> {
+        if self.grid.rows == 0 || self.grid.columns == 0 {
+            bail!("layer '{layer_id}': ascii.grid rows and columns must both be > 0");
+        }
+        if self.cell.width == 0 || self.cell.height == 0 {
+            bail!("layer '{layer_id}': ascii.cell width and height must both be > 0");
+        }
+        if !self.cell.pixel_aspect_ratio.is_finite() || self.cell.pixel_aspect_ratio <= 0.0 {
+            bail!("layer '{layer_id}': ascii.cell.pixel_aspect_ratio must be finite and > 0");
+        }
+        self.foreground
+            .validate("ascii.foreground")
+            .map_err(|error| anyhow!("layer '{layer_id}': {error}"))?;
+        self.background
+            .validate("ascii.background")
+            .map_err(|error| anyhow!("layer '{layer_id}': {error}"))?;
+
+        match (&self.inline, &self.path) {
+            (Some(_), Some(_)) => {
+                bail!("layer '{layer_id}': ascii must set exactly one of inline or path")
+            }
+            (None, None) => {
+                bail!("layer '{layer_id}': ascii must set exactly one of inline or path")
+            }
+            (None, Some(path)) => {
+                if path.as_os_str().is_empty() {
+                    bail!("layer '{layer_id}': ascii.path cannot be empty");
+                }
+            }
+            (Some(lines), None) => {
+                validate_ascii_rows(
+                    lines,
+                    self.grid.rows,
+                    self.grid.columns,
+                    &format!("layer '{layer_id}' ascii.inline"),
+                )?;
+            }
+        }
+
+        for (index, cell) in self.cells.iter().enumerate() {
+            cell.validate(
+                self.grid,
+                &format!("layer '{layer_id}' ascii.cells[{index}]"),
+            )?;
+        }
+        if let Some(reveal) = &self.reveal {
+            reveal.validate(&format!("layer '{layer_id}' ascii.reveal"))?;
+        }
+        Ok(())
+    }
+
+    pub fn compile_base_cells(&self, layer_id: &str) -> Result<Vec<u8>> {
+        let rows = match (&self.inline, &self.path) {
+            (Some(lines), None) => lines.clone(),
+            (None, Some(path)) => parse_ascii_file_rows(path)
+                .with_context(|| format!("layer '{layer_id}': failed to read ascii.path"))?,
+            _ => bail!("layer '{layer_id}': ascii must set exactly one of inline or path"),
+        };
+
+        validate_ascii_rows(
+            &rows,
+            self.grid.rows,
+            self.grid.columns,
+            &format!("layer '{layer_id}' ascii source"),
+        )?;
+
+        let mut compiled = Vec::with_capacity((self.grid.rows * self.grid.columns) as usize);
+        for row in rows {
+            compiled.extend_from_slice(row.as_bytes());
+        }
+        Ok(compiled)
+    }
+
+    pub fn pixel_dimensions(&self) -> Result<(u32, u32)> {
+        let width = self
+            .grid
+            .columns
+            .checked_mul(self.cell.width)
+            .ok_or_else(|| anyhow!("ascii grid width overflows u32"))?;
+        let height = self
+            .grid
+            .rows
+            .checked_mul(self.cell.height)
+            .ok_or_else(|| anyhow!("ascii grid height overflows u32"))?;
+        Ok((width, height))
+    }
+
+    pub fn is_dynamic(&self) -> bool {
+        self.reveal.is_some() || self.cells.iter().any(AsciiCellOverride::is_time_varying)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AsciiGrid {
+    pub rows: u32,
+    pub columns: u32,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AsciiCellMetrics {
+    pub width: u32,
+    pub height: u32,
+    #[serde(default = "default_pixel_aspect_ratio")]
+    pub pixel_aspect_ratio: f32,
+}
+
+fn default_pixel_aspect_ratio() -> f32 {
+    1.0
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AsciiFontVariant {
+    GeistPixelRegular,
+    GeistPixelMedium,
+    GeistPixelBold,
+    GeistPixelLight,
+    GeistPixelMono,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AsciiCellOverride {
+    pub row: u32,
+    pub column: u32,
+    #[serde(default)]
+    pub character: Option<String>,
+    #[serde(default)]
+    pub foreground: Option<ColorRgba>,
+    #[serde(default)]
+    pub background: Option<ColorRgba>,
+    #[serde(default)]
+    pub visible_from_frame: Option<u32>,
+    #[serde(default)]
+    pub visible_until_frame: Option<u32>,
+}
+
+impl AsciiCellOverride {
+    fn validate(&self, grid: AsciiGrid, label: &str) -> Result<()> {
+        if self.row >= grid.rows {
+            bail!(
+                "{label}.row ({}) must be < grid.rows ({})",
+                self.row,
+                grid.rows
+            );
+        }
+        if self.column >= grid.columns {
+            bail!(
+                "{label}.column ({}) must be < grid.columns ({})",
+                self.column,
+                grid.columns
+            );
+        }
+
+        if let Some(character) = &self.character {
+            let byte = parse_single_ascii_character(character, &format!("{label}.character"))?;
+            if !is_printable_ascii(byte) {
+                bail!(
+                    "{label}.character must be printable ASCII (0x20..0x7E), got 0x{:02X}",
+                    byte
+                );
+            }
+        }
+        if let Some(foreground) = &self.foreground {
+            foreground.validate(&format!("{label}.foreground"))?;
+        }
+        if let Some(background) = &self.background {
+            background.validate(&format!("{label}.background"))?;
+        }
+
+        if let (Some(start), Some(end)) = (self.visible_from_frame, self.visible_until_frame) {
+            if end <= start {
+                bail!("{label}.visible_until_frame ({end}) must be > visible_from_frame ({start})");
+            }
+        }
+
+        Ok(())
+    }
+
+    fn is_time_varying(&self) -> bool {
+        self.visible_from_frame.is_some() || self.visible_until_frame.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AsciiReveal {
+    RowMajor {
+        start_frame: u32,
+        frames_per_cell: u32,
+        #[serde(default)]
+        direction: AsciiRevealDirection,
+    },
+    ColumnMajor {
+        start_frame: u32,
+        frames_per_cell: u32,
+        #[serde(default)]
+        direction: AsciiRevealDirection,
+    },
+}
+
+impl AsciiReveal {
+    fn validate(&self, label: &str) -> Result<()> {
+        let frames_per_cell = match self {
+            Self::RowMajor {
+                frames_per_cell, ..
+            }
+            | Self::ColumnMajor {
+                frames_per_cell, ..
+            } => *frames_per_cell,
+        };
+        if frames_per_cell == 0 {
+            bail!("{label}.frames_per_cell must be > 0");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AsciiRevealDirection {
+    #[default]
+    Forward,
+    Reverse,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1868,6 +2153,71 @@ fn default_time_scale() -> f32 {
     1.0
 }
 
+fn parse_ascii_file_rows(path: &PathBuf) -> Result<Vec<String>> {
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed reading {}", path.display()))?;
+    let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
+    let mut rows = normalized
+        .split('\n')
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if rows.last().is_some_and(String::is_empty) {
+        rows.pop();
+    }
+    Ok(rows)
+}
+
+fn validate_ascii_rows(
+    rows: &[String],
+    expected_rows: u32,
+    expected_columns: u32,
+    label: &str,
+) -> Result<()> {
+    if rows.len() != expected_rows as usize {
+        bail!(
+            "{label} must have exactly {} row(s), got {}",
+            expected_rows,
+            rows.len()
+        );
+    }
+
+    for (row_index, row) in rows.iter().enumerate() {
+        let bytes = row.as_bytes();
+        if bytes.len() != expected_columns as usize {
+            bail!(
+                "{label} row {} must have exactly {} columns, got {}",
+                row_index,
+                expected_columns,
+                bytes.len()
+            );
+        }
+
+        for (column_index, byte) in bytes.iter().enumerate() {
+            if !is_printable_ascii(*byte) {
+                bail!(
+                    "{label} row {} column {} is not printable ASCII (0x20..0x7E): 0x{:02X}",
+                    row_index,
+                    column_index,
+                    byte
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_single_ascii_character(value: &str, label: &str) -> Result<u8> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 1 {
+        bail!("{label} must be exactly one ASCII character");
+    }
+    Ok(bytes[0])
+}
+
+fn is_printable_ascii(byte: u8) -> bool {
+    (0x20..=0x7E).contains(&byte)
+}
+
 fn validate_number(label: &str, value: f32) -> Result<()> {
     if !value.is_finite() {
         bail!("{label} must be finite");
@@ -2032,6 +2382,67 @@ layers:
         .expect("manifest should parse");
 
         assert!(matches!(manifest.layers.first(), Some(Layer::Asset(_))));
+    }
+
+    #[test]
+    fn manifest_parses_ascii_layer_shape() {
+        let manifest = serde_yaml::from_str::<Manifest>(
+            r#"
+version: 1
+environment:
+  resolution: { width: 320, height: 180 }
+  fps: 24
+  duration: { frames: 12 }
+layers:
+  - id: terminal_grid
+    ascii:
+      grid: { rows: 2, columns: 4 }
+      cell: { width: 12, height: 16 }
+      font_variant: geist_pixel_regular
+      foreground: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+      background: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
+      inline:
+        - "ABCD"
+        - "1234"
+"#,
+        )
+        .expect("manifest should parse");
+
+        assert!(matches!(manifest.layers.first(), Some(Layer::Ascii(_))));
+    }
+
+    #[test]
+    fn ascii_layer_rejects_non_printable_characters() {
+        let manifest = serde_yaml::from_str::<Manifest>(
+            r#"
+version: 1
+environment:
+  resolution: { width: 320, height: 180 }
+  fps: 24
+  duration: { frames: 12 }
+layers:
+  - id: terminal_grid
+    ascii:
+      grid: { rows: 1, columns: 1 }
+      cell: { width: 8, height: 8 }
+      font_variant: geist_pixel_regular
+      foreground: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+      background: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
+      inline:
+        - "é"
+"#,
+        )
+        .expect("manifest should parse shape");
+
+        let layer = manifest.layers.first().expect("expected one layer");
+        let error = layer
+            .validate(&manifest.params, manifest.seed, &manifest.modulators)
+            .expect_err("non-printable ASCII should be rejected");
+        let message = error.to_string();
+        assert!(
+            message.contains("ASCII") || message.contains("columns"),
+            "unexpected validation message: {message}"
+        );
     }
 
     #[test]

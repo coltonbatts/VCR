@@ -1,3 +1,4 @@
+mod ascii;
 mod encoding;
 mod manifest;
 mod renderer;

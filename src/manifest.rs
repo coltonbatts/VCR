@@ -95,6 +95,20 @@ fn validate_manifest(manifest: &mut Manifest, manifest_path: &Path) -> Result<()
                 }
             }
             Layer::Text(_) => {}
+            Layer::Ascii(ascii_layer) => {
+                if let Some(path) = &ascii_layer.ascii.path {
+                    let resolved = resolve_and_validate_asset_path(
+                        &manifest_dir,
+                        path,
+                        &ascii_layer.common.id,
+                        "ascii.path",
+                    )?;
+                    ascii_layer.ascii.path = Some(resolved);
+                }
+                ascii_layer.validate_content_source().with_context(|| {
+                    format!("layer '{}': invalid ascii source", ascii_layer.common.id)
+                })?;
+            }
         }
     }
 
