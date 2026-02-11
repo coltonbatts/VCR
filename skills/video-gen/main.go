@@ -87,18 +87,24 @@ environment:
   duration: 5.0
 layers:
   - id: background
-    procedural: {type: solid, color: {r: 0, g: 0, b: 0, a: 255}}
+    procedural:
+      kind: solid_color
+      color: {r: 0.0, g: 0.0, b: 0.0, a: 1.0}
   - id: sample_text
-    text: {content: "HELLO", size: 80, font_variant: line}
+    text:
+      content: "HELLO"
+      font_size: 120
+      font_family: "GeistPixel-Line"
+      color: {r: 1.0, g: 1.0, b: 1.0, a: 1.0}
     position: {x: 640, y: 360}
     anchor: center
 
 Rules:
 1. No conversational text. 
-2. Use "procedural" for backgrounds.
-3. Use "text" for copy.
-4. Use ONLY Geist Pixel font variants: "line", "bold", "regular".
-5. Resolution must be integers.`
+2. Use "procedural" with "kind: solid_color" for backgrounds.
+3. Colors (r, g, b, a) are 0.0 to 1.0. 
+4. Use ONLY font_family: "GeistPixel-Line".
+5. Resolution and position are integers.`
 
 	userMessage := fmt.Sprintf(`Creative Context from Intelligence Tree:
 %s
