@@ -4,9 +4,6 @@ use tiny_skia::{Pixmap, PremultipliedColorU8};
 use crate::ascii_atlas::GeistPixelAtlas;
 use crate::schema::{AsciiReveal, AsciiRevealDirection, AsciiSource, ColorRgba};
 
-const ASCII_GLYPH_WIDTH: u32 = 8;
-const ASCII_GLYPH_HEIGHT: u32 = 8;
-
 #[derive(Debug, Clone)]
 pub struct PreparedAsciiLayer {
     source: AsciiSource,
@@ -219,9 +216,11 @@ impl PreparedAsciiLayer {
         let cell_width = self.source.cell.width;
         let cell_height = self.source.cell.height;
         let aspect = self.source.cell.pixel_aspect_ratio;
+        let glyph_width = self.atlas.glyph_width();
+        let glyph_height = self.atlas.glyph_height();
 
         for y in 0..cell_height {
-            let glyph_y = ((y * ASCII_GLYPH_HEIGHT) / cell_height).min(ASCII_GLYPH_HEIGHT - 1);
+            let glyph_y = ((y * glyph_height) / cell_height).min(glyph_height - 1);
             for x in 0..cell_width {
                 let normalized_x = (x as f32 + 0.5) / cell_width as f32;
                 let centered = normalized_x - 0.5;
@@ -230,8 +229,7 @@ impl PreparedAsciiLayer {
                     continue;
                 }
 
-                let glyph_x =
-                    ((warped * ASCII_GLYPH_WIDTH as f32).floor() as u32).min(ASCII_GLYPH_WIDTH - 1);
+                let glyph_x = ((warped * glyph_width as f32).floor() as u32).min(glyph_width - 1);
                 if self.atlas.sample(character, glyph_x, glyph_y) {
                     blend_pixel(pixmap, origin_x + x, origin_y + y, color);
                 }

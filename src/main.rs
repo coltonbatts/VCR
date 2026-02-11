@@ -1,5 +1,6 @@
 mod ascii;
 mod ascii_atlas;
+mod ascii_atlas_data;
 mod encoding;
 mod manifest;
 mod renderer;
