@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand};
 use image::RgbaImage;
 use serde::Serialize;
 
+use vcr::chat::{render_chat_video, ChatRenderArgs};
 use vcr::encoding::FfmpegPipe;
 use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions, ParamOverride};
 use vcr::play::{run_play, PlayArgs};
@@ -193,7 +194,29 @@ enum Commands {
         )]
         set: Vec<String>,
     },
+    Chat {
+        #[command(subcommand)]
+        command: ChatCommands,
+    },
     Doctor,
+}
+
+#[derive(Debug, Subcommand)]
+enum ChatCommands {
+    Render {
+        #[arg(long = "in", value_name = "SCRIPT")]
+        input: PathBuf,
+        #[arg(long = "out", value_name = "OUTPUT")]
+        output: PathBuf,
+        #[arg(long = "theme", default_value = "geist-pixel")]
+        theme: String,
+        #[arg(long = "fps", default_value_t = 30)]
+        fps: u32,
+        #[arg(long = "speed", default_value_t = 1.0)]
+        speed: f32,
+        #[arg(long = "seed", default_value_t = 0)]
+        seed: u64,
+    },
 }
 
 impl Commands {
@@ -210,6 +233,7 @@ impl Commands {
             Self::RenderFrame { .. } => "render-frame",
             Self::RenderFrames { .. } => "render-frames",
             Self::Watch { .. } => "watch",
+            Self::Chat { .. } => "chat",
             Self::Doctor => "doctor",
         }
     }
@@ -387,6 +411,16 @@ fn run_cli(cli: Cli) -> Result<()> {
                 quiet,
             )
         }
+        Commands::Chat { command } => match command {
+            ChatCommands::Render {
+                input,
+                output,
+                theme,
+                fps,
+                speed,
+                seed,
+            } => run_chat_render(&input, &output, &theme, fps, speed, seed, quiet),
+        },
         Commands::Doctor => run_doctor(),
     }
 }
@@ -448,6 +482,11 @@ fn is_usage_error(error: &anyhow::Error) -> bool {
         || has_error_message_fragment(error, "--frames must be > 0")
         || has_error_message_fragment(error, "--interval-ms must be > 0")
         || has_error_message_fragment(error, "preview --scale must be in")
+        || has_error_message_fragment(error, "invalid .vcrchat format")
+        || has_error_message_fragment(error, "empty input script")
+        || has_error_message_fragment(error, "unknown --theme")
+        || has_error_message_fragment(error, "--fps must be > 0")
+        || has_error_message_fragment(error, "--speed must be > 0")
         || has_error_message_fragment(error, "start frame")
         || has_error_message_fragment(error, "out of bounds")
 }
@@ -597,6 +636,58 @@ fn run_doctor() -> Result<()> {
         println!("\n[VCR] Doctor: Some checks failed. Please address the issues above.");
         bail!("missing dependency: {}", missing_dependencies.join(", "))
     }
+}
+
+fn run_chat_render(
+    input_path: &Path,
+    output_path: &Path,
+    theme: &str,
+    fps: u32,
+    speed: f32,
+    seed: u64,
+    quiet: bool,
+) -> Result<()> {
+    let resolved_output = resolve_output_path(
+        input_path,
+        Some(output_path.to_path_buf()),
+        "mp4",
+        None,
+        quiet,
+    )?;
+    if let Some(parent) = resolved_output.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create output directory {}", parent.display()))?;
+    }
+
+    progress_log(
+        quiet,
+        format_args!(
+            "[VCR] Chat render: theme={}, fps={}, speed={:.2}, seed={}",
+            theme, fps, speed, seed
+        ),
+    );
+
+    let summary = render_chat_video(&ChatRenderArgs {
+        input: input_path.to_path_buf(),
+        output: resolved_output.clone(),
+        theme: theme.to_owned(),
+        fps,
+        speed,
+        seed,
+    })?;
+
+    println!("Wrote {}", resolved_output.display());
+    progress_log(
+        quiet,
+        format_args!(
+            "[VCR] Chat render complete: {}x{}, {} frames, {:.2}s",
+            summary.width,
+            summary.height,
+            summary.frame_count,
+            summary.duration_ms as f64 / 1000.0
+        ),
+    );
+    Ok(())
 }
 
 fn run_check(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<()> {

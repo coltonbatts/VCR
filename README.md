@@ -146,6 +146,7 @@ Override at runtime:
 - `render-frame`
 - `render-frames`
 - `watch`
+- `chat render`
 - `doctor`
 
 For full help:
@@ -169,6 +170,7 @@ Param semantics are documented in `docs/PARAMS.md`.
 
 - `docs/PARAMS.md` - typed params and `--set` semantics
 - `docs/PLAYGROUND.md` - preset playground runner and outputs
+- `docs/CHAT_RENDER.md` - tagged transcript to animated terminal video
 - `docs/SKILLS_PROTOCOL.md` - agent update protocol
 - `docs/EXIT_CODES.md` - CLI exit code contract
 

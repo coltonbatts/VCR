@@ -1,0 +1,27 @@
+@system
+Live demo: turn a plain transcript into a terminal animation.
+
+@user
+Write a haiku about FFmpeg.
+
+@assistant
+Sure. Here you go:
+The frames fall in line
+Code hums under midnight screens
+Video wakes, precise
+
+@tool ffmpeg
+command: ffmpeg -i input.mov -vf scale=1920:1080 output.mp4
+
+::pause 500ms
+
+@assistant
+Rendered. Want it in vertical too?
+
+@user
+Yes, 9:16.
+
+::type fast
+
+@assistant
+Done. I can produce both 16:9 and 9:16 outputs in one pass.
