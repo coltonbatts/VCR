@@ -152,7 +152,7 @@ pub fn build_ascii_capture_plan(args: &AsciiCaptureArgs) -> Result<AsciiCaptureP
 
 pub fn run_ascii_capture(args: &AsciiCaptureArgs) -> Result<AsciiCaptureSummary> {
     let plan = build_ascii_capture_plan(args)?;
-    let frames = capture_ascii_frames(
+    let raw_frames = capture_ascii_frames(
         &args.source,
         plan.frame_count,
         plan.fps,
@@ -160,6 +160,8 @@ pub fn run_ascii_capture(args: &AsciiCaptureArgs) -> Result<AsciiCaptureSummary>
         plan.rows,
     )
     .with_context(|| format!("failed to capture source '{}'", plan.source_label))?;
+
+    let frames = fit_frames_to_canvas(raw_frames, plan.cols as usize, plan.rows as usize);
 
     if let Some(debug_dir) = &args.debug_txt_dir {
         write_debug_ascii_frames(debug_dir, &frames)?;
@@ -347,6 +349,157 @@ fn capture_ascii_frames(
     }
 
     Ok(frames)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ContentBounds {
+    left: usize,
+    top: usize,
+    right: usize,
+    bottom: usize,
+}
+
+impl ContentBounds {
+    fn width(self) -> usize {
+        self.right.saturating_sub(self.left) + 1
+    }
+
+    fn height(self) -> usize {
+        self.bottom.saturating_sub(self.top) + 1
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self {
+            left: self.left.min(other.left),
+            top: self.top.min(other.top),
+            right: self.right.max(other.right),
+            bottom: self.bottom.max(other.bottom),
+        }
+    }
+}
+
+fn fit_frames_to_canvas(frames: Vec<AsciiFrame>, cols: usize, rows: usize) -> Vec<AsciiFrame> {
+    let Some(bounds) = global_content_bounds(&frames) else {
+        return frames;
+    };
+    let region_width = bounds.width();
+    let region_height = bounds.height();
+    if region_width == cols && region_height == rows {
+        return frames;
+    }
+
+    let scale_x = cols as f32 / region_width as f32;
+    let scale_y = rows as f32 / region_height as f32;
+    let scale = scale_x.min(scale_y);
+    let scaled_width = ((region_width as f32 * scale).round() as usize)
+        .max(1)
+        .min(cols);
+    let scaled_height = ((region_height as f32 * scale).round() as usize)
+        .max(1)
+        .min(rows);
+    let offset_x = (cols - scaled_width) / 2;
+    let offset_y = (rows - scaled_height) / 2;
+
+    frames
+        .into_iter()
+        .map(|frame| {
+            fit_single_frame_to_bounds(
+                frame,
+                bounds,
+                scaled_width,
+                scaled_height,
+                offset_x,
+                offset_y,
+            )
+        })
+        .collect()
+}
+
+fn global_content_bounds(frames: &[AsciiFrame]) -> Option<ContentBounds> {
+    frames
+        .iter()
+        .filter_map(frame_content_bounds)
+        .reduce(|acc, bounds| acc.union(bounds))
+}
+
+fn frame_content_bounds(frame: &AsciiFrame) -> Option<ContentBounds> {
+    let mut left = usize::MAX;
+    let mut top = usize::MAX;
+    let mut right = 0_usize;
+    let mut bottom = 0_usize;
+    let mut found = false;
+
+    for (row_index, line) in frame.lines().iter().enumerate() {
+        for (col_index, byte) in line.as_bytes().iter().enumerate() {
+            if *byte != b' ' {
+                found = true;
+                left = left.min(col_index);
+                top = top.min(row_index);
+                right = right.max(col_index);
+                bottom = bottom.max(row_index);
+            }
+        }
+    }
+
+    if found {
+        Some(ContentBounds {
+            left,
+            top,
+            right,
+            bottom,
+        })
+    } else {
+        None
+    }
+}
+
+fn fit_single_frame_to_bounds(
+    frame: AsciiFrame,
+    bounds: ContentBounds,
+    scaled_width: usize,
+    scaled_height: usize,
+    offset_x: usize,
+    offset_y: usize,
+) -> AsciiFrame {
+    let cols = frame.width();
+    let rows = frame.height();
+    let region_width = bounds.width();
+    let region_height = bounds.height();
+    let lines = frame.lines();
+
+    let mut output = vec![vec![b' '; cols]; rows];
+
+    for out_y in 0..scaled_height {
+        let src_y = (out_y * region_height / scaled_height).min(region_height.saturating_sub(1));
+        let src_row = bounds.top + src_y;
+        if src_row >= rows {
+            continue;
+        }
+        let source_line = lines[src_row].as_bytes();
+        for out_x in 0..scaled_width {
+            let src_x = (out_x * region_width / scaled_width).min(region_width.saturating_sub(1));
+            let src_col = bounds.left + src_x;
+            if src_col >= cols {
+                continue;
+            }
+            let dst_row = offset_y + out_y;
+            let dst_col = offset_x + out_x;
+            if dst_row < rows && dst_col < cols {
+                output[dst_row][dst_col] = source_line[src_col];
+            }
+        }
+    }
+
+    let fitted_lines = output
+        .into_iter()
+        .map(|line| String::from_utf8(line).unwrap_or_else(|_| " ".repeat(cols)))
+        .collect::<Vec<_>>();
+
+    let mut fitted = AsciiFrame::from_lines(fitted_lines, cols, rows);
+    if let Some(metadata) = frame.metadata {
+        fitted = fitted.with_metadata(metadata);
+    }
+    fitted
 }
 
 fn write_debug_ascii_frames(dir: &Path, frames: &[AsciiFrame]) -> Result<()> {
@@ -941,7 +1094,11 @@ fn parse_cursor_position(raw: &str) -> (usize, usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_capture_size, resolve_target_frame_count, BestEffortAnsiFrameParser};
+    use super::{
+        fit_frames_to_canvas, parse_capture_size, resolve_target_frame_count,
+        BestEffortAnsiFrameParser,
+    };
+    use crate::ascii_frame::AsciiFrame;
 
     #[test]
     fn parse_size_supports_cols_x_rows() {
@@ -963,5 +1120,15 @@ mod tests {
         let frame = parser.latest_frame().expect("frame should exist");
         assert_eq!(frame.lines()[0], "ABCD");
         assert_eq!(frame.lines()[1], "WXYZ");
+    }
+
+    #[test]
+    fn fit_to_canvas_recenters_top_left_content() {
+        let frame = AsciiFrame::from_lines(["AB    ", "CD    ", "      ", "      "], 6, 4);
+        let fitted = fit_frames_to_canvas(vec![frame], 6, 4);
+        assert_eq!(fitted[0].lines()[0], " AABB ");
+        assert_eq!(fitted[0].lines()[1], " AABB ");
+        assert_eq!(fitted[0].lines()[2], " CCDD ");
+        assert_eq!(fitted[0].lines()[3], " CCDD ");
     }
 }
