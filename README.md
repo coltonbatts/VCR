@@ -211,6 +211,7 @@ Param semantics are documented in `docs/PARAMS.md`.
 - `docs/CHAT_RENDER.md` - tagged transcript to animated terminal video
 - `docs/ASCII_STAGE.md` - stylized `.vcrtxt` transcript rendering with camera/preset options
 - `docs/ASCII_CAPTURE.md` - animated ASCII capture (`ascii-live` / `chafa`) to ProRes MOV
+- `docs/ASCII_CAPTURE_MILESTONE.md` - current Earth overlay quality/status and recommended command
 - `docs/deep-research-report.md` - imported deep research report on ASCII as a rendering medium
 - `docs/ascii_research_takeaways.md` - prioritized, codebase-specific pull-through items from the report
 - `docs/SKILLS_PROTOCOL.md` - agent update protocol
