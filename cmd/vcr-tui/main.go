@@ -112,13 +112,13 @@ func (m model) scanLLM() tea.Msg {
 	client := http.Client{Timeout: 2 * time.Second}
 
 	// 1. Check LM Studio (Priority)
-	if resp, err := client.Get("http://localhost:1234/v1/models"); err == nil && resp.StatusCode == 200 {
+	if resp, err := client.Get("http://127.0.0.1:1234/v1/models"); err == nil && resp.StatusCode == 200 {
 		var mData struct {
 			Data []struct {
 				ID string `json:"id"`
 			} `json:"data"`
 		}
-		if body, _ := io.ReadAll(resp.Body); err == nil {
+		if body, rErr := io.ReadAll(resp.Body); rErr == nil {
 			json.Unmarshal(body, &mData)
 			if len(mData.Data) > 0 {
 				return llmScanMsg("STUDIO:" + mData.Data[0].ID)
@@ -153,7 +153,7 @@ func (m model) handshakeLLM(modelID string) tea.Cmd {
 			"max_tokens": 1,
 		})
 
-		resp, err := client.Post("http://localhost:1234/v1/chat/completions", "application/json", strings.NewReader(string(payload)))
+		resp, err := client.Post("http://127.0.0.1:1234/v1/chat/completions", "application/json", strings.NewReader(string(payload)))
 		if err != nil {
 			return handshakeMsg{success: false, details: "Timeout or Connection Refused"}
 		}

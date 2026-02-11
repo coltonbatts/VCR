@@ -59,7 +59,7 @@ func main() {
 	// 2. Dynamic Model Detection from LM Studio
 	emit(IPCMessage{Type: "status", Status: "Syncing with LM Studio..."})
 	modelName := "local-model"
-	if mResp, err := http.Get("http://localhost:1234/v1/models"); err == nil {
+	if mResp, err := http.Get("http://127.0.0.1:1234/v1/models"); err == nil {
 		var mData struct {
 			Data []struct {
 				ID string `json:"id"`
@@ -117,7 +117,7 @@ Generate the YAML manifest now:`, contextStr, prompt)
 	})
 
 	client := &http.Client{Timeout: 60 * time.Second} // Allow 60s for LLM thought
-	resp, err := client.Post("http://localhost:1234/v1/chat/completions", "application/json", bytes.NewBuffer(requestBody))
+	resp, err := client.Post("http://127.0.0.1:1234/v1/chat/completions", "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
 		emit(IPCMessage{Type: "status", Status: "LM Studio Request Timed Out or Failed."})
 		os.Exit(1)
