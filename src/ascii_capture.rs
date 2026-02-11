@@ -18,6 +18,7 @@ pub const DEFAULT_CAPTURE_DURATION_SECONDS: f32 = 5.0;
 pub const DEFAULT_CAPTURE_COLS: u32 = 80;
 pub const DEFAULT_CAPTURE_ROWS: u32 = 40;
 pub const DEFAULT_CAPTURE_FONT_SIZE: f32 = 16.0;
+pub const DEFAULT_CAPTURE_FIT_PADDING: f32 = 0.12;
 
 const DEFAULT_CAPTURE_FONT_PATH_REL: &str = "assets/fonts/geist_pixel/GeistPixel-Line.ttf";
 const SOURCE_RECV_POLL_MS: u64 = 20;
@@ -90,6 +91,7 @@ pub struct AsciiCaptureArgs {
     pub debug_txt_dir: Option<PathBuf>,
     pub symbol_remap: SymbolRemapMode,
     pub symbol_ramp: Option<String>,
+    pub fit_padding: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +111,7 @@ pub struct AsciiCapturePlan {
     pub ffmpeg_encoder: &'static str,
     pub symbol_remap: SymbolRemapMode,
     pub symbol_ramp: String,
+    pub fit_padding: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -164,6 +167,7 @@ pub fn build_ascii_capture_plan(args: &AsciiCaptureArgs) -> Result<AsciiCaptureP
         ffmpeg_encoder: "ffmpeg -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le",
         symbol_remap: args.symbol_remap,
         symbol_ramp,
+        fit_padding: args.fit_padding,
     })
 }
 
@@ -178,7 +182,12 @@ pub fn run_ascii_capture(args: &AsciiCaptureArgs) -> Result<AsciiCaptureSummary>
     )
     .with_context(|| format!("failed to capture source '{}'", plan.source_label))?;
 
-    let frames = fit_frames_to_canvas(raw_frames, plan.cols as usize, plan.rows as usize);
+    let frames = fit_frames_to_canvas(
+        raw_frames,
+        plan.cols as usize,
+        plan.rows as usize,
+        plan.fit_padding,
+    );
     let frames = remap_frames_symbols(frames, plan.symbol_remap, &plan.symbol_ramp);
 
     if let Some(debug_dir) = &args.debug_txt_dir {
@@ -242,6 +251,9 @@ fn validate_capture_args(args: &AsciiCaptureArgs) -> Result<()> {
     }
     if !args.font_size.is_finite() || args.font_size <= 0.0 {
         bail!("--font-size must be > 0");
+    }
+    if !args.fit_padding.is_finite() || args.fit_padding < 0.0 || args.fit_padding >= 0.5 {
+        bail!("--fit-padding must be in [0.0, 0.5)");
     }
     Ok(())
 }
@@ -408,19 +420,30 @@ impl ContentBounds {
     }
 }
 
-fn fit_frames_to_canvas(frames: Vec<AsciiFrame>, cols: usize, rows: usize) -> Vec<AsciiFrame> {
-    let Some(bounds) = global_content_bounds(&frames) else {
+fn fit_frames_to_canvas(
+    frames: Vec<AsciiFrame>,
+    cols: usize,
+    rows: usize,
+    fit_padding: f32,
+) -> Vec<AsciiFrame> {
+    let Some(bounds) =
+        robust_content_bounds(&frames, cols, rows).or_else(|| global_content_bounds(&frames))
+    else {
         return frames;
     };
     let region_width = bounds.width();
     let region_height = bounds.height();
     if region_width == cols && region_height == rows {
-        return frames;
+        // Still apply safe padding if requested.
+        if fit_padding <= 0.0 {
+            return frames;
+        }
     }
 
+    let usable_ratio = (1.0 - (fit_padding * 2.0)).clamp(0.1, 1.0);
     let scale_x = cols as f32 / region_width as f32;
     let scale_y = rows as f32 / region_height as f32;
-    let scale = scale_x.min(scale_y);
+    let scale = scale_x.min(scale_y) * usable_ratio;
     let scaled_width = ((region_width as f32 * scale).round() as usize)
         .max(1)
         .min(cols);
@@ -443,6 +466,56 @@ fn fit_frames_to_canvas(frames: Vec<AsciiFrame>, cols: usize, rows: usize) -> Ve
             )
         })
         .collect()
+}
+
+fn robust_content_bounds(frames: &[AsciiFrame], cols: usize, rows: usize) -> Option<ContentBounds> {
+    if frames.is_empty() || cols == 0 || rows == 0 {
+        return None;
+    }
+    let mut row_occupancy = vec![0_usize; rows];
+    let mut col_occupancy = vec![0_usize; cols];
+
+    for frame in frames {
+        for (row, line) in frame.lines().iter().take(rows).enumerate() {
+            for (col, byte) in line.as_bytes().iter().take(cols).enumerate() {
+                if *byte != b' ' {
+                    row_occupancy[row] += 1;
+                    col_occupancy[col] += 1;
+                }
+            }
+        }
+    }
+
+    let max_row = row_occupancy.iter().copied().max().unwrap_or(0);
+    let max_col = col_occupancy.iter().copied().max().unwrap_or(0);
+    if max_row == 0 || max_col == 0 {
+        return None;
+    }
+
+    let row_threshold = ((max_row as f32) * 0.10).ceil() as usize;
+    let col_threshold = ((max_col as f32) * 0.10).ceil() as usize;
+    let row_threshold = row_threshold.max(1);
+    let col_threshold = col_threshold.max(1);
+
+    let top = row_occupancy
+        .iter()
+        .position(|count| *count >= row_threshold)?;
+    let bottom = row_occupancy
+        .iter()
+        .rposition(|count| *count >= row_threshold)?;
+    let left = col_occupancy
+        .iter()
+        .position(|count| *count >= col_threshold)?;
+    let right = col_occupancy
+        .iter()
+        .rposition(|count| *count >= col_threshold)?;
+
+    Some(ContentBounds {
+        left,
+        top,
+        right,
+        bottom,
+    })
 }
 
 fn global_content_bounds(frames: &[AsciiFrame]) -> Option<ContentBounds> {
@@ -1266,11 +1339,19 @@ mod tests {
     #[test]
     fn fit_to_canvas_recenters_top_left_content() {
         let frame = AsciiFrame::from_lines(["AB    ", "CD    ", "      ", "      "], 6, 4);
-        let fitted = fit_frames_to_canvas(vec![frame], 6, 4);
+        let fitted = fit_frames_to_canvas(vec![frame], 6, 4, 0.0);
         assert_eq!(fitted[0].lines()[0], " AABB ");
         assert_eq!(fitted[0].lines()[1], " AABB ");
         assert_eq!(fitted[0].lines()[2], " CCDD ");
         assert_eq!(fitted[0].lines()[3], " CCDD ");
+    }
+
+    #[test]
+    fn fit_padding_reserves_visual_margin() {
+        let frame = AsciiFrame::from_lines(["AAAAAA", "AAAAAA", "AAAAAA", "AAAAAA"], 6, 4);
+        let fitted = fit_frames_to_canvas(vec![frame], 6, 4, 0.25);
+        assert_eq!(fitted[0].lines()[0], "      ");
+        assert_eq!(fitted[0].lines()[3], "      ");
     }
 
     #[test]

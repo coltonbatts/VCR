@@ -54,6 +54,7 @@ ffmpeg -f rawvideo -pix_fmt rgba -s:v <WxH> -r <fps> -i - \
 - `--debug-txt-dir` optional directory for normalized `.txt` frame dumps
 - `--symbol-remap` symbol remap mode: `none`, `density`, `equalize` (default `equalize`)
 - `--symbol-ramp` output symbol ramp (default `.:-=+*#%@`)
+- `--fit-padding` safe border ratio for centering/contain fit (default `0.12`)
 - `--dry-run` print planned capture/encode pipeline without running
 
 ## Examples

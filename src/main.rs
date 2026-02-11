@@ -14,7 +14,7 @@ use serde::Serialize;
 use vcr::ascii_capture::{
     build_ascii_capture_plan, parse_capture_size, run_ascii_capture, AsciiCaptureArgs,
     AsciiCaptureSource, SymbolRemapMode, DEFAULT_CAPTURE_DURATION_SECONDS,
-    DEFAULT_CAPTURE_FONT_SIZE, DEFAULT_CAPTURE_FPS,
+    DEFAULT_CAPTURE_FIT_PADDING, DEFAULT_CAPTURE_FONT_SIZE, DEFAULT_CAPTURE_FPS,
 };
 use vcr::ascii_render::{
     render_ascii_luma_sequence, run_ascii_render, AsciiDitherMode, AsciiLabRenderArgs,
@@ -313,6 +313,8 @@ enum AsciiCommands {
         symbol_remap: AsciiSymbolRemapArg,
         #[arg(long = "symbol-ramp", value_name = "CHARS")]
         symbol_ramp: Option<String>,
+        #[arg(long = "fit-padding", default_value_t = DEFAULT_CAPTURE_FIT_PADDING)]
+        fit_padding: f32,
         #[arg(long = "dry-run", default_value_t = false)]
         dry_run: bool,
     },
@@ -694,6 +696,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 debug_txt_dir,
                 symbol_remap,
                 symbol_ramp,
+                fit_padding,
                 dry_run,
             } => run_ascii_capture_cli(
                 &source,
@@ -708,6 +711,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 debug_txt_dir.as_deref(),
                 symbol_remap,
                 symbol_ramp.as_deref(),
+                fit_padding,
                 dry_run,
                 quiet,
             ),
@@ -1139,6 +1143,7 @@ fn run_ascii_capture_cli(
     debug_txt_dir: Option<&Path>,
     symbol_remap: AsciiSymbolRemapArg,
     symbol_ramp: Option<&str>,
+    fit_padding: f32,
     dry_run: bool,
     quiet: bool,
 ) -> Result<()> {
@@ -1169,6 +1174,7 @@ fn run_ascii_capture_cli(
             AsciiSymbolRemapArg::Equalize => SymbolRemapMode::Equalize,
         },
         symbol_ramp: symbol_ramp.map(ToOwned::to_owned),
+        fit_padding,
     };
 
     let plan = build_ascii_capture_plan(&args)?;
@@ -1197,13 +1203,14 @@ fn run_ascii_capture_cli(
         println!("  encoder: {}", plan.ffmpeg_encoder);
         println!("  symbol_remap: {:?}", plan.symbol_remap);
         println!("  symbol_ramp: {}", plan.symbol_ramp);
+        println!("  fit_padding: {:.3}", plan.fit_padding);
         return Ok(());
     }
 
     progress_log(
         quiet,
         format_args!(
-            "[VCR] ASCII capture: source={}, fps={}, duration={:.2}, frames={}, size={}x{}, font_size={:.2}, symbol_remap={:?}",
+            "[VCR] ASCII capture: source={}, fps={}, duration={:.2}, frames={}, size={}x{}, font_size={:.2}, symbol_remap={:?}, fit_padding={:.2}",
             plan.source_label,
             plan.fps,
             plan.duration_seconds,
@@ -1211,7 +1218,8 @@ fn run_ascii_capture_cli(
             plan.cols,
             plan.rows,
             plan.font_size,
-            plan.symbol_remap
+            plan.symbol_remap,
+            plan.fit_padding
         ),
     );
     progress_log(

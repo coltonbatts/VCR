@@ -500,6 +500,7 @@ fn ascii_capture_help_lists_expected_flags() {
     assert!(stdout.contains("--tmp-dir"));
     assert!(stdout.contains("--symbol-remap"));
     assert!(stdout.contains("--symbol-ramp"));
+    assert!(stdout.contains("--fit-padding"));
     assert!(stdout.contains("--dry-run"));
 }
 
@@ -530,6 +531,7 @@ fn ascii_capture_dry_run_prints_pipeline_plan() {
     assert!(stdout.contains("encoder: ffmpeg -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le"));
     assert!(stdout.contains("symbol_remap: Equalize"));
     assert!(stdout.contains("symbol_ramp: .:-=+*#%@"));
+    assert!(stdout.contains("fit_padding: 0.120"));
 }
 
 #[test]
