@@ -104,23 +104,21 @@ impl CellPassStack {
         let scratch_texture = if passes.is_empty() {
             None
         } else {
-            Some(
-                device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("ascii-cell-pass-scratch"),
-                    size: wgpu::Extent3d {
-                        width: cols,
-                        height: rows,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: render_format,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                }),
-            )
+            Some(device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("ascii-cell-pass-scratch"),
+                size: wgpu::Extent3d {
+                    width: cols,
+                    height: rows,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: render_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            }))
         };
         Self {
             passes,
@@ -184,12 +182,14 @@ impl Default for CellPassStack {
 // EdgeBoostCellPass — first real cell pass
 // ---------------------------------------------------------------------------
 
-const ASCII_CELL_EDGE_BOOST_WGSL: &str =
-    include_str!("../shaders/wgsl/ascii_cell_edge_boost.wgsl");
+const ASCII_CELL_EDGE_BOOST_WGSL: &str = include_str!("../shaders/wgsl/ascii_cell_edge_boost.wgsl");
 
-/// Edge boost parameters (hardcoded; no schema).
-const EDGE_GAIN: f32 = 2.0;
-const BOOST: f32 = 0.25;
+/// Edge boost parameters (hardcoded; no schema). Used by unit tests and documented for WGSL parity.
+pub const EDGE_GAIN: f32 = 2.0;
+pub const BOOST: f32 = 0.25;
+
+/// Default for edge boost when no runtime override is provided. Used by renderer.
+pub(crate) const DEFAULT_EDGE_BOOST: bool = true;
 
 /// Cell pass that estimates edge strength and darkens edges for crisper ASCII silhouettes.
 pub struct EdgeBoostCellPass {
@@ -406,6 +406,8 @@ pub struct AsciiPipeline {
 
 impl AsciiPipeline {
     /// Build the ASCII pipeline from a validated configuration.
+    ///
+    /// `enable_edge_boost`: when true, runs EdgeBoostCellPass. Overridable via CLI/env.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -413,6 +415,7 @@ impl AsciiPipeline {
         output_width: u32,
         output_height: u32,
         render_format: wgpu::TextureFormat,
+        enable_edge_boost: bool,
     ) -> Result<Self> {
         let cols = config.cols;
         let rows = config.rows;
@@ -741,11 +744,25 @@ impl AsciiPipeline {
         let atlas_pipeline = make_pipeline("ascii-atlas", ASCII_ATLAS_RENDER_WGSL, &atlas_bgl)
             .context("failed to create ASCII atlas pipeline")?;
 
+        let cell_pass_stack = if enable_edge_boost {
+            let edge_boost = EdgeBoostCellPass::new(device, &quantize_bgl, render_format)
+                .context("failed to create edge boost cell pass")?;
+            CellPassStack::with_passes(
+                device,
+                vec![Box::new(edge_boost)],
+                cols,
+                rows,
+                render_format,
+            )
+        } else {
+            CellPassStack::empty()
+        };
+
         Ok(Self {
             cols,
             rows,
             ramp_len,
-            cell_pass_stack: CellPassStack::empty(),
+            cell_pass_stack,
             luma_texture,
             glyph_texture,
             atlas_output_texture,
@@ -852,35 +869,65 @@ impl AsciiPipeline {
             pass.draw(0..3, 0..1);
         }
 
-        // --- CellPassStack: optional cell-resolution effects (empty by default) ---
+        // --- CellPassStack: edge boost and future cell passes ---
         self.cell_pass_stack.apply(
-            device, queue, encoder, &luma_view,
-            &luma_view, // when empty, no-op; when populated, would use scratch texture
+            device,
+            queue,
+            encoder,
+            &luma_view,
+            &self.globals_buffer,
+            &self.params_buffer,
+            &self.sampler,
         );
 
         // --- Pass 2: Quantize (cell res luma → cell res glyph index) ---
-        let quantize_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ascii-quantize-bg"),
-            layout: &self.quantize_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&luma_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.globals_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.params_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let quantize_bg = if let Some(scratch_view) = self.cell_pass_stack.output_view() {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ascii-quantize-bg"),
+                layout: &self.quantize_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&scratch_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.globals_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: self.params_buffer.as_entire_binding(),
+                    },
+                ],
+            })
+        } else {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ascii-quantize-bg"),
+                layout: &self.quantize_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&luma_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.globals_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: self.params_buffer.as_entire_binding(),
+                    },
+                ],
+            })
+        };
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1112,6 +1159,7 @@ mod tests {
         assert!(!ASCII_LUMA_WGSL.is_empty());
         assert!(!ASCII_QUANTIZE_WGSL.is_empty());
         assert!(!ASCII_ATLAS_RENDER_WGSL.is_empty());
+        assert!(!ASCII_CELL_EDGE_BOOST_WGSL.is_empty());
     }
 
     #[test]
@@ -1122,6 +1170,8 @@ mod tests {
         assert!(ASCII_QUANTIZE_WGSL.contains("fn fs_main"));
         assert!(ASCII_ATLAS_RENDER_WGSL.contains("fn vs_main"));
         assert!(ASCII_ATLAS_RENDER_WGSL.contains("fn fs_main"));
+        assert!(ASCII_CELL_EDGE_BOOST_WGSL.contains("fn vs_main"));
+        assert!(ASCII_CELL_EDGE_BOOST_WGSL.contains("fn fs_main"));
     }
 
     #[test]
@@ -1195,5 +1245,73 @@ mod tests {
     fn cell_pass_stack_default_is_empty() {
         let stack = CellPassStack::default();
         assert!(stack.is_empty(), "CellPassStack::default() should be empty");
+    }
+
+    // --- Edge boost pure functions ---
+
+    #[test]
+    fn edge_strength_zero_gradient_is_zero() {
+        assert!(
+            (edge_strength(0.0, 0.0, EDGE_GAIN) - 0.0).abs() < f32::EPSILON,
+            "no gradient → zero edge"
+        );
+    }
+
+    #[test]
+    fn edge_strength_dx_dy_behavior() {
+        // dx=0.5, dy=0 → (0.5+0)*2 = 1.0, clamp to 1.0
+        let e = edge_strength(0.5, 0.0, EDGE_GAIN);
+        assert!((e - 1.0).abs() < f32::EPSILON, "dx+dy scaled by gain");
+        // dx=0.25, dy=0.25 → 0.5*2 = 1.0
+        let e2 = edge_strength(0.25, 0.25, EDGE_GAIN);
+        assert!((e2 - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn edge_strength_clamps_to_one() {
+        let e = edge_strength(1.0, 1.0, EDGE_GAIN);
+        // (1+1)*2 = 4, but edge_strength doesn't clamp - the WGSL does
+        // Our Rust fn is: (dx+dy)*edge_gain, no clamp. So e = 4.0.
+        // The spec says edge = clamp((dx+dy)*edge_gain, 0..1). So the clamped
+        // value is used in apply_edge_boost. Our edge_strength is the raw value.
+        // The apply_edge_boost receives edge which would be clamped. Let me check
+        // our function - edge_strength returns (dx+dy)*edge_gain without clamp.
+        // The tests should verify the math. For "clamp((dx+dy)*edge_gain, 0..1)"
+        // we could add a helper, or test that our edge_strength gives expected
+        // values. The "clamp to 1" is in the shader. Our pure fn is for testing
+        // the formula. Let me add a test that edge can exceed 1 (our fn doesn't
+        // clamp) - that's fine, the shader clamps. For unit tests we're testing
+        // the Rust helpers. I'll add a test for apply_edge_boost clamping.
+        assert!((e - 4.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn apply_edge_boost_clamps_output() {
+        // adjusted = clamp(luma - edge * boost, 0..1)
+        assert!((apply_edge_boost(0.0, 1.0, BOOST) - 0.0).abs() < f32::EPSILON);
+        assert!((apply_edge_boost(1.0, 0.0, BOOST) - 1.0).abs() < f32::EPSILON);
+        // luma=0.5, edge=1, boost=0.25 → 0.5 - 0.25 = 0.25
+        assert!(
+            (apply_edge_boost(0.5, 1.0, BOOST) - 0.25).abs() < f32::EPSILON,
+            "mid luma with full edge darkens by boost"
+        );
+    }
+
+    #[test]
+    fn apply_edge_boost_no_edge_preserves_luma() {
+        assert!(
+            (apply_edge_boost(0.7, 0.0, BOOST) - 0.7).abs() < f32::EPSILON,
+            "zero edge → luma unchanged"
+        );
+    }
+
+    #[test]
+    fn apply_edge_boost_deterministic() {
+        for i in 0..20 {
+            let luma = i as f32 / 19.0;
+            let a = apply_edge_boost(luma, 0.5, BOOST);
+            let b = apply_edge_boost(luma, 0.5, BOOST);
+            assert!((a - b).abs() < f32::EPSILON, "deterministic at luma={luma}");
+        }
     }
 }

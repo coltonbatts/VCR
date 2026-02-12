@@ -861,9 +861,21 @@ impl GpuRenderer {
 
         let ascii_pipeline = match &scene.ascii_post {
             Some(config) if config.enabled => {
-                let pipeline =
-                    AsciiPipeline::new(&device, &queue, config, width, height, render_format)
-                        .context("failed to initialize ASCII post-processing pipeline")?;
+                let enable_edge_boost = scene
+                    .ascii_overrides
+                    .as_ref()
+                    .and_then(|o| o.edge_boost)
+                    .unwrap_or(crate::ascii_pipeline::DEFAULT_EDGE_BOOST);
+                let pipeline = AsciiPipeline::new(
+                    &device,
+                    &queue,
+                    config,
+                    width,
+                    height,
+                    render_format,
+                    enable_edge_boost,
+                )
+                .context("failed to initialize ASCII post-processing pipeline")?;
                 Some(pipeline)
             }
             _ => None,

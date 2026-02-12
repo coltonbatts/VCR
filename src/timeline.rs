@@ -7,6 +7,34 @@ use crate::schema::{
     ModulatorMap, Parameters, PostEffect, PropertyValue, ScalarProperty, TimingControls, Vec2,
 };
 
+/// Runtime overrides for ASCII pipeline features. Not from manifest schema.
+/// Used only when `ascii_post.enabled` is true.
+#[derive(Debug, Clone, Default)]
+pub struct AsciiRuntimeOverrides {
+    /// Override for edge boost cell pass. None = use default (enabled).
+    pub edge_boost: Option<bool>,
+}
+
+/// Resolve edge boost from CLI flag and env. CLI wins over env.
+/// Returns None when no override is provided (use default).
+pub fn resolve_edge_boost_override(cli_arg: Option<bool>, env_var: Option<String>) -> Option<bool> {
+    if cli_arg.is_some() {
+        return cli_arg;
+    }
+    match env_var.as_deref() {
+        Some("1") | Some("on") | Some("true") => Some(true),
+        Some("0") | Some("off") | Some("false") => Some(false),
+        _ => None,
+    }
+}
+
+/// Build AsciiRuntimeOverrides from resolved edge boost. Returns None if no overrides.
+pub fn ascii_overrides_from_edge_boost(edge_boost: Option<bool>) -> Option<AsciiRuntimeOverrides> {
+    edge_boost.map(|v| AsciiRuntimeOverrides {
+        edge_boost: Some(v),
+    })
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RenderSceneData {
     pub seed: u64,
@@ -15,6 +43,8 @@ pub struct RenderSceneData {
     pub groups: Vec<Group>,
     pub post: Vec<PostEffect>,
     pub ascii_post: Option<AsciiPostConfig>,
+    /// Runtime overrides for ASCII pipeline (CLI/env). Not from manifest.
+    pub ascii_overrides: Option<AsciiRuntimeOverrides>,
 }
 
 impl RenderSceneData {
@@ -26,7 +56,14 @@ impl RenderSceneData {
             groups: manifest.groups.clone(),
             post: manifest.post.clone(),
             ascii_post: manifest.ascii_post.clone(),
+            ascii_overrides: None,
         }
+    }
+
+    /// Apply runtime overrides. Call after from_manifest when CLI/env provide overrides.
+    pub fn with_ascii_overrides(mut self, overrides: AsciiRuntimeOverrides) -> Self {
+        self.ascii_overrides = Some(overrides);
+        self
     }
 }
 
@@ -465,5 +502,75 @@ layers:
         .expect("state evaluation should succeed");
 
         assert_eq!(state.opacity, 0.0);
+    }
+
+    // ---- ASCII runtime overrides ----
+
+    #[test]
+    fn resolve_edge_boost_cli_wins_over_env() {
+        assert_eq!(
+            super::resolve_edge_boost_override(Some(true), Some("0".into())),
+            Some(true)
+        );
+        assert_eq!(
+            super::resolve_edge_boost_override(Some(false), Some("1".into())),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn resolve_edge_boost_env_1_on_true() {
+        assert_eq!(
+            super::resolve_edge_boost_override(None, Some("1".into())),
+            Some(true)
+        );
+        assert_eq!(
+            super::resolve_edge_boost_override(None, Some("on".into())),
+            Some(true)
+        );
+        assert_eq!(
+            super::resolve_edge_boost_override(None, Some("true".into())),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn resolve_edge_boost_env_0_off_false() {
+        assert_eq!(
+            super::resolve_edge_boost_override(None, Some("0".into())),
+            Some(false)
+        );
+        assert_eq!(
+            super::resolve_edge_boost_override(None, Some("off".into())),
+            Some(false)
+        );
+        assert_eq!(
+            super::resolve_edge_boost_override(None, Some("false".into())),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn resolve_edge_boost_no_override_returns_none() {
+        assert_eq!(super::resolve_edge_boost_override(None, None), None);
+        assert_eq!(
+            super::resolve_edge_boost_override(None, Some("invalid".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn default_behavior_unchanged_when_no_override() {
+        let overrides = super::ascii_overrides_from_edge_boost(None);
+        assert!(overrides.is_none());
+    }
+
+    #[test]
+    fn ascii_overrides_from_edge_boost_builds_correctly() {
+        let o = super::ascii_overrides_from_edge_boost(Some(true)).expect("should build");
+        assert_eq!(o.edge_boost, Some(true));
+
+        let o = super::ascii_overrides_from_edge_boost(Some(false)).expect("should build");
+        assert_eq!(o.edge_boost, Some(false));
     }
 }

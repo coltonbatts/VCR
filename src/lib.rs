@@ -1,9 +1,9 @@
 pub mod ascii;
 pub mod ascii_atlas;
-pub mod ascii_pipeline;
 pub mod ascii_atlas_data;
 pub mod ascii_capture;
 pub mod ascii_frame;
+pub mod ascii_pipeline;
 pub mod ascii_render;
 pub mod ascii_sources;
 pub mod ascii_stage;

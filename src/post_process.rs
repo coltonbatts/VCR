@@ -211,7 +211,7 @@ impl ShaderPass {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: render_format,
-                    blend: None,     // post-processing: overwrite entirely
+                    blend: None, // post-processing: overwrite entirely
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -231,11 +231,13 @@ impl ShaderPass {
         });
 
         let params_buffer = if params.byte_len() > 0 {
-            Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("{label}-params")),
-                contents: params.as_bytes(),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            }))
+            Some(
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("{label}-params")),
+                    contents: params.as_bytes(),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                }),
+            )
         } else {
             None
         };
@@ -537,11 +539,7 @@ fn build_shader_pass(
             ShaderParams::None,
             render_format,
         ),
-        PostEffectKind::Levels {
-            gamma,
-            lift,
-            gain,
-        } => {
+        PostEffectKind::Levels { gamma, lift, gain } => {
             let params = LevelsParams {
                 gamma: *gamma,
                 lift: *lift,

@@ -33,9 +33,28 @@ use vcr::schema::{
     AsciiFontVariant, Duration as ManifestDuration, Environment, Manifest, ParamType, ParamValue,
     Resolution,
 };
-use vcr::timeline::{evaluate_manifest_layers_at_frame, RenderSceneData};
+use vcr::timeline::{
+    ascii_overrides_from_edge_boost, evaluate_manifest_layers_at_frame,
+    resolve_edge_boost_override, AsciiRuntimeOverrides, RenderSceneData,
+};
 
 const EXIT_CODES_HELP: &str = "Exit codes: 0=success, 2=usage/arg error, 3=manifest validation error, 4=missing dependency, 5=I/O error";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum AsciiEdgeBoostArg {
+    On,
+    Off,
+}
+
+/// Resolve ASCII runtime overrides from CLI flag and env. CLI wins over env.
+fn resolve_ascii_overrides(
+    cli_edge_boost: Option<AsciiEdgeBoostArg>,
+) -> Option<AsciiRuntimeOverrides> {
+    let cli_bool = cli_edge_boost.map(|a| matches!(a, AsciiEdgeBoostArg::On));
+    let edge_boost =
+        resolve_edge_boost_override(cli_bool, std::env::var("VCR_ASCII_EDGE_BOOST").ok());
+    ascii_overrides_from_edge_boost(edge_boost)
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "vcr")]
@@ -48,6 +67,13 @@ struct Cli {
         help = "Suppress non-essential parameter and diff logs (errors are still shown)"
     )]
     quiet: bool,
+    #[arg(
+        long = "ascii-edge-boost",
+        value_enum,
+        global = true,
+        help = "Enable/disable ASCII edge boost when ascii_post is enabled. Overrides VCR_ASCII_EDGE_BOOST env."
+    )]
+    ascii_edge_boost: Option<AsciiEdgeBoostArg>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -484,6 +510,7 @@ fn main() -> ExitCode {
 
 fn run_cli(cli: Cli) -> Result<()> {
     let quiet = cli.quiet;
+    let ascii_overrides = resolve_ascii_overrides(cli.ascii_edge_boost);
 
     match cli.command {
         Commands::Build {
@@ -500,7 +527,14 @@ fn run_cli(cli: Cli) -> Result<()> {
                 end_frame,
                 frames,
             };
-            run_build(&manifest, &output, frame_window, &set, quiet)
+            run_build(
+                &manifest,
+                &output,
+                frame_window,
+                &set,
+                ascii_overrides,
+                quiet,
+            )
         }
         Commands::Check { manifest, set } => run_check(&manifest, &set, quiet),
         Commands::Lint { manifest, set } => run_lint(&manifest, &set, quiet),
@@ -547,6 +581,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                     image_sequence,
                 },
                 &set,
+                ascii_overrides.as_ref(),
                 quiet,
             )
             .map(|_| ())
@@ -575,7 +610,14 @@ fn run_cli(cli: Cli) -> Result<()> {
                 Some(&format!("frame_{frame:06}")),
                 quiet,
             )?;
-            run_render_frame(&manifest, frame, &output, &set, quiet)
+            run_render_frame(
+                &manifest,
+                frame,
+                &output,
+                &set,
+                ascii_overrides.as_ref(),
+                quiet,
+            )
         }
         Commands::RenderFrames {
             manifest,
@@ -588,7 +630,15 @@ fn run_cli(cli: Cli) -> Result<()> {
                 let stem = manifest.file_stem().unwrap_or_default().to_string_lossy();
                 PathBuf::from(format!("renders/{}_frames", stem))
             });
-            run_render_frames(&manifest, start_frame, frames, &output_dir, &set, quiet)
+            run_render_frames(
+                &manifest,
+                start_frame,
+                frames,
+                &output_dir,
+                &set,
+                ascii_overrides.as_ref(),
+                quiet,
+            )
         }
         Commands::Watch {
             manifest,
@@ -623,6 +673,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 },
                 interval_ms,
                 &set,
+                ascii_overrides.as_ref(),
                 quiet,
             )
         }
@@ -1977,6 +2028,7 @@ fn run_build(
     output_path: &Path,
     args: FrameWindowArgs,
     set_values: &[String],
+    ascii_overrides: Option<AsciiRuntimeOverrides>,
     quiet: bool,
 ) -> Result<()> {
     let parse_start = Instant::now();
@@ -1986,7 +2038,10 @@ fn run_build(
     let window = resolve_frame_window(total_frames, args)?;
 
     let layout_start = Instant::now();
-    let scene = RenderSceneData::from_manifest(&manifest);
+    let mut scene = RenderSceneData::from_manifest(&manifest);
+    if let Some(overrides) = ascii_overrides {
+        scene = scene.with_ascii_overrides(overrides);
+    }
     let mut renderer = pollster::block_on(Renderer::new_with_scene(
         &manifest.environment,
         &manifest.layers,
@@ -2062,6 +2117,7 @@ fn run_preview(
     output: Option<&Path>,
     args: PreviewArgs,
     set_values: &[String],
+    ascii_overrides: Option<&AsciiRuntimeOverrides>,
     quiet: bool,
 ) -> Result<ResolvedInputsSnapshot> {
     if !(0.0..=1.0).contains(&args.scale) || args.scale == 0.0 {
@@ -2085,7 +2141,10 @@ fn run_preview(
 
     let preview_environment = scaled_environment(&manifest.environment, args.scale);
     let layout_start = Instant::now();
-    let scene = RenderSceneData::from_manifest(&manifest);
+    let mut scene = RenderSceneData::from_manifest(&manifest);
+    if let Some(overrides) = ascii_overrides {
+        scene = scene.with_ascii_overrides(overrides.clone());
+    }
     let mut renderer = pollster::block_on(Renderer::new_with_scene(
         &preview_environment,
         &manifest.layers,
@@ -2204,6 +2263,7 @@ fn run_render_frame(
     frame_index: u32,
     output_path: &Path,
     set_values: &[String],
+    ascii_overrides: Option<&AsciiRuntimeOverrides>,
     quiet: bool,
 ) -> Result<()> {
     let parse_start = Instant::now();
@@ -2219,7 +2279,10 @@ fn run_render_frame(
     }
 
     let layout_start = Instant::now();
-    let scene = RenderSceneData::from_manifest(&manifest);
+    let mut scene = RenderSceneData::from_manifest(&manifest);
+    if let Some(overrides) = ascii_overrides {
+        scene = scene.with_ascii_overrides(overrides.clone());
+    }
     let mut renderer = pollster::block_on(Renderer::new_with_scene(
         &manifest.environment,
         &manifest.layers,
@@ -2282,6 +2345,7 @@ fn run_render_frames(
     frames: u32,
     output_dir: &Path,
     set_values: &[String],
+    ascii_overrides: Option<&AsciiRuntimeOverrides>,
     quiet: bool,
 ) -> Result<()> {
     if frames == 0 {
@@ -2305,7 +2369,10 @@ fn run_render_frames(
         .with_context(|| format!("failed to create {}", output_dir.display()))?;
 
     let layout_start = Instant::now();
-    let scene = RenderSceneData::from_manifest(&manifest);
+    let mut scene = RenderSceneData::from_manifest(&manifest);
+    if let Some(overrides) = ascii_overrides {
+        scene = scene.with_ascii_overrides(overrides.clone());
+    }
     let mut renderer = pollster::block_on(Renderer::new_with_scene(
         &manifest.environment,
         &manifest.layers,
@@ -2369,6 +2436,7 @@ fn run_watch(
     preview_args: PreviewArgs,
     interval_ms: u64,
     set_values: &[String],
+    ascii_overrides: Option<&AsciiRuntimeOverrides>,
     quiet: bool,
 ) -> Result<()> {
     if interval_ms == 0 {
@@ -2388,8 +2456,9 @@ fn run_watch(
     let mut last_inputs = match run_preview(
         manifest_path,
         output.as_deref(),
-        preview_args,
+        preview_args.clone(),
         set_values,
+        ascii_overrides,
         quiet,
     ) {
         Ok(inputs) => Some(inputs),
@@ -2421,8 +2490,9 @@ fn run_watch(
             match run_preview(
                 manifest_path,
                 output.as_deref(),
-                preview_args,
+                preview_args.clone(),
                 set_values,
+                ascii_overrides,
                 quiet,
             ) {
                 Ok(current_inputs) => {

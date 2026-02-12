@@ -2727,10 +2727,7 @@ post:
         )
         .expect("manifest with passthrough post should parse");
         assert_eq!(manifest.post.len(), 1);
-        assert!(matches!(
-            manifest.post[0].kind,
-            PostEffectKind::Passthrough
-        ));
+        assert!(matches!(manifest.post[0].kind, PostEffectKind::Passthrough));
     }
 
     #[test]
@@ -2902,7 +2899,10 @@ ascii_post:
 "#,
         )
         .expect("manifest with ascii_post should parse");
-        let config = manifest.ascii_post.as_ref().expect("ascii_post should be Some");
+        let config = manifest
+            .ascii_post
+            .as_ref()
+            .expect("ascii_post should be Some");
         assert!(config.enabled);
         assert_eq!(config.cols, 80);
         assert_eq!(config.rows, 24);
