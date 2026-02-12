@@ -1,0 +1,34 @@
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 24
+  duration: { frames: 48 }
+
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 0.01, g: 0.01, b: 0.02, a: 1.0 }
+
+  - id: globe
+    z_index: 10
+    anchor: center
+    position: [640, 320]
+    scale: [0.65, 0.65]
+    source_path: "earth_base.mov"
+
+  - id: text
+    z_index: 20
+    anchor: center
+    position: [640, 580]
+    text:
+      content: "worldwide"
+      font_family: "GeistPixel-Bold"
+      font_size: 96.0
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+ascii_post:
+  enabled: true
+  cols: 160
+  rows: 60
+  ramp: " .:-=+*#%@"

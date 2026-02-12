@@ -212,7 +212,7 @@ struct ShaderUniforms {
   time: f32,
   frame: u32,
   resolution: vec2<f32>,
-  custom: array<f32, 8>,
+  custom: array<vec4<f32>, 2>,
 }
 
 @group(0) @binding(0) var<uniform> vcr_uniforms: ShaderUniforms;

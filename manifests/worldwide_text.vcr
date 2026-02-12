@@ -1,0 +1,16 @@
+version: 1
+environment:
+  resolution: { width: 1560, height: 1380 }
+  fps: 24
+  duration: { frames: 48 }
+
+layers:
+  - id: text
+    z_index: 10
+    anchor: center
+    position: [780, 1150]
+    text:
+      content: "worldwide"
+      font_family: "GeistPixel-Bold"
+      font_size: 160.0
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
