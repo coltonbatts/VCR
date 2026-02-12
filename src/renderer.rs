@@ -14,6 +14,7 @@ use tiny_skia::{
 };
 use wgpu::util::DeviceExt;
 
+use crate::animation_engine::{AnimationLayer, AnimationManager};
 use crate::ascii::PreparedAsciiLayer;
 use crate::ascii_pipeline::AsciiPipeline;
 use crate::post_process::PostStack;
@@ -1334,11 +1335,60 @@ impl Renderer {
         &self.backend_reason
     }
 
+    pub fn output_dimensions(&self) -> (u32, u32) {
+        match &self.backend {
+            RendererBackend::Gpu(renderer) => (renderer.width, renderer.height),
+            RendererBackend::Software(renderer) => (renderer.width, renderer.height),
+        }
+    }
+
+    pub fn output_fps(&self) -> u32 {
+        match &self.backend {
+            RendererBackend::Gpu(renderer) => renderer.fps,
+            RendererBackend::Software(renderer) => renderer.fps,
+        }
+    }
+
     pub fn render_frame_rgba(&mut self, frame_index: u32) -> Result<Vec<u8>> {
         match &mut self.backend {
             RendererBackend::Gpu(renderer) => renderer.render_frame_rgba(frame_index),
             RendererBackend::Software(renderer) => renderer.render_frame_rgba(frame_index),
         }
+    }
+
+    pub fn render_frame_rgba_with_animation_layer(
+        &mut self,
+        frame_index: u32,
+        animation_manager: &AnimationManager,
+        animation_layer: &AnimationLayer,
+    ) -> Result<Vec<u8>> {
+        let mut rgba = self.render_frame_rgba(frame_index)?;
+        self.inject_animation_layer_into_frame(
+            &mut rgba,
+            frame_index,
+            animation_manager,
+            animation_layer,
+        )?;
+        Ok(rgba)
+    }
+
+    pub fn inject_animation_layer_into_frame(
+        &self,
+        frame_rgba: &mut [u8],
+        frame_index: u32,
+        animation_manager: &AnimationManager,
+        animation_layer: &AnimationLayer,
+    ) -> Result<()> {
+        let (width, height) = self.output_dimensions();
+        animation_manager.compose_layer_into_rgba(
+            frame_rgba,
+            width,
+            height,
+            frame_index,
+            self.output_fps(),
+            animation_layer,
+        )?;
+        Ok(())
     }
 
     pub fn render_frame_to_view(

@@ -1,5 +1,6 @@
 pub mod agent_errors;
 pub mod agent_metadata;
+pub mod animation_engine;
 pub mod ascii;
 pub mod ascii_atlas;
 pub mod ascii_atlas_data;

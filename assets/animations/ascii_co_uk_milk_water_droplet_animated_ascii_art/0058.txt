@@ -1,0 +1,89 @@
+       .:::::;,:;;;i,:::::;i1i;i1tttfLLLLCCCCCCCCCCCCGGCGGGGGGGGGG0000GGGGCCCGGGGGGGGGGCCLLt,       
+        ....... ..........;i;;;;itttffLLLCCCGCCCCCCCCGGGGGGGGGGGGGG000G0000088888@800LtLCCf,        
+           ...                ,iii1tttfLLCGGCCCCCCCCCCCCCGGGCGGG000088008888888@0Ci,,  :;,          
+             .                 ,:::1tfLCCGGGCCCCCGGCCCCGG0880008@@888888888888@L,                   
+                                 .:;1ttfLCCGG0000LLfLCCG0888888@@@@@@@88888@@@@t.                   
+                                 ,ii1tffLCCGG00080GCLLCG08800088@@@@@@@@@888@@01.                   
+                                :i111tffLLCCGGG00G00fLC088888@@@@@@@@@@@@@@@8t,.                    
+                               ,11111tttffLCGCCGGCGGGGG088888@@@@@@@@@@@@@@8f:::.                   
+                                ,,,,,::1ffffffffLCC8@8@@88800888@@@@@@@@@@@@G11t,                   
+                                       .;tt1ttttfLLG088@@@888888@@@@@@@@@@@@8L1tti.                 
+                                        :ttttfffLLLCG0888888@@@888@@@@@@@@@@@@@@@@8Ci.              
+                                        :i11tfLCCCCGG008888888@@@@@@@@@@@@@@@@@@@@@@@:              
+                                          .ifLLCCCGGGG0008888888@@@@@@@@@@@@@@@@@@@8t.              
+                                           iffLLLCCCCGGG00008808088@@88@@@@@@@@@@@@@0L1:.           
+                                        .::itffffffLLCGGGGGGGGGGGG088808@@@@@@@@@@@@@@@C.           
+                                        ,1t11ttttfffffLLLCCCCCGGCCG00888888@@@@@@@@@@@@0C;.         
+                                         ,i111tttttttttffLLCCCCGGG0088@888@@@@@@@@@@@@@@@@t         
+                                       :;i1t11111tttfffffCGGG000888@@@@@@@@@@@@@@@@@@@@@G;,         
+                                       ..:i11111ttttfffLLCGG008888@@@@@@@@@@@@@@@@@@@@@@0           
+                                       .::1111ttttfffffLLCCG00888@@88@@@@@@8@@8@@@@@@@@@8Ci         
+                                      .itttt11ttttffLLLLLLCG08888@@@@888@@@@@@8@@@@@@@@8Lt:         
+                                    :i1111t11tttttfLLLLLLLC008@88808888888@@@@@@@@@@@@@@GLt,        
+                                    ;iii11111111tttfftfLLfLCG088888888800888@@@@@@@@@@@@@@8:        
+                                    .iiiiiiii11tttttttfLLLLCGG00888888888@8G8@8@@@@@@@@@@@f.        
+                                   .;iiii111ii111ttt1ttLLLLLLCCCGGGG0000000G088@@@@@@@@@@@80,       
+                                  ,iiiiiii1iiii111111ttfLLLLLCCCCGGGGGG00000G88888888@88@@@f        
+                                  ,iiiiiiiiiiiiiii111ttffLCCCCCCGGGGG000000008888888880@@0t.        
+                                   ,:ii1111t1111ii111ttfLLCCCGGGGGGG0000000G888@8888@@@Gi.          
+                                     ..:;iii11111111ttfLLCCGGGGGG0008800000088888@@0LL1.            
+                                    :i;:;11i1tttttttffLCCCCGGGG0088888888008888888C:                
+                                 ,:,.:;111ttttffftffLLCCCCGGG000888888888888888@@@1                 
+                                 :1i;::;i1tttttffLLLCCCCCGG0088888888888@@8888GLLi.                 
+                                 .;iii;1tfft1tffLCGCCCCGG0088888888888888@@@@@f                     
+                               .,,,ittttfffttffLLCGGCGGG008888888888888888888@1                     
+                               ,i111tttfffffffLLLCCGGGG0088888888888888@8888@C:                     
+                              .;i1111tttfffffLLLCCGGG0088888888888088@88888Gi                       
+                              ,i1111tttttffLLLLCCGGG0088888888888888888880GLfCt.                    
+                             ,;1111111ttffffLLLCCGGGG088000888888888@880080Gt:.                     
+                             ,;;;11111ttfLffLLCCCCGGG08888888888888@@888GLf:                        
+                                 ,i111tttfffLLLCCCCGG0888888888888800088GGGt.                       
+                                 ;11111tftfLGGCCCCGGG008888888888800000G8L.                         
+                           .:;;;;11tt1tLLffCG88CCCCGGG0888000008888888888L1t1:.                     
+                          .itftttttt11tfLCCCGG0CCCCCGGG00000G0088888888@@@@@@8C.                    
+                          .;111t11tttfffLCCCGGGGCLCCGGGG000GGG000888888880008880;                   
+                            ...,,:ttffffLCCCCCGGGCCCGGGGGGGGGGGG0000000000GG8@@L,..                 
+                             :iiiitttttLLLLCCCCCCCCCGGGGGGGGGGGGG0008000GGG8@@8CG80f                
+                             .;ttfLft11fLLCCCCCCCCCCCGCGGGGGGGGG000888000GG0888@@@@8i               
+                              .i1tffftffLLLCCCCCCCCCCCCCGGGGGGGGGG00888000GG088@@@@81 .             
+                              .i11ttffffLLLLLLCCCCCCCCCCCGGGGGGGGGGG08800GGG0888@@@C.               
+                               ..:itffttffLLLLLLLCGGGGGCCCGGGGCCCGGG0000G000088888L.                
+                                  .,itttttfLLLLCCCGGGGCCCCCGGGGGG0008800000G00888@f                 
+                                     ,:itfLCCCCCGCCCCCCCCCCGGG0008888800000GGGG88C;                 
+                                       ;fLLCLCLLLCCCCCCCCGGG0GGG08888800000GGG1::                   
+                                      :1fLLLLLLLLLLLLLCCCGGGGGGG0000000000G0GL:                     
+                                     ,1ttffLfffLffffLLLLCCGGGGGGGG00000000Gf:.                      
+                                     ;1ttttffffffffffLLLLCCGGGGGGGG00000G0G:                        
+                                   ,111ttfftffLLffffffffLCCCCCCCGGGGGGGGGGGC1.                      
+                                   ;t1ttttffffLLfttttffLLLLLLCCGGGGG00GGCCCC1.                      
+                                    ;ttttffftttffftttfLLffLLLLCCCCGGGGG0ti;,                        
+                                    .:;;tfftt11ttfttttfffffLLLLLCCCGGGGGGGf.                        
+                                        ittt1ii111ttfffftffffLLLLCCGGGG000G;                        
+                                        .,,,. ,i1ttttfftffffLLLLLLLCCCCG00Gt                        
+                                              ,11ttttttfLfLLffLLfffffLCCCGf.                        
+                                               ;i1111ttfLLLLLfLLf1i:,,1LCL;                         
+                                                .:111ttfffLLLiii:.     ,,.                          
+                                                  ;tffffffLf;                                       
+                                                   ,;i111i:.                                        
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    

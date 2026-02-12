@@ -133,6 +133,46 @@ List curated source ids:
 
 See `docs/ASCII_CAPTURE.md` for source formats, flags, parser limitations, and determinism scope.
 
+## ASCII Animation Engine (Frame Packs -> Overlay Layer)
+
+VCR now includes a modular ASCII animation engine for importing frame packs from `assets/animations/<name>/` and compositing them as foreground/background layers in the render pipeline.
+
+- Engine docs: `docs/ANIMATION_ENGINE.md`
+- Boilerplate example: `examples/ascii_animation_boilerplate.rs`
+- Demo asset pack: `assets/animations/demo_wave/`
+
+### URL -> White Alpha Overlay (ascii.co.uk)
+
+One command to import an `ascii.co.uk/animated-art/...` page and render white text on transparent alpha:
+
+```bash
+cargo run --bin ascii-link-overlay -- \
+  --url "https://www.ascii.co.uk/animated-art/milk-water-droplet-animated-ascii-art.html" \
+  --width 1920 --height 1080 --fps 24
+```
+
+Defaults tuned for drag-and-drop style imports:
+
+- leading blank source frames are auto-trimmed (`--trim-leading-blank true`)
+- glyph color is pure white; background is transparent alpha
+- checker preview MP4 is generated for quick visibility check
+
+Wrapper script (single or multiple URLs):
+
+```bash
+./scripts/ascii_link_overlay.sh \
+  "https://www.ascii.co.uk/animated-art/milk-water-droplet-animated-ascii-art.html" \
+  "https://www.ascii.co.uk/animated-art/3d-tunnel.html" \
+  -- --width 1920 --height 1080 --fps 24
+```
+
+Outputs:
+
+- `assets/animations/ascii_co_uk_<slug>/` frame pack + metadata
+- `renders/ascii_co_uk_<slug>_white_alpha.mov` (ProRes 4444 alpha)
+- `renders/ascii_co_uk_<slug>_white_alpha.png` (frame 0 still)
+- `renders/ascii_co_uk_<slug>_white_alpha_checker.mp4` (visibility preview)
+
 ## One-Command Playground (9 Presets)
 
 ```bash
