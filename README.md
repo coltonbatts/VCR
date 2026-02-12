@@ -30,6 +30,10 @@ Result: ProRes 4444 with alpha, pixel-perfect, reproducible
 
 This is **infrastructure for AI-generated motion graphics**: AI authors the spec, VCR guarantees deterministic execution. No hallucinations in the pixels.
 
+## Machine-readable Output
+
+Agent consumers should use the [Agent Error Contract (v0.1.x)](#agent-error-contract-v01x) for machine-readable failures emitted with `VCR_AGENT_MODE=1`.
+
 ## Why It Exists
 
 Most motion design tools are hard to version, hard to automate, and hard to run deterministically.
@@ -233,6 +237,54 @@ cargo test --test cli_contract
 - Architecture: `docs/ARCHITECTURE.md`
 - Determinism: `docs/DETERMINISM_SPEC.md`
 - Reproducible build: `docs/REPRODUCIBLE_BUILD.md`
+
+## Agent Error Contract (v0.1.x)
+
+When `VCR_AGENT_MODE=1` and a command fails, VCR emits a machine-readable JSON payload to stderr.
+
+Contract (v0.1.x, additive-only):
+
+- Required keys:
+  - `error_type` (string)
+  - `summary` (string)
+- Optional keys:
+  - `suggested_fix` (object)
+  - `context` (object)
+  - `validation_errors` (array of objects)
+- Compatibility policy:
+  - Existing keys keep their meaning within `v0.1.x`
+  - New keys may be added
+  - Consumers must tolerate unknown fields and absent optional fields
+
+Example payload (missing required `environment.duration`):
+
+```json
+{
+  "error_type": "validation",
+  "summary": "failed to decode manifest. missing field `duration`",
+  "suggested_fix": {
+    "description": "Add the required environment.duration field",
+    "yaml_snippet": "environment:\n  duration: 3.0",
+    "actions": [
+      {
+        "type": "add_field",
+        "path": "environment",
+        "field_name": "duration",
+        "example_value": 3.0
+      }
+    ]
+  },
+  "context": {
+    "file": "/absolute/or/relative/path/to/scene.vcr"
+  },
+  "validation_errors": [
+    {
+      "path": "environment.duration",
+      "message": "failed to decode manifest. missing field `duration`"
+    }
+  ]
+}
+```
 
 ## Project Docs
 

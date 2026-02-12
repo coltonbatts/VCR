@@ -10,6 +10,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use image::RgbaImage;
 use serde::Serialize;
+use vcr::agent_errors::{build_agent_error_report, AgentErrorType};
 
 use vcr::ascii_capture::{
     build_ascii_capture_plan, parse_capture_size, run_ascii_capture, AsciiCaptureArgs,
@@ -567,7 +568,7 @@ fn main() -> ExitCode {
         Ok(()) => VcrExitCode::Success.to_exit_code(),
         Err(error) => {
             let exit_code = classify_exit_code(&error);
-            print_cli_error(command_name, &error);
+            print_cli_error(command_name, &error, exit_code);
             exit_code.to_exit_code()
         }
     }
@@ -861,7 +862,7 @@ fn run_cli(cli: Cli) -> Result<()> {
     }
 }
 
-fn print_cli_error(command_name: &str, error: &anyhow::Error) {
+fn print_cli_error(command_name: &str, error: &anyhow::Error, exit_code: VcrExitCode) {
     let head = single_line(error.to_string());
     let root = error
         .chain()
@@ -869,15 +870,47 @@ fn print_cli_error(command_name: &str, error: &anyhow::Error) {
         .map(|cause| single_line(cause.to_string()))
         .unwrap_or_else(|| head.clone());
     let summary = if root == head {
-        head
+        head.clone()
     } else {
         format!("{head}. {root}")
     };
+
+    if agent_mode_enabled() {
+        let error_type = classify_agent_error_type(command_name, exit_code);
+        let report = build_agent_error_report(error_type, &head, &summary, error);
+        if let Ok(json) = serde_json::to_string_pretty(&report) {
+            eprintln!("{json}");
+        } else {
+            eprintln!("vcr {command_name}: {}", report.summary);
+        }
+        return;
+    }
+
     eprintln!("vcr {command_name}: {summary}");
     if std::env::var_os("VCR_ERROR_VERBOSE").is_some() {
         for cause in error.chain().skip(1) {
             eprintln!("detail: {}", single_line(cause.to_string()));
         }
+    }
+}
+
+fn agent_mode_enabled() -> bool {
+    std::env::var("VCR_AGENT_MODE")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn classify_agent_error_type(command_name: &str, exit_code: VcrExitCode) -> AgentErrorType {
+    if command_name == "lint" {
+        return AgentErrorType::Lint;
+    }
+
+    match exit_code {
+        VcrExitCode::ManifestValidation => AgentErrorType::Validation,
+        VcrExitCode::Usage => AgentErrorType::Usage,
+        VcrExitCode::MissingDependency => AgentErrorType::MissingDependency,
+        VcrExitCode::Io => AgentErrorType::Io,
+        VcrExitCode::Success => AgentErrorType::Build,
     }
 }
 
@@ -1948,6 +1981,10 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
         print_active_params(&manifest, quiet);
         println!("Lint OK: no issues found in {}", manifest_path.display());
         return Ok(());
+    }
+
+    if agent_mode_enabled() {
+        bail!("{}", issues.join(" "));
     }
 
     eprintln!("Lint found {} issue(s):", issues.len());
