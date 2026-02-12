@@ -1,3 +1,4 @@
+pub mod agent_errors;
 pub mod ascii;
 pub mod ascii_atlas;
 pub mod ascii_atlas_data;
