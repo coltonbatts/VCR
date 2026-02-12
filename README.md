@@ -254,7 +254,7 @@ cargo test --test cli_contract
 
 ## License
 
-MIT
+[MIT License](LICENSE)
 
 ## Author
 
