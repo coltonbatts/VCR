@@ -13,6 +13,23 @@ It turns structured scene specs into repeatable renders, preview frames, and met
 
 This is not a SaaS product. It is a buildable, inspectable toolchain.
 
+## AI-Driven Workflow
+
+**VCR is designed for AI agents.** Instead of generating pixels directly, AI writes declarative YAML manifests that VCR compiles into deterministic, broadcast-quality video.
+
+```bash
+# AI reads the skill, writes a manifest, you render it
+AI: "Create a lower third for 'Colton Batts' with fade-in"
+   ↓ (generates YAML manifest)
+You: cargo run --bin vcr -- build manifest.vcr -o output.mov
+   ↓ (renders in <1 second)
+Result: ProRes 4444 with alpha, pixel-perfect, reproducible
+```
+
+**Read [`SKILL.md`](SKILL.md)** - the complete AI agent reference for VCR's manifest format, layer types, expressions, and CLI commands.
+
+This is **infrastructure for AI-generated motion graphics**: AI authors the spec, VCR guarantees deterministic execution. No hallucinations in the pixels.
+
 ## Why It Exists
 
 Most motion design tools are hard to version, hard to automate, and hard to run deterministically.

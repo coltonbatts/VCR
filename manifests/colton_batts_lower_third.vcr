@@ -1,0 +1,50 @@
+version: 1
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 30
+  duration: 3.0
+
+groups:
+  - id: "lower_third"
+    position: { x: 80, y: 900 }
+    opacity:
+      start_frame: 0
+      end_frame: 60
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+
+layers:
+  # Background bar
+  - id: "bg_bar"
+    group: "lower_third"
+    procedural:
+      kind: rounded_rect
+      center: { x: 300, y: 40 }
+      size: { x: 600, y: 80 }
+      corner_radius: 8
+      color: { r: 0.08, g: 0.08, b: 0.1, a: 0.92 }
+
+  # Accent line
+  - id: "accent_line"
+    group: "lower_third"
+    z_index: 1
+    procedural:
+      kind: line
+      start: { x: 0, y: -5 }
+      end: { x: 600, y: -5 }
+      thickness: 3
+      color: { r: 0.0, g: 0.8, b: 1.0, a: 1.0 }
+
+  # Name text
+  - id: "name"
+    group: "lower_third"
+    position: { x: 20, y: 10 }
+    z_index: 2
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
