@@ -5,12 +5,14 @@
 VCR (Video Component Renderer) is a headless, deterministic motion graphics compiler. It reads a YAML scene manifest (`.vcr` file) and renders it to ProRes 4444 video with alpha transparency. No GUI, no SaaS, no network in the render path. Offline-first.
 
 **Use VCR when you need to:**
+
 - Generate motion graphics programmatically (lower thirds, title cards, intros)
 - Produce video with alpha transparency for compositing
 - Create deterministic, reproducible video output from a declarative spec
 - Build animated procedural shapes, text, or custom GPU shaders
 
 **Do NOT use VCR for:**
+
 - Interactive real-time graphics (use a game engine)
 - Video editing or splicing (use FFmpeg directly)
 - 3D rendering (VCR is 2D only)
@@ -182,6 +184,7 @@ Renders GPU-accelerated shapes. Eight primitive types available.
 #### Procedural Kinds
 
 **solid_color** — Fill entire layer with one color.
+
 ```yaml
 procedural:
   kind: solid_color
@@ -189,6 +192,7 @@ procedural:
 ```
 
 **gradient** — Two-color gradient.
+
 ```yaml
 procedural:
   kind: gradient
@@ -198,6 +202,7 @@ procedural:
 ```
 
 **circle** — Filled circle.
+
 ```yaml
 procedural:
   kind: circle
@@ -207,6 +212,7 @@ procedural:
 ```
 
 **rounded_rect** — Rounded rectangle.
+
 ```yaml
 procedural:
   kind: rounded_rect
@@ -217,6 +223,7 @@ procedural:
 ```
 
 **ring** — Donut/annulus shape.
+
 ```yaml
 procedural:
   kind: ring
@@ -227,6 +234,7 @@ procedural:
 ```
 
 **line** — Thick line segment.
+
 ```yaml
 procedural:
   kind: line
@@ -237,6 +245,7 @@ procedural:
 ```
 
 **triangle** — Three-point triangle.
+
 ```yaml
 procedural:
   kind: triangle
@@ -247,6 +256,7 @@ procedural:
 ```
 
 **polygon** — Regular N-sided polygon.
+
 ```yaml
 procedural:
   kind: polygon
@@ -293,6 +303,7 @@ Renders text using built-in Geist Pixel bitmap fonts.
 ```
 
 **Available fonts:**
+
 - `GeistPixel-Line` (default, clean lines)
 - `GeistPixel-Square` (blocky)
 - `GeistPixel-Grid` (grid pattern)
@@ -335,6 +346,7 @@ Custom WGSL fragment shader. You write a `shade()` function; VCR provides the ve
 ```
 
 Or load from file:
+
 ```yaml
   shader:
     path: "shaders/my_effect.wgsl"
@@ -343,6 +355,7 @@ Or load from file:
 ```
 
 **ShaderUniforms available in `shade()`:**
+
 ```wgsl
 struct ShaderUniforms {
   time: f32,                    // Current time in frames
@@ -513,6 +526,44 @@ ascii_post:
   ramp: " .:-=+*#%@"       # Character luminance ramp (dark to bright).
 ```
 
+### 7. Animation Engine (Frame Packs)
+
+Renders frame-by-frame ASCII animations from specialized asset directories.
+
+```yaml
+- id: "overlay_anim"
+  animation_engine:
+    clip_name: "demo_wave"
+    fps: 12
+    colors:
+      foreground: [255, 255, 255, 255]
+      background: [0, 0, 0, 0]
+```
+
+---
+
+## High-Level Workflows
+
+VCR includes specialized tools for common motion tasks.
+
+### URL to ASCII Overlay (ascii.co.uk)
+
+Use this workflow to import an animated ASCII art page from `ascii.co.uk` and render it as a white-on-alpha ProRes MOV.
+
+**Single or multiple URLs:**
+
+```bash
+/Users/coltonbatts/Desktop/VCR/scripts/ascii_link_overlay.sh \
+  "https://www.ascii.co.uk/animated-art/milk-water-droplet-animated-ascii-art.html" \
+  -- --width 1920 --height 1080 --fps 24
+```
+
+**Key Features:**
+
+- **Auto-trimming**: leading blank frames are automatically detected and skipped.
+- **Checker Preview**: generates a `*_checker.mp4` with a dark background to verify transparency.
+- **White-on-Alpha**: outputs pure white glyphs on a transparent background, perfect for compositing.
+
 ---
 
 ## Expression Language
@@ -631,6 +682,7 @@ layers:
 ```
 
 **Rules:**
+
 - Only whole-string replacement. `"prefix_${name}"` is rejected.
 - Use `$${name}` to produce literal `${name}`.
 - Params are also available as variables in expressions: `"sin(t) * speed"`.
@@ -1001,6 +1053,7 @@ rotation_degrees: "t * 2.0"    # 2 degrees per frame
 ### Typewriter Reveal (Per-Character)
 
 Use `step()` with staggered thresholds:
+
 ```yaml
 # Character 1 visible from frame 0
 opacity: "step(0, t)"
@@ -1013,6 +1066,7 @@ opacity: "step(6, t)"
 ### Staggered Layer Entrance
 
 Use `time_offset` on groups or layers:
+
 ```yaml
 groups:
   - id: "item_1"
@@ -1065,39 +1119,51 @@ Before rendering, verify:
 ## Common Gotchas
 
 ### 1. Expression Variable is `t` (Frame Number), NOT Seconds
+
 `t` is the frame number as a float. At 30fps, 1 second = `t` of 30. To convert: `t / fps`.
 
 ### 2. `deny_unknown_fields` is Active
+
 Any typo in a YAML key will cause a parse error. `colour` instead of `color` will fail.
 
 ### 3. Shader Layers are GPU-Only
+
 Custom shader layers render as transparent on the software backend. Always use `--backend gpu` or `auto` for shader content.
 
 ### 4. Post-Processing is GPU-Only
+
 The `post:` pipeline requires the GPU backend. It will be skipped on software.
 
 ### 5. Image Paths Must Be Relative
+
 Absolute paths (e.g., `/Users/...`) are rejected for security. Always use paths relative to the manifest file.
 
 ### 6. AnimatableColor Alpha Defaults to 1.0
+
 If you omit `a:` in a color, it defaults to 1.0 (fully opaque). This is correct for most cases.
 
 ### 7. `pos_x` / `pos_y` Override `position`
+
 If you set both `position: {x: 100, y: 200}` and `pos_x: "sin(t)"`, the X component will be driven by the expression. The Y from `position` still applies unless `pos_y` is also set.
 
 ### 8. Modulators are Additive
+
 Modulator values are _added_ to properties (multiplied by weight). A weight of `1.0` on `x` adds the modulator's value directly to position.x.
 
 ### 9. Easing Curves are Limited
+
 Only four easing curves: `linear`, `ease_in`, `ease_out`, `ease_in_out`. For more complex easing, use expressions with `smoothstep()` or `easeinout()`.
 
 ### 10. `${}` Substitution is Whole-String Only
+
 `"speed is ${speed}"` will fail. Use `"${speed}"` alone, or reference params directly in expressions: `"t * speed"`.
 
 ### 11. Procedural Shapes Fill the Layer Area
+
 Procedural primitives are rendered to a texture the size of the full canvas. Position, scale, and rotation on the layer transform the entire texture.
 
 ### 12. Time Variables
+
 - `start_time` / `end_time` are in **seconds**
 - `time_offset` is in **seconds**
 - `start_frame` / `end_frame` in KeyValue are in **frames**
@@ -1135,6 +1201,7 @@ Same manifest + same params + same seed + same backend = identical frame bytes.
 ## Dependencies
 
 VCR requires:
+
 - **FFmpeg** in PATH (for video encoding)
 - **Rust stable toolchain** (for building from source)
 - **GPU** (macOS Metal) for GPU backend, shader layers, and post-processing
@@ -1148,38 +1215,47 @@ Run `vcr doctor` to verify all dependencies.
 These are real error messages VCR produces, with exact fixes:
 
 ### `unknown variant 'solid_colour', expected one of 'solid_color', ...`
+
 **Cause**: Typo in procedural `kind`.
 **Fix**: Use exact kind names: `solid_color`, `gradient`, `triangle`, `circle`, `rounded_rect`, `ring`, `line`, `polygon`.
 
 ### `unknown field 'extra_field', expected 'color'`
+
 **Cause**: Extra or misspelled key in a layer/procedural block. Schema uses `deny_unknown_fields`.
 **Fix**: Remove the unknown key. Check spelling against this reference.
 
 ### `invalid expression 'bad_func(t)': unsupported function 'bad_func'`
+
 **Cause**: Expression references a function that doesn't exist.
 **Fix**: Use only supported functions: `sin`, `cos`, `abs`, `floor`, `ceil`, `round`, `fract`, `clamp`, `lerp`, `smoothstep`, `step`, `easeinout`, `saw`, `tri`, `random`, `noise1d`, `glitch`, `env`.
 
 ### `manifest must define at least one layer`
+
 **Cause**: `layers: []` or `layers` key missing.
 **Fix**: Add at least one layer.
 
 ### `missing field 'duration'`
+
 **Cause**: `environment` block is missing a required field.
 **Fix**: Ensure `environment` has all three: `resolution`, `fps`, `duration`.
 
 ### `Absolute output paths are restricted for security`
+
 **Cause**: Output path starts with `/` (e.g., `-o /tmp/out.mov`).
 **Fix**: Use a relative path (e.g., `-o renders/out.mov`).
 
 ### `invalid --set for param 'speed': expected float, got 'fast'`
+
 **Cause**: CLI `--set` value doesn't match the param's declared type.
 **Fix**: Pass a value matching the type. For float: `--set speed=1.5`.
 
 ### `invalid substitution string 'text=${name}'`
+
 **Cause**: `${}` used inside a longer string. Only whole-string substitution is supported.
 **Fix**: Use `"${name}"` alone, not embedded in other text.
 
 ### `layer 'bg': custom shader layers require GPU backend`
+
 **Cause**: Shader layer rendered on software backend.
 **Fix**: Use `--backend gpu` or `--backend auto` (default).
 

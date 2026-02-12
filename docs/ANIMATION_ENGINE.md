@@ -67,3 +67,22 @@ Recommended fields:
 - `credit` (optional override string)
 
 At runtime, use `AnimationManager::credits_manifest()` to emit a normalized credits report.
+
+## High-Level Workflows
+
+### URL -> White Alpha Overlay (ascii.co.uk)
+
+VCR provides a formalized workflow for importing and rendering animated art from `ascii.co.uk`.
+
+**Command:**
+
+```bash
+./scripts/ascii_link_overlay.sh <URL> -- --width 1920 --height 1080
+```
+
+**What it does:**
+
+1. **Imports**: Fetches the URL, parses the JavaScript frames, and writes them to `assets/animations/ascii_co_uk_<slug>/`.
+2. **Trims**: Automatically skips leading blank frames (source often has 30-60 empty frames).
+3. **Renders**: Produces a ProRes 4444 `.mov` with white text and alpha transparency.
+4. **Validates**: Generates a `.png` still and a `*_checker.mp4` (composite over dark grey) for quick review.

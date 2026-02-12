@@ -166,6 +166,14 @@ Wrapper script (single or multiple URLs):
   -- --width 1920 --height 1080 --fps 24
 ```
 
+### Production Validation
+
+Renders are validated for automated pipelines:
+
+- **Frame 0**: Guaranteed non-blank (auto-trimmed leading empty frames).
+- **Strict Channels**: Foreground is clamped to pure white (`#FFFFFF`); background is 0% alpha transparent.
+- **Sidecar Metadata**: Each render includes a `.metadata.json` with source attribution and artist tags.
+
 Outputs:
 
 - `assets/animations/ascii_co_uk_<slug>/` frame pack + metadata
