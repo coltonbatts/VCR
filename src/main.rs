@@ -371,7 +371,11 @@ enum AsciiCommands {
         output: PathBuf,
         #[arg(long = "size", default_value = "1280x720")]
         size: String,
-        #[arg(long = "font", default_value = "geist-pixel-regular")]
+        #[arg(
+            long = "font",
+            default_value = "geist-pixel-line",
+            help = "Font variant (square, grid, circle, triangle, line)"
+        )]
         font: String,
         #[arg(long = "bg-alpha", default_value_t = 0.0)]
         bg_alpha: f32,
@@ -1322,11 +1326,21 @@ fn run_ascii_render_cli(
 ) -> Result<()> {
     let (width, height) = parse_ascii_stage_size(size)?;
     let font_variant = match font.to_lowercase().as_str() {
-        "geist-pixel-regular" | "regular" => AsciiFontVariant::GeistPixelRegular,
-        "geist-pixel-medium" | "medium" => AsciiFontVariant::GeistPixelMedium,
-        "geist-pixel-bold" | "bold" => AsciiFontVariant::GeistPixelBold,
-        "geist-pixel-light" | "light" => AsciiFontVariant::GeistPixelLight,
-        "geist-pixel-mono" | "mono" => AsciiFontVariant::GeistPixelMono,
+        "geist-pixel-line" | "line" | "geist-pixel-regular" | "regular" => {
+            AsciiFontVariant::GeistPixelLine
+        }
+        "geist-pixel-square" | "square" | "geist-pixel-medium" | "medium" => {
+            AsciiFontVariant::GeistPixelSquare
+        }
+        "geist-pixel-grid" | "grid" | "geist-pixel-bold" | "bold" => {
+            AsciiFontVariant::GeistPixelGrid
+        }
+        "geist-pixel-circle" | "circle" | "geist-pixel-light" | "light" => {
+            AsciiFontVariant::GeistPixelCircle
+        }
+        "geist-pixel-triangle" | "triangle" | "geist-pixel-mono" | "mono" => {
+            AsciiFontVariant::GeistPixelTriangle
+        }
         _ => bail!("unknown font variant '{}'", font),
     };
 
@@ -1558,7 +1572,7 @@ fn run_ascii_lab(export_dir: Option<&Path>, debug_stage_hashes: bool) -> Result<
                 luma_frames: &pattern.frames,
                 cols: ASCII_LAB_COLS,
                 rows: ASCII_LAB_ROWS,
-                font_variant: AsciiFontVariant::GeistPixelRegular,
+                font_variant: AsciiFontVariant::GeistPixelLine,
                 temporal_mode: mode.temporal_mode,
                 dither_mode: mode.dither_mode,
                 debug_stage_hashes,

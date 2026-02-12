@@ -20,23 +20,23 @@ struct VariantSpec {
 
 const VARIANTS: [VariantSpec; 5] = [
     VariantSpec {
-        const_name: "GEIST_PIXEL_REGULAR",
+        const_name: "GEIST_PIXEL_LINE",
         font_path: "assets/fonts/geist_pixel/GeistPixel-Line.ttf",
     },
     VariantSpec {
-        const_name: "GEIST_PIXEL_MEDIUM",
+        const_name: "GEIST_PIXEL_SQUARE",
         font_path: "assets/fonts/geist_pixel/GeistPixel-Square.ttf",
     },
     VariantSpec {
-        const_name: "GEIST_PIXEL_BOLD",
+        const_name: "GEIST_PIXEL_GRID",
         font_path: "assets/fonts/geist_pixel/GeistPixel-Grid.ttf",
     },
     VariantSpec {
-        const_name: "GEIST_PIXEL_LIGHT",
+        const_name: "GEIST_PIXEL_CIRCLE",
         font_path: "assets/fonts/geist_pixel/GeistPixel-Circle.ttf",
     },
     VariantSpec {
-        const_name: "GEIST_PIXEL_MONO",
+        const_name: "GEIST_PIXEL_TRIANGLE",
         font_path: "assets/fonts/geist_pixel/GeistPixel-Triangle.ttf",
     },
 ];

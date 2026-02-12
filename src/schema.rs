@@ -908,11 +908,11 @@ fn default_pixel_aspect_ratio() -> f32 {
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AsciiFontVariant {
-    GeistPixelRegular,
-    GeistPixelMedium,
-    GeistPixelBold,
-    GeistPixelLight,
-    GeistPixelMono,
+    GeistPixelLine,
+    GeistPixelSquare,
+    GeistPixelGrid,
+    GeistPixelCircle,
+    GeistPixelTriangle,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -2595,7 +2595,7 @@ layers:
     ascii:
       grid: { rows: 2, columns: 4 }
       cell: { width: 12, height: 16 }
-      font_variant: geist_pixel_regular
+      font_variant: geist_pixel_line
       foreground: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
       background: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
       inline:
@@ -2622,7 +2622,7 @@ layers:
     ascii:
       grid: { rows: 1, columns: 1 }
       cell: { width: 8, height: 8 }
-      font_variant: geist_pixel_regular
+      font_variant: geist_pixel_line
       foreground: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
       background: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
       inline:

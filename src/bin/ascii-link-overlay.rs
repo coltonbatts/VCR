@@ -11,7 +11,8 @@ use vcr::animation_engine::{
 };
 use vcr::encoding::FfmpegPipe;
 use vcr::renderer::Renderer;
-use vcr::schema::{Duration as ManifestDuration, Environment, Resolution};
+use vcr::ascii_atlas::GeistPixelAtlas;
+use vcr::schema::{AsciiFontVariant, Duration as ManifestDuration, Environment, Resolution};
 use vcr::timeline::RenderSceneData;
 
 #[derive(Debug, Parser)]
@@ -24,17 +25,17 @@ struct Cli {
     url: String,
     #[arg(long)]
     id: Option<String>,
-    #[arg(long, default_value_t = 1920)]
-    width: u32,
-    #[arg(long, default_value_t = 1080)]
-    height: u32,
+    #[arg(long)]
+    width: Option<u32>,
+    #[arg(long)]
+    height: Option<u32>,
     #[arg(long, default_value_t = 24)]
     fps: u32,
     #[arg(long, default_value_t = 0)]
     frames: u32,
-    #[arg(long, default_value_t = 8)]
+    #[arg(long, default_value_t = 16)]
     cell_width: u32,
-    #[arg(long, default_value_t = 12)]
+    #[arg(long, default_value_t = 31)] // Use 31 or 32 for ~1:2 ratio. 16x31 is a common Geist sweet spot.
     cell_height: u32,
     #[arg(long, default_value_t = 0)]
     padding: u32,
@@ -46,16 +47,25 @@ struct Cli {
     output: Option<PathBuf>,
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     checker_preview: bool,
+    #[arg(long, default_value = "geist-pixel-line")]
+    font: String,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    if cli.width == 0 || cli.height == 0 {
-        bail!("--width/--height must be > 0");
+    if let Some(w) = cli.width {
+        if w == 0 { bail!("--width must be > 0"); }
+    }
+    if let Some(h) = cli.height {
+        if h == 0 { bail!("--height must be > 0"); }
     }
     if cli.fps == 0 {
         bail!("--fps must be > 0");
     }
+
+    let font_variant = parse_font_variant(&cli.font)
+        .ok_or_else(|| anyhow!("invalid font variant: {}", cli.font))?;
+    let atlas = GeistPixelAtlas::new(font_variant);
 
     let page = fetch_text(&cli.url)?;
     let parsed = parse_ascii_co_uk_page(&page).context("failed to parse ascii.co.uk page")?;
@@ -65,7 +75,7 @@ fn main() -> Result<()> {
     let normalized_frames = parsed
         .frames
         .iter()
-        .map(|frame| normalize_frame_text(frame))
+        .map(|frame| normalize_frame_text(frame, &atlas))
         .collect::<Vec<_>>();
     let leading_blank_frames = count_leading_blank_frames(&normalized_frames);
     if leading_blank_frames >= normalized_frames.len() {
@@ -120,10 +130,32 @@ fn main() -> Result<()> {
         cycle.max(1)
     };
 
+    let mut max_cols = 0;
+    let mut max_rows = 0;
+    for frame in &normalized_frames {
+        let lines: Vec<&str> = frame.lines().collect();
+        max_rows = max_rows.max(lines.len() as u32);
+        for line in lines {
+            max_cols = max_cols.max(line.chars().count() as u32);
+        }
+    }
+
+    let mut target_width = cli.width.unwrap_or(max_cols * cli.cell_width);
+    let mut target_height = cli.height.unwrap_or(max_rows * cli.cell_height);
+
+    // Ensure even dimensions for ffmpeg yuv420p compatibility
+    if target_width % 2 != 0 { target_width += 1; }
+    if target_height % 2 != 0 { target_height += 1; }
+
+    println!(
+        "Grid size: {}x{} | Native Resolution: {}x{}",
+        max_cols, max_rows, target_width, target_height
+    );
+
     let environment = Environment {
         resolution: Resolution {
-            width: cli.width,
-            height: cli.height,
+            width: target_width,
+            height: target_height,
         },
         fps: cli.fps,
         duration: ManifestDuration::Frames {
@@ -133,7 +165,11 @@ fn main() -> Result<()> {
     };
 
     let mut renderer = Renderer::new_software(&environment, &[], RenderSceneData::default())?;
-    let mut layer = AnimationLayer::new(&animation_id);
+    let mut layer = AnimationLayer {
+        clip_name: animation_id.clone(),
+        font_variant,
+        ..AnimationLayer::new(&animation_id)
+    };
     layer.playback = PlaybackOptions::default();
     if cli.trim_leading_blank && leading_blank_frames > 0 {
         layer.playback.start_offset_frames =
@@ -166,9 +202,10 @@ fn main() -> Result<()> {
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
+    let still_path = output_path.with_extension("png");
+
     let ffmpeg = FfmpegPipe::spawn(&environment, &output_path)?;
     let mut first_frame_written = false;
-    let still_path = output_path.with_extension("png");
     for frame_index in 0..output_frames {
         let mut rgba =
             renderer.render_frame_rgba_with_animation_layer(frame_index, &manager, &layer)?;
@@ -176,7 +213,7 @@ fn main() -> Result<()> {
             apply_white_matte_to_transparent(&mut rgba);
         }
         if !first_frame_written {
-            write_png(&still_path, cli.width, cli.height, &rgba)?;
+            write_png(&still_path, target_width, target_height, &rgba)?;
             first_frame_written = true;
         }
         ffmpeg.write_frame(rgba)?;
@@ -194,7 +231,13 @@ fn main() -> Result<()> {
                 .and_then(|stem| stem.to_str())
                 .unwrap_or("overlay")
         ));
-        write_checker_preview(&output_path, &checker_path, cli.width, cli.height, cli.fps)?;
+        write_checker_preview(
+            &output_path,
+            &checker_path,
+            target_width,
+            target_height,
+            cli.fps,
+        )?;
         println!("Wrote {}", checker_path.display());
     }
 
@@ -453,7 +496,7 @@ fn write_imported_animation(
     Ok(())
 }
 
-fn normalize_frame_text(frame: &str) -> String {
+fn normalize_frame_text(frame: &str, atlas: &GeistPixelAtlas) -> String {
     let normalized = frame.replace("\r\n", "\n").replace('\r', "\n");
     let lines = normalized
         .lines()
@@ -465,7 +508,7 @@ fn normalize_frame_text(frame: &str) -> String {
                     } else if ch.is_whitespace() {
                         ' '
                     } else {
-                        map_unicode_art_char(ch)
+                        map_unicode_art_char(ch, atlas)
                     }
                 })
                 .collect::<String>()
@@ -487,16 +530,45 @@ fn count_leading_blank_frames(frames: &[String]) -> usize {
         .count()
 }
 
-fn map_unicode_art_char(ch: char) -> char {
+fn map_unicode_art_char(ch: char, atlas: &GeistPixelAtlas) -> char {
     match ch {
-        '█' | '▓' | '▇' | '▆' | '▅' | '▉' | '■' | '◼' | '⬛' | '●' => '#',
-        '▒' | '▄' | '▀' | '▌' | '▐' | '◆' | '◾' | '◉' => '*',
-        '░' | '•' | '·' => '.',
+        // Density mapping for block characters
+        '█' | '▉' | '▇' | '▆' | '▅' | '■' | '◼' | '⬛' | '●' => {
+            atlas.closest_character_by_density(1.0) as char
+        }
+        '▓' => atlas.closest_character_by_density(0.75) as char,
+        '▒' | '▄' | '▀' | '▌' | '▐' | '◆' | '◾' | '◉' => {
+            atlas.closest_character_by_density(0.5) as char
+        }
+        '░' | '•' | '·' => atlas.closest_character_by_density(0.25) as char,
+
+        // Line drawing - keep them as '-' or '+' but we could do more here later
         '─' | '━' | '│' | '┃' | '┄' | '┅' | '┆' | '┇' | '┈' | '┉' | '┊' | '┋' | '╴' | '╵' | '╶'
         | '╷' => '-',
         '┌' | '┐' | '└' | '┘' | '├' | '┤' | '┬' | '┴' | '┼' | '╔' | '╗' | '╚' | '╝' | '╠' | '╣'
         | '╦' | '╩' | '╬' => '+',
-        _ => '#',
+        _ => atlas.closest_character_by_density(1.0) as char,
+    }
+}
+
+fn parse_font_variant(s: &str) -> Option<AsciiFontVariant> {
+    match s.to_ascii_lowercase().replace('_', "-").as_str() {
+        "geist-pixel-line" | "line" | "geist-pixel-regular" | "regular" => {
+            Some(AsciiFontVariant::GeistPixelLine)
+        }
+        "geist-pixel-square" | "square" | "geist-pixel-medium" | "medium" => {
+            Some(AsciiFontVariant::GeistPixelSquare)
+        }
+        "geist-pixel-grid" | "grid" | "geist-pixel-bold" | "bold" => {
+            Some(AsciiFontVariant::GeistPixelGrid)
+        }
+        "geist-pixel-circle" | "circle" | "geist-pixel-light" | "light" => {
+            Some(AsciiFontVariant::GeistPixelCircle)
+        }
+        "geist-pixel-triangle" | "triangle" | "geist-pixel-mono" | "mono" => {
+            Some(AsciiFontVariant::GeistPixelTriangle)
+        }
+        _ => None,
     }
 }
 
@@ -537,6 +609,10 @@ fn write_checker_preview(
         .arg("[0][1]overlay=shortest=1")
         .arg("-c:v")
         .arg("libx264")
+        .arg("-preset")
+        .arg("slow")
+        .arg("-crf")
+        .arg("12")
         .arg("-pix_fmt")
         .arg("yuv420p")
         .arg(output_mp4)

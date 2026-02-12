@@ -249,7 +249,7 @@ impl AnimationLayer {
             playback: PlaybackOptions::default(),
             cell: AsciiCellMetrics::default(),
             colors: AnimationColors::default(),
-            font_variant: AsciiFontVariant::GeistPixelRegular,
+            font_variant: AsciiFontVariant::GeistPixelLine,
             fit: FitOptions::default(),
             blend_mode: AnimationBlendMode::Foreground,
             opacity: 1.0,

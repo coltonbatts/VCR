@@ -290,7 +290,7 @@ mod tests {
             r#"
 grid: { rows: 1, columns: 2 }
 cell: { width: 8, height: 8 }
-font_variant: geist_pixel_regular
+font_variant: geist_pixel_line
 foreground: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
 background: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
 inline:
@@ -314,7 +314,7 @@ inline:
             r#"
 grid: { rows: 1, columns: 1 }
 cell: { width: 8, height: 8 }
-font_variant: geist_pixel_regular
+font_variant: geist_pixel_line
 foreground: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
 background: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
 inline:
