@@ -426,6 +426,12 @@ enum AsciiCommands {
         #[arg(long = "debug-stage-hashes", default_value_t = false)]
         debug_stage_hashes: bool,
     },
+    Library {
+        #[arg(long, help = "Filter by category")]
+        category: Option<String>,
+        #[arg(long, help = "Emit machine-readable JSON output")]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -800,6 +806,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 preset,
                 quiet,
             ),
+            AsciiCommands::Library { category, json } => run_ascii_library(category.as_deref(), json),
             AsciiCommands::Render {
                 input,
                 output,
@@ -2471,6 +2478,55 @@ fn run_preview(
         },
     );
     Ok(ResolvedInputsSnapshot::from_manifest(&manifest))
+}
+
+fn run_ascii_library(category_filter: Option<&str>, json: bool) -> Result<()> {
+    let manager = vcr::animation_engine::AnimationManager::new();
+    let root = PathBuf::from("assets/animations/library");
+    let entries = manager.discover_library(&root)?;
+
+    let filtered: Vec<_> = if let Some(cat) = category_filter {
+        entries
+            .into_iter()
+            .filter(|e| e.category.as_deref() == Some(cat))
+            .collect()
+    } else {
+        entries
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&filtered)?);
+        return Ok(());
+    }
+
+    println!("{}", VCR_BANNER);
+    println!("VCR ASCII CURATED LIBRARY");
+    println!("Root: {}\n", root.display());
+
+    if filtered.is_empty() {
+        println!("  <no assets found matching filter>");
+        return Ok(());
+    }
+
+    let mut current_category = String::new();
+    for entry in filtered {
+        let cat = entry.category.as_deref().unwrap_or("uncategorized");
+        if cat != current_category {
+            println!("\n  [{}]", cat.to_uppercase());
+            current_category = cat.to_owned();
+        }
+
+        println!("  - id: {}", entry.id);
+        println!("    title: {}", entry.title);
+        println!("    artist: {}", entry.artist);
+        println!("    frames: {}", entry.frame_count);
+        if let Some(license) = entry.license {
+            println!("    license: {}", license);
+        }
+        println!();
+    }
+
+    Ok(())
 }
 
 fn run_render_frame(

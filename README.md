@@ -139,7 +139,7 @@ VCR now includes a modular ASCII animation engine for importing frame packs from
 
 - Engine docs: `docs/ANIMATION_ENGINE.md`
 - Boilerplate example: `examples/ascii_animation_boilerplate.rs`
-- Demo asset pack: `assets/animations/demo_wave/`
+- Curated Library: `assets/animations/library/` (discover via `vcr ascii library`)
 
 ### URL -> White Alpha Overlay (ascii.co.uk)
 

@@ -689,6 +689,41 @@ layers:
 
 ---
 
+## ASCII Curated Library
+
+VCR- Engine docs: `docs/ANIMATION_ENGINE.md`
+
+- Boilerplate example: `examples/ascii_animation_boilerplate.rs`
+- Curated Library: `assets/animations/library/` (browse with `vcr ascii library`)
+ and organized by category.
+
+### Discovery
+
+```bash
+vcr ascii library          # List all curated assets
+vcr ascii library --json   # Machine-readable list
+```
+
+### Categories
+
+| Category | Description |
+|----------|-------------|
+| `geometric` | Abstract tunnels, grids, and math shapes |
+| `humanoid` | People, characters, and movement |
+| `nature` | Fluid dynamics, animals, and natural phenomena |
+| `demo` | Technical samples and engine tests |
+
+### Usage in Manifest
+
+Reference a library asset by its path relative to the library root:
+
+```yaml
+animation_engine:
+  clip_name: "library/humanoid/ballet"
+```
+
+---
+
 ## CLI Commands
 
 ### Core Rendering
@@ -731,6 +766,10 @@ vcr explain scene.vcr --set speed=2.0
 
 # Determinism hash for frame
 vcr determinism-report scene.vcr --frame 0 --json
+
+# Discovery
+vcr ascii library      # List curated animations
+vcr ascii library --json
 ```
 
 ### Global Flags

@@ -24,6 +24,8 @@ pub struct AnimationMetadata {
     #[serde(default)]
     pub license: Option<String>,
     #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
     pub credit: Option<String>,
@@ -528,6 +530,71 @@ impl AnimationManager {
             })
             .collect()
     }
+
+    pub fn discover_library<P: AsRef<Path>>(
+        &self,
+        root_path: P,
+    ) -> Result<Vec<AnimationLibraryEntry>> {
+        let root = root_path.as_ref();
+        if !root.exists() || !root.is_dir() {
+            return Ok(Vec::new());
+        }
+
+        let mut entries = Vec::new();
+        self.scan_directory_for_library(root, root, &mut entries)?;
+        entries.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(entries)
+    }
+
+    fn scan_directory_for_library(
+        &self,
+        root: &Path,
+        current: &Path,
+        entries: &mut Vec<AnimationLibraryEntry>,
+    ) -> Result<()> {
+        if current.join("metadata.json").exists() {
+            let id = current
+                .strip_prefix(root)
+                .unwrap_or(current)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let name = current
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+            let metadata = read_animation_metadata(current, name)?;
+            let frame_count = collect_frame_paths(current)?.len();
+
+            entries.push(AnimationLibraryEntry {
+                id,
+                title: metadata.title.clone(),
+                category: metadata.category.clone(),
+                artist: metadata.artist.clone(),
+                license: metadata.license.clone(),
+                frame_count,
+            });
+            return Ok(());
+        }
+
+        for entry in fs::read_dir(current)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                self.scan_directory_for_library(root, &path, entries)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AnimationLibraryEntry {
+    pub id: String,
+    pub title: String,
+    pub category: Option<String>,
+    pub artist: String,
+    pub license: Option<String>,
+    pub frame_count: usize,
 }
 
 fn validate_target_buffer(buffer: &[u8], width: u32, height: u32) -> Result<()> {
