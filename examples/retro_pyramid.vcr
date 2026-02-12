@@ -1,0 +1,17 @@
+# Retro Wave Pyramid Manifest
+version: 1
+
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  duration: 4.0
+
+layers:
+  - id: "pyramid_shader"
+    z_index: 0
+    shader:
+      path: "retro_pyramid.wgsl"
+      uniforms:
+        dummy: 0.0 # Just to satisfy the uniforms requirement if any, though none are needed here yet

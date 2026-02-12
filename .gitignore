@@ -10,3 +10,4 @@
 !assets/**/*.jpg
 !assets/**/*.gif
 *.backup*
+node_modules/

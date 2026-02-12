@@ -1,0 +1,13 @@
+{
+    "name": "vcr-threejs-renderer",
+    "version": "1.0.0",
+    "description": "ThreeJS headless renderer for VCR 3D scenes",
+    "main": "render_pyramid.js",
+    "type": "module",
+    "scripts": {
+        "test": "node render_pyramid.js --test"
+    },
+    "dependencies": {
+        "puppeteer": "^22.0.0"
+    }
+}
