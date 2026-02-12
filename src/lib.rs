@@ -7,6 +7,8 @@ pub mod ascii_pipeline;
 pub mod ascii_render;
 pub mod ascii_sources;
 pub mod ascii_stage;
+pub mod agent_errors;
+pub mod agent_metadata;
 pub mod chat;
 pub mod decoding;
 pub mod encoding;

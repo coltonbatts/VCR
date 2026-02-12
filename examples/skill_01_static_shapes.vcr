@@ -1,0 +1,90 @@
+# =============================================================================
+# SKILL EXAMPLE 01: Static Shapes
+# =============================================================================
+# Difficulty: Beginner
+# Concepts:  Environment setup, procedural layers, z-ordering, color
+# Render:    vcr build examples/skill_01_static_shapes.vcr -o renders/skill_01.mov
+# Preview:   vcr render-frame examples/skill_01_static_shapes.vcr --frame 0
+# =============================================================================
+#
+# This is the simplest VCR manifest. It demonstrates how to set up the canvas
+# and place static shapes. No animation—just a single frame of output.
+#
+# KEY CONCEPTS:
+# - Every manifest needs: version, environment, and at least one layer.
+# - Layers render in z_index order (higher = in front).
+# - Procedural shapes are GPU-rendered primitives.
+# - Colors use normalized floats: {r: 0-1, g: 0-1, b: 0-1, a: 0-1}.
+
+version: 1
+
+# The environment block defines the canvas.
+# Resolution: pixel dimensions of the output video.
+# FPS: frame rate. Even for a static scene, fps is required.
+# Duration: how long the video is. 1.0 = one second.
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  duration: 1.0              # 1 second = 30 frames at 30fps
+
+layers:
+  # --- LAYER 1: Background ---
+  # solid_color fills the entire canvas with one color.
+  # It's the most common first layer in any scene.
+  - id: "bg"
+    z_index: 0               # Behind everything. This is the default, shown for clarity.
+    procedural:
+      kind: solid_color
+      color:
+        r: 0.06
+        g: 0.06
+        b: 0.08
+        a: 1.0               # a (alpha) defaults to 1.0 if omitted.
+
+  # --- LAYER 2: Rounded Rectangle ---
+  # A centered card shape. `center` is in pixel coordinates.
+  # `size` is width x height of the rectangle.
+  - id: "card"
+    z_index: 1               # In front of bg.
+    procedural:
+      kind: rounded_rect
+      center: { x: 640, y: 360 }   # Center of 1280x720 canvas.
+      size: { x: 500, y: 280 }
+      corner_radius: 12             # Pixel radius for rounded corners.
+      color: { r: 0.12, g: 0.12, b: 0.15, a: 1.0 }
+
+  # --- LAYER 3: Accent Line ---
+  # A horizontal line across the top of the card.
+  # `start` and `end` define the two endpoints in pixels.
+  - id: "accent"
+    z_index: 2
+    procedural:
+      kind: line
+      start: { x: 390, y: 225 }
+      end: { x: 890, y: 225 }
+      thickness: 3
+      color: { r: 0.0, g: 0.75, b: 1.0, a: 1.0 }
+
+  # --- LAYER 4: Circle ---
+  # A small filled circle, positioned within the card area.
+  - id: "dot"
+    z_index: 3
+    procedural:
+      kind: circle
+      center: { x: 640, y: 360 }
+      radius: 40
+      color: { r: 0.0, g: 0.85, b: 0.6, a: 0.8 }
+
+  # --- LAYER 5: Hexagon ---
+  # polygon with sides: 6 creates a hexagon.
+  # `radius` is the circumscribed radius (center to vertex distance).
+  - id: "hex"
+    z_index: 4
+    procedural:
+      kind: polygon
+      center: { x: 800, y: 360 }
+      radius: 50
+      sides: 6
+      color: { r: 0.9, g: 0.3, b: 0.5, a: 0.7 }

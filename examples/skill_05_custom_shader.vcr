@@ -1,0 +1,145 @@
+# =============================================================================
+# SKILL EXAMPLE 05: Custom WGSL Shader
+# =============================================================================
+# Difficulty: Advanced
+# Concepts:  Inline WGSL shaders, custom uniforms, GPU-only features
+# Render:    vcr build examples/skill_05_custom_shader.vcr -o renders/skill_05.mov
+# Note:      Requires --backend gpu (or auto with GPU available).
+# =============================================================================
+#
+# This example shows how to write a custom fragment shader in WGSL.
+# The shader creates a plasma-like effect with animated uniforms.
+#
+# KEY CONCEPTS:
+# - You write a `shade(uv, ShaderUniforms) -> vec4<f32>` function.
+# - VCR provides the vertex shader and calls your shade() from fs_main().
+# - Up to 8 custom uniforms, packed into ShaderUniforms.custom[0] and custom[1].
+# - Uniforms are ScalarProperty: can be static, keyframed, or expressions.
+# - Shader layers are GPU-only; software backend renders them transparent.
+#
+# SHADER UNIFORMS STRUCT (available in your shade function):
+#   struct ShaderUniforms {
+#     time: f32,                    // Frame number as float
+#     frame: u32,                   // Frame index
+#     resolution: vec2<f32>,        // Canvas resolution in pixels
+#     custom: array<vec4<f32>, 2>,  // Your uniforms packed here
+#   }
+#
+# UNIFORM PACKING ORDER:
+#   1st uniform → custom[0].x
+#   2nd uniform → custom[0].y
+#   3rd uniform → custom[0].z
+#   4th uniform → custom[0].w
+#   5th uniform → custom[1].x
+#   6th uniform → custom[1].y
+#   7th uniform → custom[1].z
+#   8th uniform → custom[1].w
+
+version: 1
+
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  duration: 4.0
+
+params:
+  speed:
+    type: float
+    default: 1.0
+    min: 0.1
+    max: 5.0
+    description: "Plasma animation speed"
+  complexity:
+    type: float
+    default: 6.0
+    min: 1.0
+    max: 20.0
+    description: "Number of plasma wave layers"
+
+layers:
+  # === SHADER LAYER: Plasma Effect ===
+  # The shader code is written inline as a YAML multiline string (|).
+  # Your function MUST be named `shade` and return vec4<f32>.
+  - id: "plasma"
+    z_index: 0
+    shader:
+      fragment: |
+        fn shade(uv: vec2<f32>, u: ShaderUniforms) -> vec4<f32> {
+          // Unpack custom uniforms by name (mapped by declaration order)
+          let speed = u.custom[0].x;
+          let complexity = u.custom[0].y;
+          let intensity = u.custom[0].z;
+
+          // Time-based animation
+          let t = u.time * speed * 0.02;
+
+          // Generate plasma pattern by layering sine waves
+          var value = 0.0;
+          let scaled_uv = uv * complexity;
+
+          // Layer 1: Diagonal waves
+          value += sin(scaled_uv.x + t);
+          // Layer 2: Horizontal waves
+          value += sin(scaled_uv.y + t * 0.7);
+          // Layer 3: Radial waves from center
+          let dist = length(uv - vec2<f32>(0.5, 0.5));
+          value += sin(dist * complexity * 2.0 - t * 1.3);
+          // Layer 4: Rotating pattern
+          let angle = atan2(uv.y - 0.5, uv.x - 0.5);
+          value += sin(angle * 3.0 + t * 0.5);
+
+          // Normalize to 0-1 range
+          value = value * 0.25 + 0.5;
+
+          // Map to color palette
+          let r = sin(value * 3.14159 * 2.0) * 0.5 + 0.5;
+          let g = sin(value * 3.14159 * 2.0 + 2.094) * 0.5 + 0.5;
+          let b = sin(value * 3.14159 * 2.0 + 4.189) * 0.5 + 0.5;
+
+          return vec4<f32>(r * intensity, g * intensity, b * intensity, 1.0);
+        }
+
+      # Uniforms map to custom[0].x, custom[0].y, custom[0].z in order.
+      # Each can be a static value, keyframe, or expression.
+      uniforms:
+        speed: "${speed}"                # From params, so it's overridable.
+        complexity: "${complexity}"
+        intensity: "smoothstep(0.0, 30.0, t)"   # Fade in over 1 second.
+
+  # === TEXT OVERLAY ===
+  # Text on top of the plasma shader.
+  - id: "label"
+    z_index: 5
+    position: { x: 640, y: 360 }
+    anchor: center
+    opacity:
+      start_frame: 30
+      end_frame: 50
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    text:
+      content: "PLASMA"
+      font_family: "GeistPixel-Square"
+      font_size: 80
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.9 }
+
+  # === VIGNETTE RING ===
+  # Dark ring at the edges to frame the plasma effect.
+  - id: "vignette"
+    z_index: 4
+    procedural:
+      kind: ring
+      center: { x: 640, y: 360 }
+      outer_radius: 800
+      inner_radius: 400
+      color: { r: 0.0, g: 0.0, b: 0.0, a: 0.4 }
+
+# Post-processing adds final color correction.
+post:
+  - shader: levels
+    gamma: 1.1
+    lift: 0.0
+    gain: 1.0

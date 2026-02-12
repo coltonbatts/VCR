@@ -1,0 +1,277 @@
+# =============================================================================
+# SKILL EXAMPLE 04: Multi-Layer Composition with Post-Processing
+# =============================================================================
+# Difficulty: Advanced
+# Concepts:  Modulators, expression math, post-processing, shader layers
+# Render:    vcr build examples/skill_04_composition.vcr -o renders/skill_04.mov
+# Inspect:   vcr dump examples/skill_04_composition.vcr --frame 60
+# =============================================================================
+#
+# A complex animated composition: rotating hexagon hub with orbiting elements,
+# pulsing ring, animated scanlines, and post-processing color grading.
+#
+# KEY CONCEPTS:
+# - Multiple modulators for decoupled motion systems.
+# - Expression-driven everything: position, size, color, opacity.
+# - Post-processing pipeline for color grading.
+# - Seed for deterministic noise-based motion.
+# - z_index layering for proper visual stacking.
+
+version: 1
+
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 30
+  duration: 5.0
+
+# Seed controls deterministic randomness in noise1d() and random().
+# Changing seed = different random motion, same structure.
+seed: 42
+
+params:
+  energy:
+    type: float
+    default: 1.0
+    min: 0.0
+    max: 3.0
+    description: "Global animation energy. Higher = faster, more intense."
+  glow_alpha:
+    type: float
+    default: 0.15
+    min: 0.0
+    max: 0.5
+    description: "Intensity of the glow ring behind the hub."
+
+# Modulators are named expressions that can drive multiple layers.
+# This avoids duplicating the same expression across layers.
+modulators:
+  # Smooth sine-based breathing for scale oscillation.
+  breathe:
+    expression: "sin(t * 0.1 * energy) * 0.02"
+  # Noise-based position drift — organic, non-repeating.
+  drift:
+    expression: "noise1d(t * 0.5, 0) * 6.0"
+  # Higher-frequency jitter for "digital" feeling.
+  jitter:
+    expression: "noise1d(t * 3.0, 7) * 2.0"
+
+groups:
+  # Central hub group. All hub elements move together.
+  - id: "hub"
+    position: { x: 960, y: 540 }
+    # Hub drifts subtly using the drift modulator.
+    modulators:
+      - source: drift
+        weights:
+          x: 1.0
+          y: 0.7
+
+  # Secondary group for status elements (top-right corner).
+  - id: "status"
+    position: { x: 1700, y: 80 }
+    opacity:
+      start_frame: 20
+      end_frame: 40
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+
+layers:
+  # =========================================================================
+  # BACKGROUND
+  # =========================================================================
+
+  # Vertical gradient — dark at top, slightly lighter at bottom.
+  - id: "bg"
+    z_index: -10
+    procedural:
+      kind: gradient
+      start_color: { r: 0.015, g: 0.015, b: 0.025, a: 1.0 }
+      end_color: { r: 0.04, g: 0.03, b: 0.06, a: 1.0 }
+      direction: vertical
+
+  # =========================================================================
+  # HUB ELEMENTS (grouped under "hub")
+  # =========================================================================
+
+  # Outer glow ring — large, faint, pulses with breathe modulator.
+  - id: "glow_ring"
+    group: "hub"
+    z_index: 0
+    anchor: center             # Anchor=center means position is the center point.
+    procedural:
+      kind: ring
+      center: { x: 0, y: 0 }  # Relative to group position (960,540).
+      outer_radius: "220 + sin(t * 0.08) * 15"
+      inner_radius: "200 + sin(t * 0.08) * 15"
+      color:
+        r: 0.0
+        g: "0.5 + sin(t * 0.1) * 0.2"
+        b: 1.0
+        a: "${glow_alpha}"    # Uses parameter substitution.
+    modulators:
+      - source: breathe
+        weights:
+          scale_x: 1.0
+          scale_y: 1.0
+
+  # Inner ring — more visible, tighter.
+  - id: "inner_ring"
+    group: "hub"
+    z_index: 1
+    anchor: center
+    procedural:
+      kind: ring
+      center: { x: 0, y: 0 }
+      outer_radius: "150 + sin(t * 0.12) * 8"
+      inner_radius: "140 + sin(t * 0.12) * 8"
+      color: { r: 0.0, g: 0.6, b: 0.9, a: 0.5 }
+
+  # Rotating hexagon — uses rotation_degrees expression.
+  - id: "hex"
+    group: "hub"
+    z_index: 2
+    anchor: center
+    # Continuous rotation: 0.4 degrees per frame = 12 degrees/sec at 30fps.
+    rotation_degrees: "t * 0.4 * energy"
+    procedural:
+      kind: polygon
+      center: { x: 0, y: 0 }
+      radius: 100
+      sides: 6
+      color: { r: 0.0, g: 0.55, b: 0.85, a: 0.35 }
+
+  # Counter-rotating triangle inside the hex.
+  - id: "inner_tri"
+    group: "hub"
+    z_index: 3
+    anchor: center
+    rotation_degrees: "t * -0.6 * energy"    # Negative = opposite direction.
+    procedural:
+      kind: polygon
+      center: { x: 0, y: 0 }
+      radius: 55
+      sides: 3
+      color: { r: 0.0, g: 0.7, b: 1.0, a: 0.25 }
+
+  # Center label text.
+  - id: "hub_label"
+    group: "hub"
+    z_index: 5
+    anchor: center
+    position: { x: -45, y: -12 }      # Fine-tune text position within hub.
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Square"
+      font_size: 56
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    modulators:
+      - source: jitter
+        weights:
+          x: 1.0
+          y: 0.5
+
+  # =========================================================================
+  # ORBITAL DOTS — Small circles positioned around the hub.
+  # =========================================================================
+
+  # Each dot uses sin/cos with a phase offset to orbit at a fixed radius.
+  # orbit formula: x = center_x + cos(angle) * radius
+  #                y = center_y + sin(angle) * radius
+
+  - id: "orbit_dot_1"
+    z_index: 4
+    anchor: center
+    # Orbits around (960, 540) at radius 280.
+    # t * 0.04 is the angular speed. Phase offset 0.
+    pos_x: "960 + cos(t * 0.04 * energy) * 280"
+    pos_y: "540 + sin(t * 0.04 * energy) * 280"
+    opacity: "0.6 + sin(t * 0.2) * 0.2"
+    procedural:
+      kind: circle
+      center: { x: 0, y: 0 }
+      radius: 8
+      color: { r: 0.0, g: 0.9, b: 0.7, a: 1.0 }
+
+  - id: "orbit_dot_2"
+    z_index: 4
+    anchor: center
+    # Same orbit, different phase (offset by pi/2 ≈ 1.57).
+    pos_x: "960 + cos(t * 0.04 * energy + 1.57) * 280"
+    pos_y: "540 + sin(t * 0.04 * energy + 1.57) * 280"
+    opacity: "0.6 + sin(t * 0.2 + 1.0) * 0.2"
+    procedural:
+      kind: circle
+      center: { x: 0, y: 0 }
+      radius: 8
+      color: { r: 0.0, g: 0.7, b: 1.0, a: 1.0 }
+
+  - id: "orbit_dot_3"
+    z_index: 4
+    anchor: center
+    pos_x: "960 + cos(t * 0.04 * energy + 3.14) * 280"
+    pos_y: "540 + sin(t * 0.04 * energy + 3.14) * 280"
+    opacity: "0.6 + sin(t * 0.2 + 2.0) * 0.2"
+    procedural:
+      kind: circle
+      center: { x: 0, y: 0 }
+      radius: 8
+      color: { r: 0.6, g: 0.3, b: 1.0, a: 1.0 }
+
+  # =========================================================================
+  # SCANLINE — A horizontal line that sweeps down the screen.
+  # =========================================================================
+
+  - id: "scanline"
+    z_index: 10
+    procedural:
+      kind: line
+      start: { x: 0, y: 0 }
+      end: { x: 1920, y: 0 }
+      thickness: 2
+      color: { r: 0.0, g: 0.8, b: 1.0, a: 0.08 }
+    # fract() creates a repeating 0→1 ramp.
+    # Multiply by canvas height for full-screen sweep.
+    # t / 120 means one full sweep every 120 frames (4 seconds at 30fps).
+    pos_y: "fract(t / 120.0) * 1080"
+
+  # =========================================================================
+  # STATUS CORNER
+  # =========================================================================
+
+  - id: "status_dot"
+    group: "status"
+    z_index: 8
+    procedural:
+      kind: circle
+      center: { x: 0, y: 8 }
+      radius: 4
+      color:
+        r: 0.0
+        g: "0.7 + step(0.5, fract(t / 30.0)) * 0.3"   # Blinks brighter
+        b: 0.4
+        a: 1.0
+
+  - id: "status_text"
+    group: "status"
+    z_index: 8
+    position: { x: 12, y: 0 }
+    text:
+      content: "LIVE"
+      font_family: "GeistPixel-Line"
+      font_size: 20
+      color: { r: 0.5, g: 0.5, b: 0.55, a: 1.0 }
+
+# =========================================================================
+# POST-PROCESSING
+# =========================================================================
+# Applied after all layers are composited. GPU only.
+# Levels adjusts gamma, lift (black point), and gain (white point).
+
+post:
+  - shader: levels
+    gamma: 1.15              # Slightly brighter midtones.
+    lift: 0.008              # Raise black floor slightly (prevents pure black).
+    gain: 0.97               # Pull highlights down slightly (less harsh).

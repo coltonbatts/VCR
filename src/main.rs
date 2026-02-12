@@ -24,6 +24,10 @@ use vcr::ascii_sources::render_ascii_sources;
 use vcr::ascii_stage::{
     parse_ascii_stage_size, render_ascii_stage_video, AsciiStageRenderArgs, CameraMode,
 };
+use vcr::agent_errors::{
+    suggest_fix_for_lint_error, suggest_fix_for_validation_error, AgentErrorReport,
+    AgentErrorType, ErrorContext,
+};
 use vcr::chat::{render_chat_video, ChatRenderArgs};
 use vcr::encoding::FfmpegPipe;
 use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions, ParamOverride};
@@ -869,14 +873,55 @@ fn print_cli_error(command_name: &str, error: &anyhow::Error) {
         .map(|cause| single_line(cause.to_string()))
         .unwrap_or_else(|| head.clone());
     let summary = if root == head {
-        head
+        head.clone()
     } else {
         format!("{head}. {root}")
     };
-    eprintln!("vcr {command_name}: {summary}");
-    if std::env::var_os("VCR_ERROR_VERBOSE").is_some() {
-        for cause in error.chain().skip(1) {
-            eprintln!("detail: {}", single_line(cause.to_string()));
+
+    // Check if agent mode is enabled
+    let agent_mode = std::env::var("VCR_AGENT_MODE")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    if agent_mode {
+        // Emit structured JSON error for agents
+        let exit_code = classify_exit_code(error);
+        let error_type = match exit_code {
+            VcrExitCode::ManifestValidation => AgentErrorType::Validation,
+            VcrExitCode::Usage => AgentErrorType::Usage,
+            VcrExitCode::MissingDependency => AgentErrorType::MissingDependency,
+            VcrExitCode::Io => AgentErrorType::Io,
+            _ => AgentErrorType::Build,
+        };
+
+        let mut report = AgentErrorReport {
+            error_type,
+            summary,
+            suggested_fix: None,
+            context: None,
+        };
+
+        // Try to generate suggested fix based on error message
+        if matches!(report.error_type, AgentErrorType::Validation) {
+            if let Some(fix) = suggest_fix_for_validation_error(&head) {
+                report.suggested_fix = Some(fix);
+            }
+        }
+
+        // Emit JSON to stderr
+        if let Ok(json) = report.to_json() {
+            eprintln!("{}", json);
+        } else {
+            // Fallback to regular error if JSON serialization fails
+            eprintln!("vcr {command_name}: {}", report.summary);
+        }
+    } else {
+        // Regular human-readable output
+        eprintln!("vcr {command_name}: {summary}");
+        if std::env::var_os("VCR_ERROR_VERBOSE").is_some() {
+            for cause in error.chain().skip(1) {
+                eprintln!("detail: {}", single_line(cause.to_string()));
+            }
         }
     }
 }
@@ -1938,9 +1983,10 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
     for layer in &manifest.layers {
         let id = layer.id();
         if !visible.get(id).copied().unwrap_or(false) {
-            issues.push(format!(
-                "Layer '{id}' appears unreachable (never visible across sampled frames).",
-            ));
+            issues.push((
+                id.to_owned(),
+                format!("Layer '{id}' appears unreachable (never visible across sampled frames)."),
+           ));
         }
     }
 
@@ -1950,10 +1996,41 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
         return Ok(());
     }
 
-    eprintln!("Lint found {} issue(s):", issues.len());
-    for issue in &issues {
-        eprintln!("- {issue}");
+    // Check if agent mode is enabled
+    let agent_mode = std::env::var("VCR_AGENT_MODE")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    if agent_mode {
+        // Emit structured JSON error report for agents
+        for (layer_id, issue) in &issues {
+            let report = AgentErrorReport::lint(issue.clone())
+                .with_fix(
+                    suggest_fix_for_lint_error(layer_id, issue)
+                        .unwrap_or_else(|| {
+                            vcr::agent_errors::SuggestedFix::new(
+                                "Check layer visibility, timing, or opacity settings",
+                            )
+                        }),
+                )
+                .with_context(
+                    ErrorContext::new()
+                        .with_file(manifest_path.display().to_string())
+                        .with_field(format!("layers[id='{}']", layer_id)),
+                );
+
+            if let Ok(json) = report.to_json() {
+                eprintln!("{}", json);
+            }
+        }
+    } else {
+        // Regular human-readable output
+        eprintln!("Lint found {} issue(s):", issues.len());
+        for (_, issue) in &issues {
+            eprintln!("- {issue}");
+        }
     }
+
     bail!("lint failed for {}", manifest_path.display())
 }
 
@@ -2804,6 +2881,8 @@ struct RenderMetadata {
     end_frame: u32,
     resolved_params: BTreeMap<String, ParamValue>,
     overrides: BTreeMap<String, ParamValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_context: Option<vcr::agent_metadata::AgentContextMetadata>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2878,6 +2957,7 @@ fn emit_render_metadata(
         end_frame: window.start_frame + window.count.saturating_sub(1),
         resolved_params: manifest.resolved_params.clone(),
         overrides: manifest.applied_param_overrides.clone(),
+        agent_context: None, // TODO: Populate with actual layer states from final frame
     };
 
     let payload =

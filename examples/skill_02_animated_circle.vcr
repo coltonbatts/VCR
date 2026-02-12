@@ -1,0 +1,92 @@
+# =============================================================================
+# SKILL EXAMPLE 02: Animated Circle
+# =============================================================================
+# Difficulty: Beginner → Intermediate
+# Concepts:  Expressions, keyframe interpolation, easing, opacity animation
+# Render:    vcr build examples/skill_02_animated_circle.vcr -o renders/skill_02.mov
+# Preview:   vcr preview examples/skill_02_animated_circle.vcr --frames 30
+# =============================================================================
+#
+# This example introduces animation. A circle fades in, moves across the
+# screen, pulses in size, and changes color over time.
+#
+# KEY CONCEPTS:
+# - ScalarProperty accepts three formats: static (number), keyframe, expression.
+# - `t` in expressions is the current FRAME NUMBER (not seconds).
+#   At 30fps, t=30 means 1 second has elapsed.
+# - Keyframe interpolation uses start_frame/end_frame with easing.
+# - AnimatableColor lets each RGBA channel be an independent expression.
+
+version: 1
+
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  duration: 3.0              # 3 seconds = 90 frames
+
+layers:
+  # --- Background: Static dark gradient ---
+  - id: "bg"
+    procedural:
+      kind: gradient
+      start_color: { r: 0.02, g: 0.02, b: 0.04, a: 1.0 }
+      end_color: { r: 0.06, g: 0.04, b: 0.08, a: 1.0 }
+      direction: vertical    # Top-to-bottom. Other option: horizontal.
+
+  # --- Animated Circle ---
+  - id: "orb"
+    z_index: 1
+
+    # KEYFRAME ANIMATION: Fade in opacity from 0 to 1 over frames 0-20.
+    # Easing: ease_out means it starts fast and decelerates.
+    # Available easings: linear, ease_in, ease_out, ease_in_out.
+    opacity:
+      start_frame: 0
+      end_frame: 20
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+
+    procedural:
+      kind: circle
+
+      # Static center position. The circle stays centered vertically
+      # but we'll animate its horizontal position with pos_x below.
+      center: { x: 640, y: 360 }
+
+      # EXPRESSION: Radius pulses using sin().
+      # Base radius 60, oscillates +/- 15 pixels.
+      # t * 0.15 controls the speed of oscillation.
+      radius: "60 + sin(t * 0.15) * 15"
+
+      # ANIMATABLE COLOR: Each channel can be a number or expression.
+      # Here, red and blue shift over time while green stays constant.
+      color:
+        r: "0.3 + abs(sin(t * 0.04)) * 0.5"   # Oscillates 0.3 → 0.8
+        g: 0.5                                   # Static green
+        b: "0.8 - abs(sin(t * 0.04)) * 0.3"    # Inverse of red
+        a: 1.0
+
+    # EXPRESSION POSITION OVERRIDE: pos_x overrides the x component of position.
+    # This creates horizontal movement from left to right over 90 frames.
+    # lerp(a, b, t) = linear interpolation from a to b.
+    # smoothstep gives a smooth ease-in-out curve.
+    pos_x: "lerp(200, 1080, smoothstep(0.0, 90.0, t))"
+
+  # --- Trail ring behind the orb ---
+  # Demonstrates using the same expression but with a time delay.
+  - id: "trail"
+    z_index: 0
+    opacity: "clamp(0.4 - abs(sin(t * 0.1)) * 0.2, 0.0, 1.0)"
+    procedural:
+      kind: ring
+      center: { x: 640, y: 360 }
+      outer_radius: "80 + sin(t * 0.15) * 15"   # Same rhythm as orb
+      inner_radius: "70 + sin(t * 0.15) * 15"
+      color: { r: 0.0, g: 0.4, b: 0.8, a: 0.3 }
+
+    # Same horizontal movement but delayed by 5 frames (trails behind).
+    # max(0, t - 5) prevents negative values.
+    pos_x: "lerp(200, 1080, smoothstep(0.0, 90.0, clamp(t - 5, 0, 90)))"
