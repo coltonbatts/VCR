@@ -11,6 +11,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use image::RgbaImage;
 use serde::Serialize;
 
+use vcr::agent_errors::{
+    suggest_fix_for_lint_error, suggest_fix_for_validation_error, AgentErrorReport, AgentErrorType,
+    ErrorContext,
+};
 use vcr::ascii_capture::{
     build_ascii_capture_plan, parse_capture_size, run_ascii_capture, AsciiCaptureArgs,
     AsciiCaptureSource, SymbolRemapMode, DEFAULT_CAPTURE_DURATION_SECONDS,
@@ -23,10 +27,6 @@ use vcr::ascii_render::{
 use vcr::ascii_sources::render_ascii_sources;
 use vcr::ascii_stage::{
     parse_ascii_stage_size, render_ascii_stage_video, AsciiStageRenderArgs, CameraMode,
-};
-use vcr::agent_errors::{
-    suggest_fix_for_lint_error, suggest_fix_for_validation_error, AgentErrorReport,
-    AgentErrorType, ErrorContext,
 };
 use vcr::chat::{render_chat_video, ChatRenderArgs};
 use vcr::encoding::FfmpegPipe;
@@ -1986,7 +1986,7 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
             issues.push((
                 id.to_owned(),
                 format!("Layer '{id}' appears unreachable (never visible across sampled frames)."),
-           ));
+            ));
         }
     }
 
@@ -2006,12 +2006,11 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
         for (layer_id, issue) in &issues {
             let report = AgentErrorReport::lint(issue.clone())
                 .with_fix(
-                    suggest_fix_for_lint_error(layer_id, issue)
-                        .unwrap_or_else(|| {
-                            vcr::agent_errors::SuggestedFix::new(
-                                "Check layer visibility, timing, or opacity settings",
-                            )
-                        }),
+                    suggest_fix_for_lint_error(layer_id, issue).unwrap_or_else(|| {
+                        vcr::agent_errors::SuggestedFix::new(
+                            "Check layer visibility, timing, or opacity settings",
+                        )
+                    }),
                 )
                 .with_context(
                     ErrorContext::new()

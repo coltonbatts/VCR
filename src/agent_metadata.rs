@@ -127,8 +127,14 @@ mod tests {
 
     #[test]
     fn test_classify_layer_type() {
-        assert_eq!(classify_layer_type("procedural:solid_color"), "procedural:solid_color");
-        assert_eq!(classify_layer_type("procedural:circle"), "procedural:circle");
+        assert_eq!(
+            classify_layer_type("procedural:solid_color"),
+            "procedural:solid_color"
+        );
+        assert_eq!(
+            classify_layer_type("procedural:circle"),
+            "procedural:circle"
+        );
         assert_eq!(classify_layer_type("text"), "text");
         assert_eq!(classify_layer_type("image"), "image");
         assert_eq!(classify_layer_type("shader"), "shader");
