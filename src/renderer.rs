@@ -862,7 +862,7 @@ impl GpuRenderer {
         let ascii_pipeline = match &scene.ascii_post {
             Some(config) if config.enabled => {
                 let pipeline =
-                    AsciiPipeline::new(&device, config, width, height, render_format)
+                    AsciiPipeline::new(&device, &queue, config, width, height, render_format)
                         .context("failed to initialize ASCII post-processing pipeline")?;
                 Some(pipeline)
             }

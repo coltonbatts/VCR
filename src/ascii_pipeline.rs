@@ -1,16 +1,20 @@
 //! GPU-based ASCII post-processing pipeline.
 //!
 //! Converts a composited RGBA frame into a quantized glyph-index field and
-//! produces a debug grayscale visualization. Three sequential render passes:
+//! produces a glyph atlas render. Pipeline stages:
 //!
 //! 1. **Luma analysis** — input texture → cell-resolution luma texture
-//! 2. **Quantize** — luma texture → glyph-index texture (normalized in R channel)
-//! 3. **Debug visualization** — glyph-index texture → full-resolution RGBA grayscale
+//! 2. **CellPassStack** — composable cell-resolution passes (edge weighting, dithering, etc.)
+//! 3. **Quantize** — cell luma → glyph-index texture (normalized in R channel)
+//! 4. **Atlas render** — glyph-index texture + atlas → full-resolution RGBA
 //!
 //! All passes are deterministic given the same inputs and configuration.
 
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use bytemuck::{Pod, Zeroable};
+use image::ImageReader;
 use wgpu::util::DeviceExt;
 
 use crate::post_process::PostGlobals;
@@ -20,7 +24,7 @@ use crate::schema::AsciiPostConfig;
 // Per-shader parameter uniform (shared by all three ASCII passes)
 // ---------------------------------------------------------------------------
 
-/// Matches `AsciiParams` in all three ASCII WGSL shaders.
+/// Matches `AsciiParams` in all ASCII WGSL shaders.
 /// 16 bytes, 16-byte aligned.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -30,49 +34,372 @@ pub struct AsciiParams {
     pub _pad: f32,
 }
 
+/// Matches `AtlasMetadata` in ascii_atlas_render.wgsl.
+/// 16 bytes, 16-byte aligned.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct AtlasMetadata {
+    cell_width: f32,
+    cell_height: f32,
+    atlas_columns: f32,
+    _pad: f32,
+}
+
+// ---------------------------------------------------------------------------
+// CellPass — cell-resolution texture → texture abstraction
+// ---------------------------------------------------------------------------
+
+/// Shared context for cell pass execution. Allows passes to bind globals and params.
+pub struct CellPassContext<'a> {
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    pub encoder: &'a mut wgpu::CommandEncoder,
+    pub input_view: &'a wgpu::TextureView,
+    pub output_view: &'a wgpu::TextureView,
+    pub globals_buffer: &'a wgpu::Buffer,
+    pub params_buffer: &'a wgpu::Buffer,
+    pub sampler: &'a wgpu::Sampler,
+}
+
+/// A single cell-resolution pass. Reads from input texture, writes to output texture.
+/// Pure texture → texture transform. Deterministic uniforms only.
+///
+/// Future passes (edge weighting, dithering, local contrast) will implement this.
+pub trait CellPass: Send + Sync {
+    /// Execute this pass: reads `input_view`, writes to `output_view`.
+    fn execute(&self, _ctx: &mut CellPassContext<'_>) {
+        // Default no-op for placeholder implementations
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CellPassStack — ordered cell passes, applied sequentially
+// ---------------------------------------------------------------------------
+
+/// Ordered stack of cell-resolution passes. Applied sequentially between luma and quantize.
+/// When empty, quantize reads directly from the luma texture (passthrough).
+/// When non-empty, owns a scratch texture for pass output (ping-pong ready for future).
+pub struct CellPassStack {
+    passes: Vec<Box<dyn CellPass>>,
+    scratch_texture: Option<wgpu::Texture>,
+}
+
+impl CellPassStack {
+    /// Create an empty cell pass stack.
+    pub fn empty() -> Self {
+        Self {
+            passes: Vec::new(),
+            scratch_texture: None,
+        }
+    }
+
+    /// Create a stack with passes. Allocates scratch texture for pass output.
+    pub fn with_passes(
+        device: &wgpu::Device,
+        passes: Vec<Box<dyn CellPass>>,
+        cols: u32,
+        rows: u32,
+        render_format: wgpu::TextureFormat,
+    ) -> Self {
+        let scratch_texture = if passes.is_empty() {
+            None
+        } else {
+            Some(
+                device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("ascii-cell-pass-scratch"),
+                    size: wgpu::Extent3d {
+                        width: cols,
+                        height: rows,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: render_format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                }),
+            )
+        };
+        Self {
+            passes,
+            scratch_texture,
+        }
+    }
+
+    /// Returns true if there are no cell passes to apply.
+    pub fn is_empty(&self) -> bool {
+        self.passes.is_empty()
+    }
+
+    /// Returns the texture view that quantize should read from. When empty, returns None
+    /// (caller uses luma). When non-empty, returns the scratch texture view.
+    pub fn output_view(&self) -> Option<wgpu::TextureView> {
+        self.scratch_texture
+            .as_ref()
+            .map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()))
+    }
+
+    /// Apply all passes sequentially. When empty, this is a no-op; the caller
+    /// should use the luma texture directly for the quantize pass.
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        input_view: &wgpu::TextureView,
+        globals_buffer: &wgpu::Buffer,
+        params_buffer: &wgpu::Buffer,
+        sampler: &wgpu::Sampler,
+    ) {
+        let Some(scratch) = &self.scratch_texture else {
+            return;
+        };
+        let output_view = scratch.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut ctx = CellPassContext {
+            device,
+            queue,
+            encoder,
+            input_view,
+            output_view: &output_view,
+            globals_buffer,
+            params_buffer,
+            sampler,
+        };
+        for pass in &self.passes {
+            pass.execute(&mut ctx);
+        }
+    }
+}
+
+impl Default for CellPassStack {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EdgeBoostCellPass — first real cell pass
+// ---------------------------------------------------------------------------
+
+const ASCII_CELL_EDGE_BOOST_WGSL: &str =
+    include_str!("../shaders/wgsl/ascii_cell_edge_boost.wgsl");
+
+/// Edge boost parameters (hardcoded; no schema).
+const EDGE_GAIN: f32 = 2.0;
+const BOOST: f32 = 0.25;
+
+/// Cell pass that estimates edge strength and darkens edges for crisper ASCII silhouettes.
+pub struct EdgeBoostCellPass {
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+}
+
+impl EdgeBoostCellPass {
+    /// Build the edge boost pass. Uses the same bind layout as luma/quantize.
+    pub fn new(
+        device: &wgpu::Device,
+        quantize_bgl: &wgpu::BindGroupLayout,
+        render_format: wgpu::TextureFormat,
+    ) -> Result<Self> {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ascii-cell-edge-boost"),
+            source: wgpu::ShaderSource::Wgsl(ASCII_CELL_EDGE_BOOST_WGSL.into()),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ascii-cell-edge-boost-layout"),
+            bind_group_layouts: &[quantize_bgl],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("ascii-cell-edge-boost-pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: "vs_main",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: "fs_main",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: render_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+        // Create owned bind group layout for bind group creation (same layout as quantize)
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ascii-edge-boost-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        Ok(Self {
+            pipeline,
+            bind_group_layout,
+        })
+    }
+}
+
+impl CellPass for EdgeBoostCellPass {
+    fn execute(&self, ctx: &mut CellPassContext<'_>) {
+        let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ascii-edge-boost-bg"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(ctx.input_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(ctx.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: ctx.globals_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: ctx.params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("ascii-cell-edge-boost-pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: ctx.output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pure functions for edge boost math (unit tested)
+// ---------------------------------------------------------------------------
+
+/// Compute edge strength from finite-difference gradient. Deterministic.
+pub fn edge_strength(dx: f32, dy: f32, edge_gain: f32) -> f32 {
+    (dx + dy) * edge_gain
+}
+
+/// Apply edge boost to luma. Deterministic.
+pub fn apply_edge_boost(luma: f32, edge: f32, boost: f32) -> f32 {
+    (luma - edge * boost).clamp(0.0, 1.0)
+}
+
 // ---------------------------------------------------------------------------
 // Embedded WGSL sources
 // ---------------------------------------------------------------------------
 
 const ASCII_LUMA_WGSL: &str = include_str!("../shaders/wgsl/ascii_luma.wgsl");
 const ASCII_QUANTIZE_WGSL: &str = include_str!("../shaders/wgsl/ascii_quantize.wgsl");
-const ASCII_DEBUG_WGSL: &str = include_str!("../shaders/wgsl/ascii_debug.wgsl");
+const ASCII_ATLAS_RENDER_WGSL: &str = include_str!("../shaders/wgsl/ascii_atlas_render.wgsl");
+
+const GLYPH_ATLAS_PATH: &str = "assets/glyph_atlas/geist_pixel_line.png";
+const GLYPH_ATLAS_META_PATH: &str = "assets/glyph_atlas/geist_pixel_line.meta.json";
 
 // ---------------------------------------------------------------------------
 // AsciiPipeline
 // ---------------------------------------------------------------------------
 
-/// Holds GPU resources for the three-pass ASCII pipeline.
+/// Holds GPU resources for the ASCII pipeline.
 #[allow(dead_code)] // Config fields stored for future atlas/terminal phases.
 pub struct AsciiPipeline {
     cols: u32,
     rows: u32,
     ramp_len: u32,
 
+    // Cell pass stack (luma → optional effects → quantize input)
+    cell_pass_stack: CellPassStack,
+
     // Intermediate textures at cell resolution (cols x rows)
     luma_texture: wgpu::Texture,
     glyph_texture: wgpu::Texture,
 
-    // Debug output texture at full resolution
-    debug_texture: wgpu::Texture,
+    // Atlas render output texture at full resolution
+    atlas_output_texture: wgpu::Texture,
+    atlas_texture: wgpu::Texture,
 
     // Pipelines
     luma_pipeline: wgpu::RenderPipeline,
     quantize_pipeline: wgpu::RenderPipeline,
-    debug_pipeline: wgpu::RenderPipeline,
+    atlas_pipeline: wgpu::RenderPipeline,
 
     // Bind group layouts
     luma_bgl: wgpu::BindGroupLayout,
     quantize_bgl: wgpu::BindGroupLayout,
-    debug_bgl: wgpu::BindGroupLayout,
+    atlas_bgl: wgpu::BindGroupLayout,
 
     // Shared resources
     sampler: wgpu::Sampler,
+    nearest_sampler: wgpu::Sampler,
     globals_buffer: wgpu::Buffer,
     params_buffer: wgpu::Buffer,
+    atlas_metadata_buffer: wgpu::Buffer,
     params: AsciiParams,
+    atlas_metadata: AtlasMetadata,
 
-    // Full output dimensions (for debug pass viewport)
+    // Full output dimensions
     output_width: u32,
     output_height: u32,
 }
@@ -81,6 +408,7 @@ impl AsciiPipeline {
     /// Build the ASCII pipeline from a validated configuration.
     pub fn new(
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         config: &AsciiPostConfig,
         output_width: u32,
         output_height: u32,
@@ -103,6 +431,13 @@ impl AsciiPipeline {
             ..Default::default()
         });
 
+        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("ascii-nearest-sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
         let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("ascii-globals"),
             contents: bytemuck::bytes_of(&PostGlobals::zeroed()),
@@ -114,6 +449,78 @@ impl AsciiPipeline {
             contents: bytemuck::bytes_of(&params),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let atlas_path = repo_root.join(GLYPH_ATLAS_PATH);
+        let atlas_img = ImageReader::open(&atlas_path)
+            .with_context(|| format!("failed to open glyph atlas {}", atlas_path.display()))?
+            .decode()
+            .context("failed to decode glyph atlas image")?
+            .into_rgba8();
+
+        let atlas_meta_path = repo_root.join(GLYPH_ATLAS_META_PATH);
+        let atlas_meta_json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&atlas_meta_path).with_context(|| {
+                format!(
+                    "failed to read atlas metadata {}",
+                    atlas_meta_path.display()
+                )
+            })?)
+            .context("failed to parse atlas metadata JSON")?;
+        let atlas_metadata = AtlasMetadata {
+            cell_width: atlas_meta_json["cell_width"]
+                .as_u64()
+                .context("atlas meta missing cell_width")? as f32,
+            cell_height: atlas_meta_json["cell_height"]
+                .as_u64()
+                .context("atlas meta missing cell_height")? as f32,
+            atlas_columns: atlas_meta_json["atlas_columns"]
+                .as_u64()
+                .context("atlas meta missing atlas_columns")? as f32,
+            _pad: 0.0,
+        };
+
+        let atlas_metadata_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("ascii-atlas-metadata"),
+            contents: bytemuck::bytes_of(&atlas_metadata),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let (atlas_width, atlas_height) = atlas_img.dimensions();
+        let atlas_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ascii-atlas-texture"),
+            size: wgpu::Extent3d {
+                width: atlas_width,
+                height: atlas_height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let bytes_per_row = atlas_width * 4;
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &atlas_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            atlas_img.as_raw(),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(atlas_height),
+            },
+            wgpu::Extent3d {
+                width: atlas_width,
+                height: atlas_height,
+                depth_or_array_layers: 1,
+            },
+        );
 
         // Create intermediate textures at cell resolution
         let cell_size = wgpu::Extent3d {
@@ -129,8 +536,7 @@ impl AsciiPipeline {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: render_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
 
@@ -141,14 +547,13 @@ impl AsciiPipeline {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: render_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
 
-        // Debug output at full resolution
-        let debug_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("ascii-debug"),
+        // Atlas render output at full resolution
+        let atlas_output_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ascii-atlas-output"),
             size: wgpu::Extent3d {
                 width: output_width,
                 height: output_height,
@@ -213,23 +618,93 @@ impl AsciiPipeline {
 
         let luma_bgl = make_bgl("ascii-luma-bgl");
         let quantize_bgl = make_bgl("ascii-quantize-bgl");
-        let debug_bgl = make_bgl("ascii-debug-bgl");
+
+        let atlas_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ascii-atlas-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
 
         // Build pipelines
-        let make_pipeline =
-            |label: &str, wgsl: &str, bgl: &wgpu::BindGroupLayout| -> Result<wgpu::RenderPipeline> {
-                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some(label),
-                    source: wgpu::ShaderSource::Wgsl(wgsl.into()),
-                });
+        let make_pipeline = |label: &str,
+                             wgsl: &str,
+                             bgl: &wgpu::BindGroupLayout|
+         -> Result<wgpu::RenderPipeline> {
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(label),
+                source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+            });
 
-                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some(&format!("{label}-layout")),
-                    bind_group_layouts: &[bgl],
-                    push_constant_ranges: &[],
-                });
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(&format!("{label}-layout")),
+                bind_group_layouts: &[bgl],
+                push_constant_ranges: &[],
+            });
 
-                Ok(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            Ok(
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some(&format!("{label}-pipeline")),
                     layout: Some(&layout),
                     vertex: wgpu::VertexState {
@@ -255,36 +730,39 @@ impl AsciiPipeline {
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
                     multiview: None,
-                }))
-            };
+                }),
+            )
+        };
 
-        let luma_pipeline =
-            make_pipeline("ascii-luma", ASCII_LUMA_WGSL, &luma_bgl)
-                .context("failed to create ASCII luma pipeline")?;
-        let quantize_pipeline =
-            make_pipeline("ascii-quantize", ASCII_QUANTIZE_WGSL, &quantize_bgl)
-                .context("failed to create ASCII quantize pipeline")?;
-        let debug_pipeline =
-            make_pipeline("ascii-debug", ASCII_DEBUG_WGSL, &debug_bgl)
-                .context("failed to create ASCII debug pipeline")?;
+        let luma_pipeline = make_pipeline("ascii-luma", ASCII_LUMA_WGSL, &luma_bgl)
+            .context("failed to create ASCII luma pipeline")?;
+        let quantize_pipeline = make_pipeline("ascii-quantize", ASCII_QUANTIZE_WGSL, &quantize_bgl)
+            .context("failed to create ASCII quantize pipeline")?;
+        let atlas_pipeline = make_pipeline("ascii-atlas", ASCII_ATLAS_RENDER_WGSL, &atlas_bgl)
+            .context("failed to create ASCII atlas pipeline")?;
 
         Ok(Self {
             cols,
             rows,
             ramp_len,
+            cell_pass_stack: CellPassStack::empty(),
             luma_texture,
             glyph_texture,
-            debug_texture,
+            atlas_output_texture,
+            atlas_texture,
             luma_pipeline,
             quantize_pipeline,
-            debug_pipeline,
+            atlas_pipeline,
             luma_bgl,
             quantize_bgl,
-            debug_bgl,
+            atlas_bgl,
             sampler,
+            nearest_sampler,
             globals_buffer,
             params_buffer,
+            atlas_metadata_buffer,
             params,
+            atlas_metadata,
             output_width,
             output_height,
         })
@@ -323,8 +801,11 @@ impl AsciiPipeline {
         let glyph_view = self
             .glyph_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let debug_view = self
-            .debug_texture
+        let atlas_output_view = self
+            .atlas_output_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let atlas_view = self
+            .atlas_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         // --- Pass 1: Luma analysis (full res input → cell res luma) ---
@@ -371,6 +852,12 @@ impl AsciiPipeline {
             pass.draw(0..3, 0..1);
         }
 
+        // --- CellPassStack: optional cell-resolution effects (empty by default) ---
+        self.cell_pass_stack.apply(
+            device, queue, encoder, &luma_view,
+            &luma_view, // when empty, no-op; when populated, would use scratch texture
+        );
+
         // --- Pass 2: Quantize (cell res luma → cell res glyph index) ---
         let quantize_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ascii-quantize-bg"),
@@ -415,10 +902,10 @@ impl AsciiPipeline {
             pass.draw(0..3, 0..1);
         }
 
-        // --- Pass 3: Debug visualization (cell res glyph → full res grayscale) ---
-        let debug_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ascii-debug-bg"),
-            layout: &self.debug_bgl,
+        // --- Pass 3: Atlas render (cell res glyph + atlas → full res RGBA) ---
+        let atlas_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ascii-atlas-bg"),
+            layout: &self.atlas_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -426,7 +913,7 @@ impl AsciiPipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: wgpu::BindingResource::Sampler(&self.nearest_sampler),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -436,14 +923,26 @@ impl AsciiPipeline {
                     binding: 3,
                     resource: self.params_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(&self.nearest_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.atlas_metadata_buffer.as_entire_binding(),
+                },
             ],
         });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ascii-debug-pass"),
+                label: Some("ascii-atlas-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &debug_view,
+                    view: &atlas_output_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -454,13 +953,13 @@ impl AsciiPipeline {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.debug_pipeline);
-            pass.set_bind_group(0, &debug_bg, &[]);
+            pass.set_pipeline(&self.atlas_pipeline);
+            pass.set_bind_group(0, &atlas_bg, &[]);
             pass.draw(0..3, 0..1);
         }
     }
 
-    /// Copy the debug visualization result back to the output texture.
+    /// Copy the atlas render result back to the output texture.
     pub fn copy_debug_to_output(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -468,7 +967,7 @@ impl AsciiPipeline {
     ) {
         encoder.copy_texture_to_texture(
             wgpu::ImageCopyTexture {
-                texture: &self.debug_texture,
+                texture: &self.atlas_output_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -612,7 +1111,7 @@ mod tests {
     fn embedded_wgsl_sources_are_nonempty() {
         assert!(!ASCII_LUMA_WGSL.is_empty());
         assert!(!ASCII_QUANTIZE_WGSL.is_empty());
-        assert!(!ASCII_DEBUG_WGSL.is_empty());
+        assert!(!ASCII_ATLAS_RENDER_WGSL.is_empty());
     }
 
     #[test]
@@ -621,22 +1120,41 @@ mod tests {
         assert!(ASCII_LUMA_WGSL.contains("fn fs_main"));
         assert!(ASCII_QUANTIZE_WGSL.contains("fn vs_main"));
         assert!(ASCII_QUANTIZE_WGSL.contains("fn fs_main"));
-        assert!(ASCII_DEBUG_WGSL.contains("fn vs_main"));
-        assert!(ASCII_DEBUG_WGSL.contains("fn fs_main"));
+        assert!(ASCII_ATLAS_RENDER_WGSL.contains("fn vs_main"));
+        assert!(ASCII_ATLAS_RENDER_WGSL.contains("fn fs_main"));
     }
 
     #[test]
     fn wgsl_sources_declare_ascii_params() {
         assert!(ASCII_LUMA_WGSL.contains("struct AsciiParams"));
         assert!(ASCII_QUANTIZE_WGSL.contains("struct AsciiParams"));
-        assert!(ASCII_DEBUG_WGSL.contains("struct AsciiParams"));
+        assert!(ASCII_ATLAS_RENDER_WGSL.contains("struct AsciiParams"));
     }
 
     #[test]
     fn wgsl_sources_declare_post_globals() {
         assert!(ASCII_LUMA_WGSL.contains("struct PostGlobals"));
         assert!(ASCII_QUANTIZE_WGSL.contains("struct PostGlobals"));
-        assert!(ASCII_DEBUG_WGSL.contains("struct PostGlobals"));
+        assert!(ASCII_ATLAS_RENDER_WGSL.contains("struct PostGlobals"));
+    }
+
+    /// Verify glyph index math: glyph_index = round(normalized_value * (N - 1))
+    #[test]
+    fn normalized_glyph_id_to_index_math() {
+        let ramp_len = 10u32;
+        let n = ramp_len as f32;
+        for idx in 0..ramp_len {
+            let normalized = if ramp_len > 1 {
+                idx as f32 / (ramp_len - 1) as f32
+            } else {
+                0.5
+            };
+            let recovered = (normalized * (n - 1.0)).round();
+            assert!(
+                (recovered - idx as f32).abs() < 0.001,
+                "idx={idx} normalized={normalized} recovered={recovered}"
+            );
+        }
     }
 
     #[test]
@@ -663,5 +1181,19 @@ mod tests {
             ramp as usize,
             "all glyph indices should be reachable"
         );
+    }
+
+    // --- CellPassStack (placeholder: pipeline executes correctly when stack is empty) ---
+
+    #[test]
+    fn cell_pass_stack_empty_by_default() {
+        let stack = CellPassStack::empty();
+        assert!(stack.is_empty(), "new CellPassStack should be empty");
+    }
+
+    #[test]
+    fn cell_pass_stack_default_is_empty() {
+        let stack = CellPassStack::default();
+        assert!(stack.is_empty(), "CellPassStack::default() should be empty");
     }
 }
