@@ -13,6 +13,15 @@ use vcr::workflow::frame_client::maybe_upload_render_to_frame_io;
 use vcr::workflow::manifest_generator::ManifestGenerator;
 use vcr::workflow::vcr_renderer::{check_manifest, render_manifest};
 
+const FIGMA_VCR_HEADER: &str = r#"
+ ███████╗██╗ ██████╗ ███╗   ███╗ █████╗     ██╗    ██╗ ██████╗██████╗ 
+ ██╔════╝██║██╔════╝ ████╗ ████║██╔══██╗    ██║    ██║██╔════╝██╔══██╗
+ █████╗  ██║██║  ███╗██╔████╔██║███████║    ██║    ██║██║     ██████╔╝
+ ██╔══╝  ██║██║   ██║██║╚██╔╝██║██╔══██║    ╚██╗  ██╔╝██║     ██╔══██╗
+ ██║     ██║╚██████╔╝██║ ╚═╝ ██║██║  ██║     ╚████╔╝ ╚██████╗██║  ██║
+ ╚═╝     ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝      ╚═══╝   ╚═════╝╚═╝  ╚═╝
+"#;
+
 #[derive(Debug, Parser)]
 #[command(name = "figma-vcr-workflow")]
 #[command(about = "Figma -> VCR motion graphics workflow for product card MVP")]
@@ -36,6 +45,8 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    println!("{}", FIGMA_VCR_HEADER);
+    println!("Figma -> VCR workflow initialization\n");
     let started = Instant::now();
 
     let figma_token = env::var("FIGMA_TOKEN")

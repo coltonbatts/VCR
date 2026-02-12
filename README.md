@@ -1,5 +1,18 @@
 # VCR (Video Component Renderer)
 
+```text
+██╗   ██╗ ██████╗██████╗ 
+██║   ██║██╔════╝██╔══██╗
+██║   ██║██║     ██████╔╝
+╚██╗ ██╔╝██║     ██╔══██╗
+ ╚████╔╝ ╚██████╗██║  ██║
+  ╚═══╝   ╚═════╝╚═╝  ╚═╝
+```
+
+```text
+vcr version 0.1.1 (62c31bc)
+```
+
 ![Welcome to VCR](assets/welcome%20to%20VCR.jpg)
 
 VCR is a local, deterministic motion graphics engine in Rust with an agent-first workflow on top.

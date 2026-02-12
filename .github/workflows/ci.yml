@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,9 +13,20 @@ jobs:
   quality:
     name: Quality Checks
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      
+
+      - name: VCR Branding
+        run: |
+          echo "██╗   ██╗ ██████╗██████╗ "
+          echo "██║   ██║██╔════╝██╔══██╗"
+          echo "██║   ██║██║     ██████╔╝"
+          echo "╚██╗ ██╔╝██║     ██╔══██╗"
+          echo " ╚████╔╝ ╚██████╗██║  ██║"
+          echo "  ╚═══╝   ╚═════╝╚═╝  ╚═╝"
+          echo "VCR SYSTEM QUALITY CHECK INITIALIZED"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -33,8 +44,19 @@ jobs:
   test:
     name: Regression Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+      - name: VCR Branding
+        run: |
+          echo "██╗   ██╗ ██████╗██████╗ "
+          echo "██║   ██║██╔════╝██╔══██╗"
+          echo "██║   ██║██║     ██████╔╝"
+          echo "╚██╗ ██╔╝██║     ██╔══██╗"
+          echo " ╚████╔╝ ╚██████╗██║  ██║"
+          echo "  ╚═══╝   ╚═════╝╚═╝  ╚═╝"
+          echo "VCR REGRESSION TESTING INITIALIZED"
 
       - name: Install FFmpeg
         run: |
@@ -54,8 +76,19 @@ jobs:
   determinism:
     name: Determinism Verification
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      - name: VCR Branding
+        run: |
+          echo "██╗   ██╗ ██████╗██████╗ "
+          echo "██║   ██║██╔════╝██╔══██╗"
+          echo "██║   ██║██║     ██████╔╝"
+          echo "╚██╗ ██╔╝██║     ██╔══██╗"
+          echo " ╚████╔╝ ╚██████╗██║  ██║"
+          echo "  ╚═══╝   ╚═════╝╚═╝  ╚═╝"
+          echo "VCR DETERMINISM VERIFICATION INITIALIZED"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

@@ -42,6 +42,15 @@ use vcr::timeline::{
     resolve_edge_boost_override, AsciiRuntimeOverrides, RenderSceneData,
 };
 
+const VCR_BANNER: &str = r#"
+██╗   ██╗ ██████╗██████╗ 
+██║   ██║██╔════╝██╔══██╗
+██║   ██║██║     ██████╔╝
+╚██╗ ██╔╝██║     ██╔══██╗
+ ╚████╔╝ ╚██████╗██║  ██║
+  ╚═══╝   ╚═════╝╚═╝  ╚═╝
+"#;
+
 const EXIT_CODES_HELP: &str = "Exit codes: 0=success, 2=usage/arg error, 3=manifest validation error, 4=missing dependency, 5=I/O error";
 
 fn version_string() -> String {
@@ -562,7 +571,8 @@ impl VcrExitCode {
 fn main() -> ExitCode {
     // Handle --version before parse (avoids subcommand requirement)
     if std::env::args().any(|a| a == "--version" || a == "-V") {
-        println!("vcr {}", version_string());
+        println!("{}", VCR_BANNER);
+        println!("vcr version {}", version_string());
         return VcrExitCode::Success.to_exit_code();
     }
     let cli = Cli::parse();
