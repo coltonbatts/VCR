@@ -306,7 +306,7 @@ Example payload (missing required `environment.duration`):
 
 ## License
 
-MIT
+[MIT License](LICENSE)
 
 ## Author
 
