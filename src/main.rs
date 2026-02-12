@@ -34,11 +34,22 @@ use vcr::schema::{
     Resolution,
 };
 use vcr::timeline::{
-    ascii_overrides_from_edge_boost, evaluate_manifest_layers_at_frame,
-    resolve_edge_boost_override, AsciiRuntimeOverrides, RenderSceneData,
+    ascii_overrides_from_flags, evaluate_manifest_layers_at_frame,
+    resolve_bayer_dither_override, resolve_edge_boost_override, AsciiRuntimeOverrides,
+    RenderSceneData,
 };
 
 const EXIT_CODES_HELP: &str = "Exit codes: 0=success, 2=usage/arg error, 3=manifest validation error, 4=missing dependency, 5=I/O error";
+
+fn version_string() -> String {
+    let base = env!("CARGO_PKG_VERSION");
+    #[allow(dead_code)]
+    let hash: Option<&str> = option_env!("VCR_GIT_HASH");
+    match hash {
+        Some(h) if !h.is_empty() => format!("{base} ({h})"),
+        _ => base.to_owned(),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum AsciiEdgeBoostArg {
@@ -46,20 +57,40 @@ enum AsciiEdgeBoostArg {
     Off,
 }
 
-/// Resolve ASCII runtime overrides from CLI flag and env. CLI wins over env.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum AsciiBayerDitherArg {
+    On,
+    Off,
+}
+
+/// Resolve ASCII runtime overrides from CLI flags and env. CLI wins over env.
 fn resolve_ascii_overrides(
     cli_edge_boost: Option<AsciiEdgeBoostArg>,
+    cli_bayer_dither: Option<AsciiBayerDitherArg>,
 ) -> Option<AsciiRuntimeOverrides> {
-    let cli_bool = cli_edge_boost.map(|a| matches!(a, AsciiEdgeBoostArg::On));
-    let edge_boost =
-        resolve_edge_boost_override(cli_bool, std::env::var("VCR_ASCII_EDGE_BOOST").ok());
-    ascii_overrides_from_edge_boost(edge_boost)
+    let edge_boost = resolve_edge_boost_override(
+        cli_edge_boost.map(|a| matches!(a, AsciiEdgeBoostArg::On)),
+        std::env::var("VCR_ASCII_EDGE_BOOST").ok(),
+    );
+    let bayer_dither = resolve_bayer_dither_override(
+        cli_bayer_dither.map(|a| matches!(a, AsciiBayerDitherArg::On)),
+        std::env::var("VCR_ASCII_BAYER_DITHER").ok(),
+    );
+    ascii_overrides_from_flags(edge_boost, bayer_dither)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum BackendArg {
+    Auto,
+    Software,
+    Gpu,
 }
 
 #[derive(Debug, Parser)]
 #[command(name = "vcr")]
 #[command(about = "VCR (Video Component Renderer)")]
 #[command(after_help = EXIT_CODES_HELP)]
+#[command(version = None)]
 struct Cli {
     #[arg(
         long = "quiet",
@@ -68,12 +99,27 @@ struct Cli {
     )]
     quiet: bool,
     #[arg(
+        long = "backend",
+        value_enum,
+        global = true,
+        default_value_t = BackendArg::Auto,
+        help = "Force render backend: auto (default), software (deterministic), gpu"
+    )]
+    backend: BackendArg,
+    #[arg(
         long = "ascii-edge-boost",
         value_enum,
         global = true,
         help = "Enable/disable ASCII edge boost when ascii_post is enabled. Overrides VCR_ASCII_EDGE_BOOST env."
     )]
     ascii_edge_boost: Option<AsciiEdgeBoostArg>,
+    #[arg(
+        long = "ascii-bayer-dither",
+        value_enum,
+        global = true,
+        help = "Enable/disable ASCII Bayer dither when ascii_post is enabled. Overrides VCR_ASCII_BAYER_DITHER env."
+    )]
+    ascii_bayer_dither: Option<AsciiBayerDitherArg>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -243,6 +289,20 @@ enum Commands {
         command: AsciiCommands,
     },
     Doctor,
+    DeterminismReport {
+        manifest: PathBuf,
+        #[arg(long = "frame", default_value_t = 0)]
+        frame: u32,
+        #[arg(
+            long = "set",
+            value_name = "NAME=VALUE",
+            action = clap::ArgAction::Append,
+            help = "Override a manifest param at runtime."
+        )]
+        set: Vec<String>,
+        #[arg(long = "json", help = "Emit machine-readable JSON output")]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -476,6 +536,7 @@ impl Commands {
             Self::Chat { .. } => "chat",
             Self::Ascii { .. } => "ascii",
             Self::Doctor => "doctor",
+            Self::DeterminismReport { .. } => "determinism-report",
         }
     }
 }
@@ -496,6 +557,11 @@ impl VcrExitCode {
 }
 
 fn main() -> ExitCode {
+    // Handle --version before parse (avoids subcommand requirement)
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!("vcr {}", version_string());
+        return VcrExitCode::Success.to_exit_code();
+    }
     let cli = Cli::parse();
     let command_name = cli.command.name();
     match run_cli(cli) {
@@ -510,7 +576,8 @@ fn main() -> ExitCode {
 
 fn run_cli(cli: Cli) -> Result<()> {
     let quiet = cli.quiet;
-    let ascii_overrides = resolve_ascii_overrides(cli.ascii_edge_boost);
+    let ascii_overrides =
+        resolve_ascii_overrides(cli.ascii_edge_boost, cli.ascii_bayer_dither);
 
     match cli.command {
         Commands::Build {
@@ -533,6 +600,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 frame_window,
                 &set,
                 ascii_overrides,
+                cli.backend,
                 quiet,
             )
         }
@@ -582,6 +650,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 },
                 &set,
                 ascii_overrides.as_ref(),
+                cli.backend,
                 quiet,
             )
             .map(|_| ())
@@ -616,6 +685,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 &output,
                 &set,
                 ascii_overrides.as_ref(),
+                cli.backend,
                 quiet,
             )
         }
@@ -637,6 +707,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 &output_dir,
                 &set,
                 ascii_overrides.as_ref(),
+                cli.backend,
                 quiet,
             )
         }
@@ -674,6 +745,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 interval_ms,
                 &set,
                 ascii_overrides.as_ref(),
+                cli.backend,
                 quiet,
             )
         }
@@ -782,6 +854,12 @@ fn run_cli(cli: Cli) -> Result<()> {
             } => run_ascii_lab(export_dir.as_deref(), debug_stage_hashes),
         },
         Commands::Doctor => run_doctor(),
+        Commands::DeterminismReport {
+            manifest,
+            frame,
+            set,
+            json,
+        } => run_determinism_report(&manifest, frame, &set, json),
     }
 }
 
@@ -1006,6 +1084,55 @@ fn run_doctor() -> Result<()> {
         println!("\n[VCR] Doctor: Some checks failed. Please address the issues above.");
         bail!("missing dependency: {}", missing_dependencies.join(", "))
     }
+}
+
+fn run_determinism_report(
+    manifest_path: &Path,
+    frame: u32,
+    set_values: &[String],
+    json: bool,
+) -> Result<()> {
+    let manifest = load_manifest_with_overrides(manifest_path, set_values)?;
+    let total_frames = manifest.environment.total_frames();
+    if frame >= total_frames {
+        bail!(
+            "--frame {} is out of bounds for {} total frames",
+            frame,
+            total_frames
+        );
+    }
+
+    let scene = RenderSceneData::from_manifest(&manifest);
+    let mut renderer = Renderer::new_software(
+        &manifest.environment,
+        &manifest.layers,
+        scene,
+    )?;
+    let rgba = renderer.render_frame_rgba(frame)?;
+    let hash = fnv1a64(&rgba);
+
+    if json {
+        #[derive(serde::Serialize)]
+        struct Report {
+            manifest: String,
+            frame: u32,
+            backend: &'static str,
+            frame_hash: String,
+        }
+        let report = Report {
+            manifest: manifest_path.display().to_string(),
+            frame,
+            backend: "software",
+            frame_hash: format!("0x{hash:016x}"),
+        };
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("manifest: {}", manifest_path.display());
+        println!("frame: {}", frame);
+        println!("backend: software");
+        println!("frame_hash: 0x{hash:016x}");
+    }
+    Ok(())
 }
 
 fn run_chat_render(
@@ -2023,12 +2150,27 @@ fn run_explain(manifest_path: &Path, set_values: &[String], json: bool) -> Resul
     Ok(())
 }
 
+fn create_renderer(
+    environment: &Environment,
+    layers: &[vcr::schema::Layer],
+    scene: RenderSceneData,
+    backend: BackendArg,
+) -> Result<Renderer> {
+    match backend {
+        BackendArg::Software => Renderer::new_software(environment, layers, scene),
+        BackendArg::Gpu | BackendArg::Auto => {
+            pollster::block_on(Renderer::new_with_scene(environment, layers, scene))
+        }
+    }
+}
+
 fn run_build(
     manifest_path: &Path,
     output_path: &Path,
     args: FrameWindowArgs,
     set_values: &[String],
     ascii_overrides: Option<AsciiRuntimeOverrides>,
+    backend: BackendArg,
     quiet: bool,
 ) -> Result<()> {
     let parse_start = Instant::now();
@@ -2042,11 +2184,12 @@ fn run_build(
     if let Some(overrides) = ascii_overrides {
         scene = scene.with_ascii_overrides(overrides);
     }
-    let mut renderer = pollster::block_on(Renderer::new_with_scene(
+    let mut renderer = create_renderer(
         &manifest.environment,
         &manifest.layers,
         scene,
-    ))?;
+        backend,
+    )?;
     let layout_elapsed = layout_start.elapsed();
     progress_log(
         quiet,
@@ -2118,6 +2261,7 @@ fn run_preview(
     args: PreviewArgs,
     set_values: &[String],
     ascii_overrides: Option<&AsciiRuntimeOverrides>,
+    backend: BackendArg,
     quiet: bool,
 ) -> Result<ResolvedInputsSnapshot> {
     if !(0.0..=1.0).contains(&args.scale) || args.scale == 0.0 {
@@ -2145,11 +2289,12 @@ fn run_preview(
     if let Some(overrides) = ascii_overrides {
         scene = scene.with_ascii_overrides(overrides.clone());
     }
-    let mut renderer = pollster::block_on(Renderer::new_with_scene(
+    let mut renderer = create_renderer(
         &preview_environment,
         &manifest.layers,
         scene,
-    ))?;
+        backend,
+    )?;
     let layout_elapsed = layout_start.elapsed();
 
     progress_log(
@@ -2264,6 +2409,7 @@ fn run_render_frame(
     output_path: &Path,
     set_values: &[String],
     ascii_overrides: Option<&AsciiRuntimeOverrides>,
+    backend: BackendArg,
     quiet: bool,
 ) -> Result<()> {
     let parse_start = Instant::now();
@@ -2283,11 +2429,12 @@ fn run_render_frame(
     if let Some(overrides) = ascii_overrides {
         scene = scene.with_ascii_overrides(overrides.clone());
     }
-    let mut renderer = pollster::block_on(Renderer::new_with_scene(
+    let mut renderer = create_renderer(
         &manifest.environment,
         &manifest.layers,
         scene,
-    ))?;
+        backend,
+    )?;
     let layout_elapsed = layout_start.elapsed();
     progress_log(
         quiet,
@@ -2346,6 +2493,7 @@ fn run_render_frames(
     output_dir: &Path,
     set_values: &[String],
     ascii_overrides: Option<&AsciiRuntimeOverrides>,
+    backend: BackendArg,
     quiet: bool,
 ) -> Result<()> {
     if frames == 0 {
@@ -2373,11 +2521,12 @@ fn run_render_frames(
     if let Some(overrides) = ascii_overrides {
         scene = scene.with_ascii_overrides(overrides.clone());
     }
-    let mut renderer = pollster::block_on(Renderer::new_with_scene(
+    let mut renderer = create_renderer(
         &manifest.environment,
         &manifest.layers,
         scene,
-    ))?;
+        backend,
+    )?;
     let layout_elapsed = layout_start.elapsed();
     progress_log(
         quiet,
@@ -2437,6 +2586,7 @@ fn run_watch(
     interval_ms: u64,
     set_values: &[String],
     ascii_overrides: Option<&AsciiRuntimeOverrides>,
+    backend: BackendArg,
     quiet: bool,
 ) -> Result<()> {
     if interval_ms == 0 {
@@ -2459,6 +2609,7 @@ fn run_watch(
         preview_args.clone(),
         set_values,
         ascii_overrides,
+        backend,
         quiet,
     ) {
         Ok(inputs) => Some(inputs),
@@ -2493,6 +2644,7 @@ fn run_watch(
                 preview_args.clone(),
                 set_values,
                 ascii_overrides,
+                backend,
                 quiet,
             ) {
                 Ok(current_inputs) => {

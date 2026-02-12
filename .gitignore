@@ -2,6 +2,7 @@
 .DS_Store
 /renders/
 /exports/
+*.metadata.json
 /preview_frames/
 *.mov
 *.png

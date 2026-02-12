@@ -13,11 +13,13 @@ use crate::schema::{
 pub struct AsciiRuntimeOverrides {
     /// Override for edge boost cell pass. None = use default (enabled).
     pub edge_boost: Option<bool>,
+    /// Override for Bayer dither cell pass. None = use default (disabled).
+    pub bayer_dither: Option<bool>,
 }
 
-/// Resolve edge boost from CLI flag and env. CLI wins over env.
+/// Resolve a boolean override from CLI and env. CLI wins over env.
 /// Returns None when no override is provided (use default).
-pub fn resolve_edge_boost_override(cli_arg: Option<bool>, env_var: Option<String>) -> Option<bool> {
+pub fn resolve_bool_override(cli_arg: Option<bool>, env_var: Option<String>) -> Option<bool> {
     if cli_arg.is_some() {
         return cli_arg;
     }
@@ -28,10 +30,35 @@ pub fn resolve_edge_boost_override(cli_arg: Option<bool>, env_var: Option<String
     }
 }
 
+/// Resolve edge boost from CLI flag and env. CLI wins over env.
+pub fn resolve_edge_boost_override(cli_arg: Option<bool>, env_var: Option<String>) -> Option<bool> {
+    resolve_bool_override(cli_arg, env_var)
+}
+
+/// Resolve Bayer dither from CLI flag and env. CLI wins over env.
+pub fn resolve_bayer_dither_override(
+    cli_arg: Option<bool>,
+    env_var: Option<String>,
+) -> Option<bool> {
+    resolve_bool_override(cli_arg, env_var)
+}
+
 /// Build AsciiRuntimeOverrides from resolved edge boost. Returns None if no overrides.
 pub fn ascii_overrides_from_edge_boost(edge_boost: Option<bool>) -> Option<AsciiRuntimeOverrides> {
-    edge_boost.map(|v| AsciiRuntimeOverrides {
-        edge_boost: Some(v),
+    ascii_overrides_from_flags(edge_boost, None)
+}
+
+/// Build AsciiRuntimeOverrides from resolved flags. Returns None if no overrides.
+pub fn ascii_overrides_from_flags(
+    edge_boost: Option<bool>,
+    bayer_dither: Option<bool>,
+) -> Option<AsciiRuntimeOverrides> {
+    if edge_boost.is_none() && bayer_dither.is_none() {
+        return None;
+    }
+    Some(AsciiRuntimeOverrides {
+        edge_boost,
+        bayer_dither,
     })
 }
 
@@ -572,5 +599,69 @@ layers:
 
         let o = super::ascii_overrides_from_edge_boost(Some(false)).expect("should build");
         assert_eq!(o.edge_boost, Some(false));
+    }
+
+    #[test]
+    fn resolve_bayer_dither_cli_wins_over_env() {
+        assert_eq!(
+            super::resolve_bayer_dither_override(Some(true), Some("0".into())),
+            Some(true)
+        );
+        assert_eq!(
+            super::resolve_bayer_dither_override(Some(false), Some("1".into())),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn resolve_bayer_dither_env_1_on_true() {
+        assert_eq!(
+            super::resolve_bayer_dither_override(None, Some("1".into())),
+            Some(true)
+        );
+        assert_eq!(
+            super::resolve_bayer_dither_override(None, Some("on".into())),
+            Some(true)
+        );
+        assert_eq!(
+            super::resolve_bayer_dither_override(None, Some("true".into())),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn resolve_bayer_dither_env_0_off_false() {
+        assert_eq!(
+            super::resolve_bayer_dither_override(None, Some("0".into())),
+            Some(false)
+        );
+        assert_eq!(
+            super::resolve_bayer_dither_override(None, Some("off".into())),
+            Some(false)
+        );
+        assert_eq!(
+            super::resolve_bayer_dither_override(None, Some("false".into())),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn resolve_bayer_dither_no_override_returns_none() {
+        assert_eq!(super::resolve_bayer_dither_override(None, None), None);
+        assert_eq!(
+            super::resolve_bayer_dither_override(None, Some("invalid".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn ascii_overrides_from_flags_with_bayer_dither() {
+        let o = super::ascii_overrides_from_flags(None, Some(true)).expect("should build");
+        assert_eq!(o.edge_boost, None);
+        assert_eq!(o.bayer_dither, Some(true));
+
+        let o = super::ascii_overrides_from_flags(Some(true), Some(false)).expect("should build");
+        assert_eq!(o.edge_boost, Some(true));
+        assert_eq!(o.bayer_dither, Some(false));
     }
 }

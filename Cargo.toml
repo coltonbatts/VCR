@@ -29,15 +29,10 @@ egui-winit = "0.28"
 
 [dev-dependencies]
 tempfile = "3.10"
+criterion = "0.5"
 
-[[bin]]
-name = "character_density_analysis"
-path = "experiments/character_density_analysis.rs"
+[[bench]]
+name = "render_frame"
+harness = false
 
-[[bin]]
-name = "luminance_to_char_mapping_test"
-path = "experiments/luminance_to_char_mapping_test.rs"
-
-[[bin]]
-name = "frame_to_ascii_pipeline_prototype"
-path = "experiments/frame_to_ascii_pipeline_prototype.rs"
+# figma-vcr-workflow is the only additional binary (integrations)

@@ -50,3 +50,23 @@ jobs:
       - name: Run Tests
         # Note: determinism tests force software rendering, which works in CI
         run: cargo test --all-targets
+
+  determinism:
+    name: Determinism Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Determinism Tests
+        run: cargo test --test determinism
+
+      - name: Determinism Report (golden scene)
+        run: |
+          cargo build --release --bin vcr
+          ./target/release/vcr determinism-report examples/white_on_alpha.vcr --frame 0 --json

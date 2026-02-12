@@ -1,6 +1,6 @@
 # VCR Exit Codes
 
-VCR uses stable process exit codes for scripting and CI:
+VCR uses stable process exit codes for scripting and CI. See `docs/ARCHITECTURE.md` for system overview.
 
 | Code | Meaning | Typical examples |
 | --- | --- | --- |

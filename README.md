@@ -193,6 +193,9 @@ Override at runtime:
 - `ascii capture`
 - `ascii sources`
 - `doctor`
+- `determinism-report` (frame hash for golden tests)
+
+Use `--version` for version + git hash, `--backend software` for deterministic CPU rendering.
 
 For full help:
 
@@ -208,8 +211,11 @@ cargo test --test determinism
 cargo test --test cli_contract
 ```
 
-Exit code contract is documented in `docs/EXIT_CODES.md`.
-Param semantics are documented in `docs/PARAMS.md`.
+- Exit codes: `docs/EXIT_CODES.md`
+- Param semantics: `docs/PARAMS.md`
+- Architecture: `docs/ARCHITECTURE.md`
+- Determinism: `docs/DETERMINISM_SPEC.md`
+- Reproducible build: `docs/REPRODUCIBLE_BUILD.md`
 
 ## Project Docs
 
@@ -224,6 +230,10 @@ Param semantics are documented in `docs/PARAMS.md`.
 - `docs/ascii_research_takeaways.md` - prioritized, codebase-specific pull-through items from the report
 - `docs/SKILLS_PROTOCOL.md` - agent update protocol
 - `docs/EXIT_CODES.md` - CLI exit code contract
+- `docs/ARCHITECTURE.md` - system overview
+- `docs/DETERMINISM_SPEC.md` - determinism contract
+- `docs/REPRODUCIBLE_BUILD.md` - build instructions
+- `docs/BENCHMARK_REPORT.md` - benchmark guide
 
 ## License
 

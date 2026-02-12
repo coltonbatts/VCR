@@ -866,6 +866,11 @@ impl GpuRenderer {
                     .as_ref()
                     .and_then(|o| o.edge_boost)
                     .unwrap_or(crate::ascii_pipeline::DEFAULT_EDGE_BOOST);
+                let enable_bayer_dither = scene
+                    .ascii_overrides
+                    .as_ref()
+                    .and_then(|o| o.bayer_dither)
+                    .unwrap_or(crate::ascii_pipeline::DEFAULT_BAYER_DITHER);
                 let pipeline = AsciiPipeline::new(
                     &device,
                     &queue,
@@ -874,6 +879,7 @@ impl GpuRenderer {
                     height,
                     render_format,
                     enable_edge_boost,
+                    enable_bayer_dither,
                 )
                 .context("failed to initialize ASCII post-processing pipeline")?;
                 Some(pipeline)
