@@ -34,9 +34,8 @@ use vcr::schema::{
     Resolution,
 };
 use vcr::timeline::{
-    ascii_overrides_from_flags, evaluate_manifest_layers_at_frame,
-    resolve_bayer_dither_override, resolve_edge_boost_override, AsciiRuntimeOverrides,
-    RenderSceneData,
+    ascii_overrides_from_flags, evaluate_manifest_layers_at_frame, resolve_bayer_dither_override,
+    resolve_edge_boost_override, AsciiRuntimeOverrides, RenderSceneData,
 };
 
 const EXIT_CODES_HELP: &str = "Exit codes: 0=success, 2=usage/arg error, 3=manifest validation error, 4=missing dependency, 5=I/O error";
@@ -576,8 +575,7 @@ fn main() -> ExitCode {
 
 fn run_cli(cli: Cli) -> Result<()> {
     let quiet = cli.quiet;
-    let ascii_overrides =
-        resolve_ascii_overrides(cli.ascii_edge_boost, cli.ascii_bayer_dither);
+    let ascii_overrides = resolve_ascii_overrides(cli.ascii_edge_boost, cli.ascii_bayer_dither);
 
     match cli.command {
         Commands::Build {
@@ -1103,11 +1101,7 @@ fn run_determinism_report(
     }
 
     let scene = RenderSceneData::from_manifest(&manifest);
-    let mut renderer = Renderer::new_software(
-        &manifest.environment,
-        &manifest.layers,
-        scene,
-    )?;
+    let mut renderer = Renderer::new_software(&manifest.environment, &manifest.layers, scene)?;
     let rgba = renderer.render_frame_rgba(frame)?;
     let hash = fnv1a64(&rgba);
 
@@ -2184,12 +2178,7 @@ fn run_build(
     if let Some(overrides) = ascii_overrides {
         scene = scene.with_ascii_overrides(overrides);
     }
-    let mut renderer = create_renderer(
-        &manifest.environment,
-        &manifest.layers,
-        scene,
-        backend,
-    )?;
+    let mut renderer = create_renderer(&manifest.environment, &manifest.layers, scene, backend)?;
     let layout_elapsed = layout_start.elapsed();
     progress_log(
         quiet,
@@ -2289,12 +2278,7 @@ fn run_preview(
     if let Some(overrides) = ascii_overrides {
         scene = scene.with_ascii_overrides(overrides.clone());
     }
-    let mut renderer = create_renderer(
-        &preview_environment,
-        &manifest.layers,
-        scene,
-        backend,
-    )?;
+    let mut renderer = create_renderer(&preview_environment, &manifest.layers, scene, backend)?;
     let layout_elapsed = layout_start.elapsed();
 
     progress_log(
@@ -2429,12 +2413,7 @@ fn run_render_frame(
     if let Some(overrides) = ascii_overrides {
         scene = scene.with_ascii_overrides(overrides.clone());
     }
-    let mut renderer = create_renderer(
-        &manifest.environment,
-        &manifest.layers,
-        scene,
-        backend,
-    )?;
+    let mut renderer = create_renderer(&manifest.environment, &manifest.layers, scene, backend)?;
     let layout_elapsed = layout_start.elapsed();
     progress_log(
         quiet,
@@ -2521,12 +2500,7 @@ fn run_render_frames(
     if let Some(overrides) = ascii_overrides {
         scene = scene.with_ascii_overrides(overrides.clone());
     }
-    let mut renderer = create_renderer(
-        &manifest.environment,
-        &manifest.layers,
-        scene,
-        backend,
-    )?;
+    let mut renderer = create_renderer(&manifest.environment, &manifest.layers, scene, backend)?;
     let layout_elapsed = layout_start.elapsed();
     progress_log(
         quiet,

@@ -115,8 +115,7 @@ impl CellPassStack {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: render_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         };
         let (scratch_a, scratch_b) = if passes.is_empty() {
@@ -240,7 +239,8 @@ impl Default for CellPassStack {
 // ---------------------------------------------------------------------------
 
 const ASCII_CELL_EDGE_BOOST_WGSL: &str = include_str!("../shaders/wgsl/ascii_cell_edge_boost.wgsl");
-const ASCII_CELL_BAYER_DITHER_WGSL: &str = include_str!("../shaders/wgsl/ascii_cell_bayer_dither.wgsl");
+const ASCII_CELL_BAYER_DITHER_WGSL: &str =
+    include_str!("../shaders/wgsl/ascii_cell_bayer_dither.wgsl");
 
 /// Edge boost parameters (hardcoded; no schema). Used by unit tests and documented for WGSL parity.
 pub const EDGE_GAIN: f32 = 2.0;
@@ -545,8 +545,8 @@ impl CellPass for BayerDitherCellPass {
 /// 8×8 Bayer matrix values 0..63 (standard ordered dither pattern). Row-major.
 pub const BAYER_8X8: [u8; 64] = [
     0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60,
-    28, 52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15, 47,
-    7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21,
+    28, 52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15,
+    47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21,
 ];
 
 /// Bayer threshold for cell (x, y). Deterministic. (bayer_val + 0.5) / 64.0
@@ -983,9 +983,8 @@ impl AsciiPipeline {
                 passes.push(Box::new(edge_boost));
             }
             if enable_bayer_dither {
-                let bayer_dither =
-                    BayerDitherCellPass::new(device, &quantize_bgl, render_format)
-                        .context("failed to create Bayer dither cell pass")?;
+                let bayer_dither = BayerDitherCellPass::new(device, &quantize_bgl, render_format)
+                    .context("failed to create Bayer dither cell pass")?;
                 passes.push(Box::new(bayer_dither));
             }
             if passes.is_empty() {
