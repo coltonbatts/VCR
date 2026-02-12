@@ -103,6 +103,7 @@ pub struct AsciiCaptureArgs {
     pub symbol_remap: SymbolRemapMode,
     pub symbol_ramp: Option<String>,
     pub fit_padding: f32,
+    pub bg_alpha: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +124,7 @@ pub struct AsciiCapturePlan {
     pub symbol_remap: SymbolRemapMode,
     pub symbol_ramp: String,
     pub fit_padding: f32,
+    pub bg_alpha: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -175,10 +177,15 @@ pub fn build_ascii_capture_plan(args: &AsciiCaptureArgs) -> Result<AsciiCaptureP
         font_size: args.font_size,
         tmp_dir: args.tmp_dir.clone(),
         parser_mode: "best-effort ANSI parser with sampled latest-frame fallback",
-        ffmpeg_encoder: "ffmpeg -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le",
+        ffmpeg_encoder: if args.bg_alpha < 1.0 {
+            "ffmpeg -c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le"
+        } else {
+            "ffmpeg -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le"
+        },
         symbol_remap: args.symbol_remap,
         symbol_ramp,
         fit_padding: args.fit_padding,
+        bg_alpha: args.bg_alpha,
     })
 }
 
@@ -220,15 +227,25 @@ pub fn run_ascii_capture(args: &AsciiCaptureArgs) -> Result<AsciiCaptureSummary>
         plan.cols as usize,
         plan.rows as usize,
     )?;
-    let mut encoder = ProRes422Encoder::spawn(
+    rasterizer.set_bg_alpha(plan.bg_alpha);
+
+    let (profile, pix_fmt) = if plan.bg_alpha < 1.0 {
+        ("4", "yuva444p10le")
+    } else {
+        ("2", "yuv422p10le")
+    };
+
+    let mut encoder = ProResEncoder::spawn(
         &plan.output,
         rasterizer.pixel_width(),
         rasterizer.pixel_height(),
         plan.fps,
+        profile,
+        pix_fmt,
         plan.tmp_dir.as_deref(),
     )?;
 
-    for frame in &frames {
+    for (_i, frame) in frames.iter().enumerate() {
         let rgba = rasterizer.render(frame);
         encoder.write_frame(&rgba)?;
     }
@@ -776,7 +793,10 @@ fn spawn_ascii_live_process(stream: &str) -> Result<Child> {
 }
 
 fn spawn_chafa_process(input: &Path, cols: u32, rows: u32) -> Result<Child> {
-    if !input.exists() {
+    let input_str = input.to_string_lossy();
+    let is_remote = input_str.starts_with("http://") || input_str.starts_with("https://");
+
+    if !is_remote && !input.exists() {
         bail!("chafa input does not exist: {}", input.display());
     }
     let mut command = Command::new("chafa");
@@ -804,8 +824,13 @@ fn ascii_live_url(stream: &str) -> Result<&'static str> {
     if let Some(url) = ascii_live_stream_url(stream) {
         return Ok(url);
     }
-    let supported = ascii_live_stream_names().join(", ");
-    bail!("unsupported ascii-live stream '{stream}': supported streams: {supported}")
+    let names = ascii_live_stream_names();
+    let supported = names.join(", ");
+    bail!(
+        "unsupported ascii-live stream '{}'.\nSupported streams: {}\nHint: run 'vcr ascii sources' to see all options.",
+        stream,
+        supported
+    )
 }
 
 fn capture_library_frames(
@@ -988,6 +1013,7 @@ struct AsciiFrameRasterizer {
     line_height: u32,
     pixel_width: u32,
     pixel_height: u32,
+    bg_alpha: f32,
     glyph_cache: HashMap<fontdue::layout::GlyphRasterConfig, GlyphBitmap>,
 }
 
@@ -1010,8 +1036,13 @@ impl AsciiFrameRasterizer {
             line_height,
             pixel_width,
             pixel_height,
+            bg_alpha: 1.0, // Default to opaque, will be overridden or set via specialized constructor
             glyph_cache: HashMap::new(),
         })
+    }
+
+    fn set_bg_alpha(&mut self, alpha: f32) {
+        self.bg_alpha = alpha;
     }
 
     fn pixel_width(&self) -> u32 {
@@ -1024,8 +1055,9 @@ impl AsciiFrameRasterizer {
 
     fn render(&mut self, frame: &AsciiFrame) -> Vec<u8> {
         let mut rgba = vec![0_u8; (self.pixel_width * self.pixel_height * 4) as usize];
+        let alpha_byte = (self.bg_alpha * 255.0).clamp(0.0, 255.0) as u8;
         for pixel in rgba.chunks_exact_mut(4) {
-            pixel[3] = 255;
+            pixel[3] = alpha_byte;
         }
 
         for (row_index, line) in frame.lines().iter().take(self.rows).enumerate() {
@@ -1079,19 +1111,22 @@ impl AsciiFrameRasterizer {
     }
 }
 
-struct ProRes422Encoder {
+struct ProResEncoder {
     child: Child,
     stdin: ChildStdin,
 }
 
-impl ProRes422Encoder {
+impl ProResEncoder {
     fn spawn(
         output_path: &Path,
         width: u32,
         height: u32,
         fps: u32,
+        profile: &str,
+        pix_fmt: &str,
         tmp_dir: Option<&Path>,
     ) -> Result<Self> {
+        let _alpha_support = pix_fmt.starts_with("yuva");
         let mut command = Command::new("ffmpeg");
         command
             .arg("-hide_banner")
@@ -1112,9 +1147,9 @@ impl ProRes422Encoder {
             .arg("-c:v")
             .arg("prores_ks")
             .arg("-profile:v")
-            .arg("2")
+            .arg(profile)
             .arg("-pix_fmt")
-            .arg("yuv422p10le")
+            .arg(pix_fmt)
             .arg(output_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())

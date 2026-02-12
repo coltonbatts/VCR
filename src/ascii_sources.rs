@@ -33,86 +33,104 @@ pub struct AsciiSourceEntry {
 
 pub const ASCII_SOURCES: &[AsciiSourceEntry] = &[
     AsciiSourceEntry {
-        id: "ascii-live:forrest",
-        source_type: AsciiSourceType::Stream,
-        description: "ascii.live endpoint from curated ASCII Art Collection gist (Forrest run loop).",
-        command_example: "vcr ascii capture --source ascii-live:forrest --out renders/ascii_live_forrest.mov --duration 8 --fps 30 --size 120x45",
-    },
-    AsciiSourceEntry {
         id: "ascii-live:parrot",
         source_type: AsciiSourceType::Stream,
-        description: "ascii.live endpoint from curated ASCII Art Collection gist (parrot animation).",
-        command_example: "vcr ascii capture --source ascii-live:parrot --out renders/ascii_live_parrot.mov --duration 8 --fps 30 --size 120x45",
+        description: "ascii.live endpoint (classic party parrot).",
+        command_example: "vcr ascii capture --source ascii-live:parrot --out renders/parrot.mov",
     },
     AsciiSourceEntry {
-        id: "ascii-live:clock",
+        id: "ascii-live:nyan",
         source_type: AsciiSourceType::Stream,
-        description: "ascii.live endpoint from curated ASCII Art Collection gist (animated clock).",
-        command_example: "vcr ascii capture --source ascii-live:clock --out renders/ascii_live_clock.mov --duration 8 --fps 30 --size 120x45",
+        description: "ascii.live endpoint (nyan cat).",
+        command_example: "vcr ascii capture --source ascii-live:nyan --out renders/nyan.mov",
     },
     AsciiSourceEntry {
-        id: "ascii-live:can-you-hear-me",
+        id: "ascii-live:forrest",
         source_type: AsciiSourceType::Stream,
-        description: "ascii.live endpoint from curated ASCII Art Collection gist (voice-message style animation).",
-        command_example: "vcr ascii capture --source ascii-live:can-you-hear-me --out renders/ascii_live_can_you_hear_me.mov --duration 8 --fps 30 --size 120x45",
+        description: "ascii.live endpoint (Forrest Gump running).",
+        command_example: "vcr ascii capture --source ascii-live:forrest --out renders/forrest.mov",
     },
     AsciiSourceEntry {
         id: "ascii-live:donut",
         source_type: AsciiSourceType::Stream,
-        description: "ascii.live endpoint from curated ASCII Art Collection gist (rotating donut).",
-        command_example: "vcr ascii capture --source ascii-live:donut --out renders/ascii_live_donut.mov --duration 8 --fps 30 --size 120x45",
+        description: "ascii.live endpoint (rotating donut).",
+        command_example: "vcr ascii capture --source ascii-live:donut --out renders/donut.mov",
+    },
+    AsciiSourceEntry {
+        id: "ascii-live:clock",
+        source_type: AsciiSourceType::Stream,
+        description: "ascii.live endpoint (real-time clock).",
+        command_example: "vcr ascii capture --source ascii-live:clock --out renders/clock.mov",
     },
     AsciiSourceEntry {
         id: "ascii-live:earth",
         source_type: AsciiSourceType::Stream,
-        description: "ascii.live endpoint currently wired in vcr ascii capture (earth render).",
-        command_example: "vcr ascii capture --source ascii-live:earth --out renders/ascii_live_earth.mov --duration 8 --fps 30 --size 120x45",
+        description: "ascii.live endpoint (rotating earth).",
+        command_example: "vcr ascii capture --source ascii-live:earth --out renders/earth.mov",
+    },
+    AsciiSourceEntry {
+        id: "ascii-live:maxwell",
+        source_type: AsciiSourceType::Stream,
+        description: "ascii.live endpoint (Maxwell the cat).",
+        command_example: "vcr ascii capture --source ascii-live:maxwell --out renders/maxwell.mov",
+    },
+    AsciiSourceEntry {
+        id: "ascii-live:rick",
+        source_type: AsciiSourceType::Stream,
+        description: "ascii.live endpoint (Rickroll).",
+        command_example: "vcr ascii capture --source ascii-live:rick --out renders/rick.mov",
     },
     AsciiSourceEntry {
         id: "pack:16colo.rs",
         source_type: AsciiSourceType::Pack,
-        description: "ANSI/ASCII art archive (manual download + local conversion workflow for now).",
-        command_example: "vcr ascii capture --source chafa:/path/to/16colo_export.gif --out renders/16colors_pack.mov --duration 8 --fps 30 --size 120x45",
+        description: "ANSI/ASCII art archive (manual download + local conversion workflow).",
+        command_example: "vcr ascii capture --source chafa:/path/to/archive.gif --out renders/16colors.mov",
     },
     AsciiSourceEntry {
         id: "pack:library/geist-wave",
         source_type: AsciiSourceType::Pack,
-        description: "Offline built-in dev source (animated wave with letter-heavy glyphs).",
-        command_example: "vcr ascii capture --source library:geist-wave --out renders/library_geist_wave.mov --duration 8 --fps 30 --size 120x45",
+        description: "Offline built-in: animated wave with letter-heavy glyphs.",
+        command_example: "vcr ascii capture --source library:geist-wave --out renders/wave.mov",
     },
     AsciiSourceEntry {
-        id: "pack:library/geist-scan",
-        source_type: AsciiSourceType::Pack,
-        description: "Offline built-in dev source (scanline text animation for pixel-font look dev).",
-        command_example: "vcr ascii capture --source library:geist-scan --out renders/library_geist_scan.mov --duration 8 --fps 30 --size 120x45",
-    },
-    AsciiSourceEntry {
-        id: "pack:library/geist-blocks",
-        source_type: AsciiSourceType::Pack,
-        description: "Offline built-in dev source (moving block field for square/pixel emphasis).",
-        command_example: "vcr ascii capture --source library:geist-blocks --out renders/library_geist_blocks.mov --duration 8 --fps 30 --size 120x45",
-    },
-    AsciiSourceEntry {
-        id: "tool:ansilove",
+        id: "tool:asciiville",
         source_type: AsciiSourceType::Tool,
-        description: "Render ANSI/ASCII/NFO files to raster images before ingesting with chafa.",
-        command_example: "vcr ascii capture --source chafa:/tmp/ansilove_render.gif --out renders/ansilove_pipeline.mov --duration 8 --fps 30 --size 120x45",
+        description: "Comprehensive ASCII/ANSI art suite and gallery browser.",
+        command_example: "asciiville -V Art # Use to browse, then capture local files",
     },
     AsciiSourceEntry {
         id: "tool:chafa",
         source_type: AsciiSourceType::Tool,
-        description: "Terminal graphics-to-text converter used directly by vcr ascii capture via chafa:<path>.",
-        command_example: "vcr ascii capture --source chafa:./assets/welcome_terminal_scene.gif --out renders/chafa_source.mov --duration 8 --fps 30 --size 120x45",
+        description: "Native VCR converter. Supports local files and remote URLs.",
+        command_example: "vcr ascii capture --source chafa:https://example.com/video.mp4 --out renders/remote.mov",
     },
 ];
 
 const ASCII_LIVE_STREAMS: &[(&str, &str)] = &[
-    ("forrest", "https://ascii.live/forrest"),
-    ("parrot", "https://ascii.live/parrot"),
-    ("clock", "https://ascii.live/clock"),
-    ("can-you-hear-me", "https://ascii.live/can-you-hear-me"),
-    ("donut", "https://ascii.live/donut"),
+    ("bnr", "https://ascii.live/bnr"),
+    ("knot", "https://ascii.live/knot"),
     ("earth", "https://ascii.live/earth"),
+    ("batman", "https://ascii.live/batman"),
+    ("coin", "https://ascii.live/coin"),
+    ("donut", "https://ascii.live/donut"),
+    ("hes", "https://ascii.live/hes"),
+    ("spidyswing", "https://ascii.live/spidyswing"),
+    ("maxwell", "https://ascii.live/maxwell"),
+    ("kitty", "https://ascii.live/kitty"),
+    ("batman-running", "https://ascii.live/batman-running"),
+    ("dvd", "https://ascii.live/dvd"),
+    ("forrest", "https://ascii.live/forrest"),
+    ("nyan", "https://ascii.live/nyan"),
+    ("torus-knot", "https://ascii.live/torus-knot"),
+    ("purdue", "https://ascii.live/purdue"),
+    ("bomb", "https://ascii.live/bomb"),
+    ("india", "https://ascii.live/india"),
+    ("can-you-hear-me", "https://ascii.live/can-you-hear-me"),
+    ("clock", "https://ascii.live/clock"),
+    ("parrot", "https://ascii.live/parrot"),
+    ("playstation", "https://ascii.live/playstation"),
+    ("rick", "https://ascii.live/rick"),
+    ("as", "https://ascii.live/as"),
 ];
 
 const LIBRARY_SOURCE_IDS: &[&str] = &["geist-wave", "geist-scan", "geist-blocks"];
@@ -124,15 +142,8 @@ pub fn ascii_live_stream_url(stream: &str) -> Option<&'static str> {
         .find_map(|(name, url)| (*name == normalized).then_some(*url))
 }
 
-pub fn ascii_live_stream_names() -> &'static [&'static str] {
-    &[
-        "forrest",
-        "parrot",
-        "clock",
-        "can-you-hear-me",
-        "donut",
-        "earth",
-    ]
+pub fn ascii_live_stream_names() -> Vec<&'static str> {
+    ASCII_LIVE_STREAMS.iter().map(|(name, _)| *name).collect()
 }
 
 pub fn library_source_names() -> &'static [&'static str] {

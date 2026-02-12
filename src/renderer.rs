@@ -15,6 +15,8 @@ use tiny_skia::{
 use wgpu::util::DeviceExt;
 
 use crate::ascii::PreparedAsciiLayer;
+use crate::ascii_pipeline::AsciiPipeline;
+use crate::post_process::PostStack;
 use crate::schema::{
     Anchor, AnimatableColor, AsciiLayer, AssetLayer, ColorRgba, Environment, ExpressionContext,
     GradientDirection, Group, ImageLayer, Layer, LayerCommon, ModulatorBinding, ModulatorMap,
@@ -383,6 +385,8 @@ struct GpuRenderer {
     blend_pipeline: wgpu::RenderPipeline,
     procedural_pipeline: wgpu::RenderPipeline,
     layers: Vec<GpuLayer>,
+    post_stack: PostStack,
+    ascii_pipeline: Option<AsciiPipeline>,
 }
 
 struct PendingReadback {
@@ -592,7 +596,10 @@ impl GpuRenderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: render_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
 
@@ -849,6 +856,19 @@ impl GpuRenderer {
         }
         gpu_layers.sort_by_key(|layer| layer.z_index);
 
+        let post_stack = PostStack::new(&device, width, height, render_format, &scene.post)
+            .context("failed to initialize post-processing stack")?;
+
+        let ascii_pipeline = match &scene.ascii_post {
+            Some(config) if config.enabled => {
+                let pipeline =
+                    AsciiPipeline::new(&device, config, width, height, render_format)
+                        .context("failed to initialize ASCII post-processing pipeline")?;
+                Some(pipeline)
+            }
+            _ => None,
+        };
+
         Ok(Self {
             adapter_name: context.adapter_name.clone(),
             adapter_backend: context.adapter_backend,
@@ -869,6 +889,8 @@ impl GpuRenderer {
             blend_pipeline,
             procedural_pipeline,
             layers: gpu_layers,
+            post_stack,
+            ascii_pipeline,
         })
     }
 
@@ -885,6 +907,33 @@ impl GpuRenderer {
 
         self.prepare_procedural_layers(frame_index, &mut encoder)?;
         self.render_layers_to_view(frame_index, &output_view, &mut encoder)?;
+
+        // Apply post-processing stack (if any effects are configured)
+        if !self.post_stack.is_empty() {
+            self.post_stack.apply(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &self.output_texture,
+                frame_index,
+                self.fps,
+                self.seed,
+            );
+        }
+
+        // Apply ASCII post-processing pipeline (if enabled)
+        if let Some(ascii) = &self.ascii_pipeline {
+            ascii.apply(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &self.output_texture,
+                frame_index,
+                self.fps,
+                self.seed,
+            );
+            ascii.copy_debug_to_output(&mut encoder, &self.output_texture);
+        }
 
         let padded_bytes_per_row = NonZeroU32::new(self.padded_bytes_per_row)
             .ok_or_else(|| anyhow!("invalid padded row size {}", self.padded_bytes_per_row))?;
@@ -935,6 +984,14 @@ impl GpuRenderer {
 
         self.prepare_procedural_layers(frame_index, &mut encoder)?;
         self.render_layers_to_view(frame_index, target_view, &mut encoder)?;
+
+        // Apply post-processing for live preview path.
+        // Note: for render_frame_to_view we write directly to the provided target_view,
+        // so post-processing would need its own intermediate. For now, post-processing
+        // is only applied in the headless render path (render_frame). This keeps the
+        // preview path simple and avoids extra texture copies. A future enhancement
+        // could extend this.
+
         self.queue.submit(Some(encoder.finish()));
         Ok(())
     }

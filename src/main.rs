@@ -317,6 +317,8 @@ enum AsciiCommands {
         symbol_ramp: Option<String>,
         #[arg(long = "fit-padding", default_value_t = DEFAULT_CAPTURE_FIT_PADDING)]
         fit_padding: f32,
+        #[arg(long = "bg-alpha", default_value_t = 1.0)]
+        bg_alpha: f32,
         #[arg(long = "dry-run", default_value_t = false)]
         dry_run: bool,
     },
@@ -703,6 +705,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 symbol_remap,
                 symbol_ramp,
                 fit_padding,
+                bg_alpha,
                 dry_run,
             } => run_ascii_capture_cli(
                 &source,
@@ -718,6 +721,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 symbol_remap,
                 symbol_ramp.as_deref(),
                 fit_padding,
+                bg_alpha,
                 dry_run,
                 quiet,
             ),
@@ -1150,6 +1154,7 @@ fn run_ascii_capture_cli(
     symbol_remap: AsciiSymbolRemapArg,
     symbol_ramp: Option<&str>,
     fit_padding: f32,
+    bg_alpha: f32,
     dry_run: bool,
     quiet: bool,
 ) -> Result<()> {
@@ -1181,6 +1186,7 @@ fn run_ascii_capture_cli(
         },
         symbol_ramp: symbol_ramp.map(ToOwned::to_owned),
         fit_padding,
+        bg_alpha,
     };
 
     let plan = build_ascii_capture_plan(&args)?;

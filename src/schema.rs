@@ -69,6 +69,10 @@ pub struct Manifest {
     #[serde(default)]
     pub groups: Vec<Group>,
     pub layers: Vec<Layer>,
+    #[serde(default)]
+    pub post: Vec<PostEffect>,
+    #[serde(default)]
+    pub ascii_post: Option<AsciiPostConfig>,
     #[serde(skip)]
     pub param_definitions: BTreeMap<String, ParamDefinition>,
     #[serde(skip)]
@@ -2010,6 +2014,10 @@ pub fn validate_manifest_manifest_level(manifest: &Manifest) -> Result<()> {
         }
     }
 
+    if let Some(ascii_post) = &manifest.ascii_post {
+        ascii_post.validate()?;
+    }
+
     Ok(())
 }
 
@@ -2301,11 +2309,124 @@ fn validate_number(label: &str, value: f32) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Post-processing effect schema
+// ---------------------------------------------------------------------------
+
+/// A single post-processing effect entry in the manifest `post:` array.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PostEffect {
+    #[serde(flatten)]
+    pub kind: PostEffectKind,
+}
+
+/// Discriminated union of supported post-processing shaders.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "shader", rename_all = "snake_case")]
+pub enum PostEffectKind {
+    Passthrough,
+    Levels {
+        #[serde(default = "default_gamma")]
+        gamma: f32,
+        #[serde(default)]
+        lift: f32,
+        #[serde(default = "default_gain")]
+        gain: f32,
+    },
+    Sobel {
+        #[serde(default = "default_sobel_strength")]
+        strength: f32,
+    },
+}
+
+fn default_gamma() -> f32 {
+    1.0
+}
+fn default_gain() -> f32 {
+    1.0
+}
+fn default_sobel_strength() -> f32 {
+    1.0
+}
+
+// ---------------------------------------------------------------------------
+// ASCII post-processing pipeline configuration
+// ---------------------------------------------------------------------------
+
+const DEFAULT_ASCII_POST_RAMP: &str = " .:-=+*#%@";
+
+/// Configuration for the GPU-based ASCII post-processing pipeline.
+///
+/// When enabled, the composited frame is analyzed at terminal-cell resolution,
+/// luminance is mapped to glyph indices, and a debug grayscale visualization
+/// is rendered as the final output.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AsciiPostConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_ascii_post_cols")]
+    pub cols: u32,
+    #[serde(default = "default_ascii_post_rows")]
+    pub rows: u32,
+    #[serde(default = "default_ascii_post_ramp")]
+    pub ramp: String,
+}
+
+impl Default for AsciiPostConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cols: 120,
+            rows: 45,
+            ramp: DEFAULT_ASCII_POST_RAMP.to_owned(),
+        }
+    }
+}
+
+impl AsciiPostConfig {
+    /// Validate the ASCII post-processing configuration.
+    pub fn validate(&self) -> Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.cols == 0 {
+            bail!("ascii_post.cols must be > 0");
+        }
+        if self.rows == 0 {
+            bail!("ascii_post.rows must be > 0");
+        }
+        let ramp_chars: Vec<char> = self.ramp.chars().collect();
+        if ramp_chars.len() < 2 {
+            bail!(
+                "ascii_post.ramp must have at least 2 characters, got {}",
+                ramp_chars.len()
+            );
+        }
+        Ok(())
+    }
+
+    /// Number of distinct glyphs in the ramp.
+    pub fn ramp_len(&self) -> usize {
+        self.ramp.chars().count()
+    }
+}
+
+fn default_ascii_post_cols() -> u32 {
+    120
+}
+fn default_ascii_post_rows() -> u32 {
+    45
+}
+fn default_ascii_post_ramp() -> String {
+    DEFAULT_ASCII_POST_RAMP.to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         default_manifest_version, validate_manifest_manifest_level, ExpressionContext, Layer,
-        Manifest, ScalarExpression, ScalarProperty,
+        Manifest, PostEffectKind, ScalarExpression, ScalarProperty,
     };
 
     fn parse_expression(source: &str) -> ScalarExpression {
@@ -2564,5 +2685,372 @@ layers:
         assert!(message.contains("layer 'too_many_sources'"));
         assert!(message.contains("multiple source blocks"));
         assert!(message.contains("source_path, image"));
+    }
+
+    #[test]
+    fn manifest_parses_empty_post_section() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+"#,
+        )
+        .expect("manifest without post section should parse");
+        assert!(manifest.post.is_empty());
+    }
+
+    #[test]
+    fn manifest_parses_passthrough_post_effect() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+post:
+  - shader: passthrough
+"#,
+        )
+        .expect("manifest with passthrough post should parse");
+        assert_eq!(manifest.post.len(), 1);
+        assert!(matches!(
+            manifest.post[0].kind,
+            PostEffectKind::Passthrough
+        ));
+    }
+
+    #[test]
+    fn manifest_parses_levels_post_effect_with_defaults() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+post:
+  - shader: levels
+"#,
+        )
+        .expect("manifest with levels post should parse");
+        assert_eq!(manifest.post.len(), 1);
+        match &manifest.post[0].kind {
+            PostEffectKind::Levels { gamma, lift, gain } => {
+                assert!((gamma - 1.0).abs() < f32::EPSILON);
+                assert!((lift - 0.0).abs() < f32::EPSILON);
+                assert!((gain - 1.0).abs() < f32::EPSILON);
+            }
+            other => panic!("expected Levels, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn manifest_parses_levels_post_effect_with_custom_params() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+post:
+  - shader: levels
+    gamma: 1.5
+    lift: 0.1
+    gain: 0.8
+"#,
+        )
+        .expect("manifest with customized levels should parse");
+        match &manifest.post[0].kind {
+            PostEffectKind::Levels { gamma, lift, gain } => {
+                assert!((gamma - 1.5).abs() < f32::EPSILON);
+                assert!((lift - 0.1).abs() < f32::EPSILON);
+                assert!((gain - 0.8).abs() < f32::EPSILON);
+            }
+            other => panic!("expected Levels, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn manifest_parses_sobel_post_effect() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+post:
+  - shader: sobel
+    strength: 2.5
+"#,
+        )
+        .expect("manifest with sobel post should parse");
+        match &manifest.post[0].kind {
+            PostEffectKind::Sobel { strength } => {
+                assert!((strength - 2.5).abs() < f32::EPSILON);
+            }
+            other => panic!("expected Sobel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn manifest_parses_chained_post_effects() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+post:
+  - shader: levels
+    gamma: 1.2
+    lift: 0.05
+    gain: 0.9
+  - shader: sobel
+    strength: 1.0
+"#,
+        )
+        .expect("manifest with chained post effects should parse");
+        assert_eq!(manifest.post.len(), 2);
+        assert!(matches!(
+            manifest.post[0].kind,
+            PostEffectKind::Levels { .. }
+        ));
+        assert!(matches!(
+            manifest.post[1].kind,
+            PostEffectKind::Sobel { .. }
+        ));
+    }
+
+    // ---- ascii_post schema tests ----
+
+    #[test]
+    fn manifest_ascii_post_is_none_by_default() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+"#,
+        )
+        .expect("manifest without ascii_post should parse");
+        assert!(manifest.ascii_post.is_none());
+    }
+
+    #[test]
+    fn manifest_ascii_post_parses_enabled_config() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 640, height: 360 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+ascii_post:
+  enabled: true
+  cols: 80
+  rows: 24
+  ramp: " .:-=+*#%@"
+"#,
+        )
+        .expect("manifest with ascii_post should parse");
+        let config = manifest.ascii_post.as_ref().expect("ascii_post should be Some");
+        assert!(config.enabled);
+        assert_eq!(config.cols, 80);
+        assert_eq!(config.rows, 24);
+        assert_eq!(config.ramp, " .:-=+*#%@");
+        assert_eq!(config.ramp_len(), 10);
+    }
+
+    #[test]
+    fn manifest_ascii_post_uses_defaults_when_minimal() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+ascii_post:
+  enabled: true
+"#,
+        )
+        .expect("minimal ascii_post should parse");
+        let config = manifest.ascii_post.as_ref().unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.cols, 120);
+        assert_eq!(config.rows, 45);
+        assert_eq!(config.ramp, " .:-=+*#%@");
+    }
+
+    #[test]
+    fn manifest_ascii_post_validates_cols_zero_rejected() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+ascii_post:
+  enabled: true
+  cols: 0
+"#,
+        )
+        .expect("should parse");
+        let err = manifest
+            .ascii_post
+            .as_ref()
+            .unwrap()
+            .validate()
+            .expect_err("cols=0 should fail validation");
+        assert!(err.to_string().contains("cols must be > 0"));
+    }
+
+    #[test]
+    fn manifest_ascii_post_validates_rows_zero_rejected() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+ascii_post:
+  enabled: true
+  rows: 0
+"#,
+        )
+        .expect("should parse");
+        let err = manifest
+            .ascii_post
+            .as_ref()
+            .unwrap()
+            .validate()
+            .expect_err("rows=0 should fail validation");
+        assert!(err.to_string().contains("rows must be > 0"));
+    }
+
+    #[test]
+    fn manifest_ascii_post_validates_ramp_too_short_rejected() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+ascii_post:
+  enabled: true
+  ramp: "X"
+"#,
+        )
+        .expect("should parse");
+        let err = manifest
+            .ascii_post
+            .as_ref()
+            .unwrap()
+            .validate()
+            .expect_err("ramp with 1 char should fail validation");
+        assert!(err.to_string().contains("at least 2 characters"));
+    }
+
+    #[test]
+    fn manifest_ascii_post_disabled_skips_validation() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+ascii_post:
+  enabled: false
+  cols: 0
+  rows: 0
+  ramp: "X"
+"#,
+        )
+        .expect("should parse");
+        // When disabled, validation should pass even with invalid values
+        manifest
+            .ascii_post
+            .as_ref()
+            .unwrap()
+            .validate()
+            .expect("disabled ascii_post should skip validation");
     }
 }

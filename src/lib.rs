@@ -1,5 +1,6 @@
 pub mod ascii;
 pub mod ascii_atlas;
+pub mod ascii_pipeline;
 pub mod ascii_atlas_data;
 pub mod ascii_capture;
 pub mod ascii_frame;
@@ -11,6 +12,7 @@ pub mod decoding;
 pub mod encoding;
 pub mod manifest;
 pub mod play;
+pub mod post_process;
 pub mod renderer;
 pub mod schema;
 pub mod timeline;

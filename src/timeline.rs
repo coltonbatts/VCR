@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashSet};
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::schema::{
-    ExpressionContext, Group, LayerCommon, Manifest, ModulatorBinding, ModulatorMap, Parameters,
-    PropertyValue, ScalarProperty, TimingControls, Vec2,
+    AsciiPostConfig, ExpressionContext, Group, LayerCommon, Manifest, ModulatorBinding,
+    ModulatorMap, Parameters, PostEffect, PropertyValue, ScalarProperty, TimingControls, Vec2,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -13,6 +13,8 @@ pub struct RenderSceneData {
     pub params: Parameters,
     pub modulators: ModulatorMap,
     pub groups: Vec<Group>,
+    pub post: Vec<PostEffect>,
+    pub ascii_post: Option<AsciiPostConfig>,
 }
 
 impl RenderSceneData {
@@ -22,6 +24,8 @@ impl RenderSceneData {
             params: manifest.params.clone(),
             modulators: manifest.modulators.clone(),
             groups: manifest.groups.clone(),
+            post: manifest.post.clone(),
+            ascii_post: manifest.ascii_post.clone(),
         }
     }
 }
