@@ -754,6 +754,35 @@ fn validate_manifest(manifest: &mut Manifest, manifest_path: &Path) -> Result<()
                     format!("layer '{}': invalid ascii source", ascii_layer.common.id)
                 })?;
             }
+            Layer::Sequence(seq_layer) => {
+                let resolved_dir = if seq_layer.sequence.path.is_relative() {
+                    manifest_dir.join(&seq_layer.sequence.path)
+                } else {
+                    seq_layer.sequence.path.clone()
+                };
+                if !resolved_dir.is_dir() {
+                    bail!(
+                        "layer '{}' sequence.path '{}' is not a directory",
+                        seq_layer.common.id,
+                        resolved_dir.display(),
+                    );
+                }
+                // Validate frame 0 exists
+                let frame0 = seq_layer.sequence.frame_path(0);
+                let resolved_frame0 = if frame0.is_relative() {
+                    manifest_dir.join(&frame0)
+                } else {
+                    frame0.clone()
+                };
+                if !resolved_frame0.is_file() {
+                    bail!(
+                        "layer '{}' sequence frame 0 not found at '{}'",
+                        seq_layer.common.id,
+                        resolved_frame0.display(),
+                    );
+                }
+                seq_layer.sequence.path = resolved_dir;
+            }
         }
     }
 

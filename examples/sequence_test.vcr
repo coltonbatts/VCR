@@ -1,0 +1,20 @@
+# Sequence layer integration test manifest.
+# Renders a 4-frame video where each frame loads a different gradient PNG.
+# Used by tests/sequence_determinism.rs to verify deterministic compositing.
+
+version: 1
+
+environment:
+  resolution:
+    width: 64
+    height: 64
+  fps: 30
+  duration:
+    frames: 4
+
+layers:
+  - id: "gradient_seq"
+    z_index: 0
+    sequence:
+      path: "../tests/fixtures/sequence_gradient"
+      pattern: "{frame:04}.png"

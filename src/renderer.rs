@@ -323,6 +323,7 @@ impl GpuLayer {
             GpuLayerSource::Shader(gpu) => gpu.has_rendered && gpu.is_static,
             GpuLayerSource::Text { .. } => true,
             GpuLayerSource::Ascii(gpu) => gpu.has_rendered && gpu.is_static,
+            GpuLayerSource::Sequence { .. } => false, // reloads each frame
         }
     }
 }
@@ -333,6 +334,7 @@ enum GpuLayerSource {
     Shader(CustomShaderGpu),
     Text { _texture: wgpu::Texture },
     Ascii(AsciiGpu),
+    Sequence { source: crate::schema::SequenceSource, _texture: wgpu::Texture },
 }
 
 struct CustomShaderGpu {
@@ -555,6 +557,7 @@ enum SoftwareLayerSource {
     Shader,
     Text { pixmap: Pixmap },
     Ascii { prepared: PreparedAsciiLayer },
+    Sequence { source: crate::schema::SequenceSource },
 }
 
 impl GpuRenderer {
@@ -852,6 +855,20 @@ impl GpuRenderer {
                     scene.seed,
                     environment.fps,
                 )?,
+                Layer::Sequence(seq_layer) => build_sequence_layer(
+                    &device,
+                    &queue,
+                    width,
+                    height,
+                    seq_layer,
+                    group_chain,
+                    &blend_bind_group_layout,
+                    &sampler,
+                    &scene.params,
+                    &scene.modulators,
+                    scene.seed,
+                    environment.fps,
+                )?,
             };
             gpu_layers.push(gpu_layer);
         }
@@ -925,6 +942,7 @@ impl GpuRenderer {
             });
 
         self.prepare_procedural_layers(frame_index, &mut encoder)?;
+        self.prepare_sequence_layers(frame_index)?;
         self.render_layers_to_view(frame_index, &output_view, &mut encoder)?;
 
         // Apply post-processing stack (if any effects are configured)
@@ -1237,6 +1255,42 @@ impl GpuRenderer {
 
         Ok(())
     }
+
+    fn prepare_sequence_layers(&mut self, frame_index: u32) -> Result<()> {
+        for layer in &mut self.layers {
+            let GpuLayerSource::Sequence { source, _texture } = &layer.source else {
+                continue;
+            };
+            let frame_path = source.frame_path(frame_index);
+            let image = load_rgba_image(&frame_path, &layer.id)?;
+            let (w, h) = image.dimensions();
+            let bytes_per_row =
+                checked_bytes_per_row(w, &format!("sequence layer '{}'", layer.id))?;
+            let rows_per_image = NonZeroU32::new(h)
+                .ok_or_else(|| anyhow!("sequence layer '{}' has invalid height {}", layer.id, h))?;
+
+            self.queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: _texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                image.as_raw(),
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row.get()),
+                    rows_per_image: Some(rows_per_image.get()),
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Renderer {
@@ -1444,6 +1498,9 @@ impl SoftwareRenderer {
                 Layer::Ascii(ascii_layer) => SoftwareLayerSource::Ascii {
                     prepared: PreparedAsciiLayer::new(&ascii_layer.ascii, &ascii_layer.common.id)?,
                 },
+                Layer::Sequence(seq_layer) => SoftwareLayerSource::Sequence {
+                    source: seq_layer.sequence.clone(),
+                },
             };
 
             let (layer_width, layer_height) = match &source {
@@ -1453,6 +1510,12 @@ impl SoftwareRenderer {
                 SoftwareLayerSource::Text { pixmap } => (pixmap.width(), pixmap.height()),
                 SoftwareLayerSource::Ascii { prepared } => {
                     (prepared.pixel_width(), prepared.pixel_height())
+                }
+                SoftwareLayerSource::Sequence { source } => {
+                    // Load frame 0 to get dimensions. Actual per-frame loading in render_layer.
+                    let frame0_path = source.frame_path(0);
+                    let img = load_rgba_image(&frame0_path, &common.id)?;
+                    img.dimensions()
                 }
             };
 
@@ -1560,6 +1623,11 @@ impl SoftwareRenderer {
                 let pixmap = prepared.render_frame_pixmap(frame_index)?;
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
             }
+            SoftwareLayerSource::Sequence { source } => {
+                let frame_path = source.frame_path(frame_index);
+                let pixmap = load_layer_pixmap(&frame_path, &layer.id)?;
+                draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
+            }
         }
 
         Ok(())
@@ -1626,6 +1694,131 @@ fn build_image_layer(
         seed,
         fps,
     )
+}
+
+fn build_sequence_layer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame_width: u32,
+    frame_height: u32,
+    layer: &crate::schema::SequenceLayer,
+    group_chain: Vec<Group>,
+    blend_bind_group_layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    params: &Parameters,
+    modulators: &ModulatorMap,
+    seed: u64,
+    fps: u32,
+) -> Result<GpuLayer> {
+    // Load frame 0 to initialize texture dimensions and initial content.
+    let frame0_path = layer.sequence.frame_path(0);
+    let image = load_rgba_image(&frame0_path, &layer.common.id)?;
+    let (layer_width, layer_height) = image.dimensions();
+
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(&format!("vcr-sequence-{}", layer.common.id)),
+        size: wgpu::Extent3d {
+            width: layer_width,
+            height: layer_height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    let bytes_per_row =
+        checked_bytes_per_row(layer_width, &format!("layer '{}' width", layer.common.id))?;
+    let rows_per_image = NonZeroU32::new(layer_height)
+        .ok_or_else(|| anyhow!("layer '{}' has invalid height {}", layer.common.id, layer_height))?;
+
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        image.as_raw(),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(bytes_per_row.get()),
+            rows_per_image: Some(rows_per_image.get()),
+        },
+        wgpu::Extent3d {
+            width: layer_width,
+            height: layer_height,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let common = &layer.common;
+
+    let state = evaluate_layer_state_or_hidden(
+        &common.id,
+        &common.position,
+        common.pos_x.as_ref(),
+        common.pos_y.as_ref(),
+        &common.scale,
+        &common.rotation_degrees,
+        &common.opacity,
+        common.timing_controls(),
+        &common.modulators,
+        &group_chain,
+        0,
+        fps,
+        params,
+        seed,
+        modulators,
+    )?;
+
+    let draw_resources = build_layer_draw_resources(
+        device,
+        queue,
+        frame_width,
+        frame_height,
+        common,
+        state.position,
+        state.scale,
+        state.rotation_degrees,
+        state.opacity,
+        layer_width,
+        layer_height,
+        &texture_view,
+        blend_bind_group_layout,
+        sampler,
+    )?;
+
+    Ok(GpuLayer {
+        id: common.id.clone(),
+        z_index: common.z_index,
+        width: layer_width,
+        height: layer_height,
+        position: common.position.clone(),
+        position_x: common.pos_x.clone(),
+        position_y: common.pos_y.clone(),
+        scale: common.scale.clone(),
+        rotation_degrees: common.rotation_degrees.clone(),
+        opacity: common.opacity.clone(),
+        timing: common.timing_controls(),
+        modulators: common.modulators.clone(),
+        all_properties_static: false, // Sequence reloads per frame
+        group_chain,
+        anchor: common.anchor,
+        uniform_buffer: draw_resources.uniform_buffer,
+        blend_bind_group: draw_resources.blend_bind_group,
+        vertex_buffer: draw_resources.vertex_buffer,
+        last_vertices: Some(draw_resources.initial_vertices),
+        last_opacity: Some(draw_resources.initial_opacity),
+        source: GpuLayerSource::Sequence {
+            source: layer.sequence.clone(),
+            _texture: texture,
+        },
+    })
 }
 
 fn build_bitmap_layer(

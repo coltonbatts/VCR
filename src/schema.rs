@@ -611,6 +611,7 @@ pub enum Layer {
     Shader(ShaderLayer),
     Text(TextLayer),
     Ascii(AsciiLayer),
+    Sequence(SequenceLayer),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -630,6 +631,8 @@ struct LayerWire {
     text: Option<TextSource>,
     #[serde(default)]
     ascii: Option<AsciiSource>,
+    #[serde(default)]
+    sequence: Option<SequenceSource>,
 }
 
 impl<'de> Deserialize<'de> for Layer {
@@ -644,7 +647,7 @@ impl<'de> Deserialize<'de> for Layer {
             wire.common.id.as_str()
         };
 
-        let mut present_sources = Vec::with_capacity(6);
+        let mut present_sources = Vec::with_capacity(7);
         if wire.source_path.is_some() {
             present_sources.push("source_path");
         }
@@ -663,16 +666,19 @@ impl<'de> Deserialize<'de> for Layer {
         if wire.ascii.is_some() {
             present_sources.push("ascii");
         }
+        if wire.sequence.is_some() {
+            present_sources.push("sequence");
+        }
 
         if present_sources.is_empty() {
             return Err(DeError::custom(format!(
-                "layer '{layer_id}' must define exactly one source block: `source_path` (legacy image path), `image`, `procedural`, `shader`, `text`, or `ascii`"
+                "layer '{layer_id}' must define exactly one source block: `source_path` (legacy image path), `image`, `procedural`, `shader`, `text`, `ascii`, or `sequence`"
             )));
         }
 
         if present_sources.len() > 1 {
             return Err(DeError::custom(format!(
-                "layer '{layer_id}' defines multiple source blocks ({}) but exactly one is required: `source_path` (legacy image path), `image`, `procedural`, `shader`, `text`, or `ascii`",
+                "layer '{layer_id}' defines multiple source blocks ({}) but exactly one is required: `source_path` (legacy image path), `image`, `procedural`, `shader`, `text`, `ascii`, or `sequence`",
                 present_sources.join(", ")
             )));
         }
@@ -685,7 +691,13 @@ impl<'de> Deserialize<'de> for Layer {
             shader,
             text,
             ascii,
+            sequence,
         } = wire;
+
+        // Sequence is checked first (before the 6-tuple) to avoid a 7-tuple match.
+        if let Some(sequence) = sequence {
+            return Ok(Self::Sequence(SequenceLayer { common, sequence }));
+        }
 
         match (source_path, image, procedural, shader, text, ascii) {
             (Some(source_path), None, None, None, None, None) => Ok(Self::Asset(AssetLayer {
@@ -731,6 +743,7 @@ impl Layer {
             Self::Shader(layer) => &layer.common,
             Self::Text(layer) => &layer.common,
             Self::Ascii(layer) => &layer.common,
+            Self::Sequence(layer) => &layer.common,
         }
     }
 
@@ -749,6 +762,7 @@ impl Layer {
             Self::Shader(layer) => layer.validate(params, seed),
             Self::Text(layer) => layer.validate(),
             Self::Ascii(layer) => layer.validate(),
+            Self::Sequence(layer) => layer.validate(),
         }
     }
 }
@@ -1108,6 +1122,66 @@ impl ImageLayer {
 #[serde(deny_unknown_fields)]
 pub struct ImageSource {
     pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SequenceLayer {
+    #[serde(flatten)]
+    pub common: LayerCommon,
+    pub sequence: SequenceSource,
+}
+
+impl SequenceLayer {
+    fn validate(&self) -> Result<()> {
+        if self.sequence.path.as_os_str().is_empty() {
+            bail!(
+                "layer '{}' sequence.path cannot be empty",
+                self.common.id
+            );
+        }
+        if self.sequence.pattern.is_empty() {
+            bail!(
+                "layer '{}' sequence.pattern cannot be empty",
+                self.common.id
+            );
+        }
+        if !self.sequence.pattern.contains("{frame") {
+            bail!(
+                "layer '{}' sequence.pattern must contain '{{frame}}' or '{{frame:04}}' placeholder, got '{}'",
+                self.common.id,
+                self.sequence.pattern,
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SequenceSource {
+    /// Directory containing frame images (relative to manifest directory).
+    pub path: PathBuf,
+    /// Frame filename pattern. `{frame}` is replaced with the frame index.
+    /// `{frame:04}` is replaced with zero-padded (4 digits) frame index.
+    /// Default: `{frame:04}.png`
+    #[serde(default = "default_sequence_pattern")]
+    pub pattern: String,
+}
+
+fn default_sequence_pattern() -> String {
+    "{frame:04}.png".to_owned()
+}
+
+impl SequenceSource {
+    /// Resolve the file path for a given frame index.
+    pub fn frame_path(&self, frame_index: u32) -> PathBuf {
+        let filename = self
+            .pattern
+            .replace("{frame:04}", &format!("{frame_index:04}"))
+            .replace("{frame:02}", &format!("{frame_index:02}"))
+            .replace("{frame}", &format!("{frame_index}"));
+        self.path.join(filename)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
