@@ -168,9 +168,11 @@ impl ErrorContext {
 
 /// Helper to detect common validation error patterns and provide fixes
 pub fn suggest_fix_for_validation_error(error_message: &str) -> Option<SuggestedFix> {
+    let lower_error = error_message.to_lowercase();
+
     // Missing field errors
-    if error_message.contains("missing field") {
-        if error_message.contains("duration") {
+    if lower_error.contains("missing field") {
+        if lower_error.contains("duration") {
             return Some(
                 SuggestedFix::new("Add the 'duration' field to the environment block")
                     .with_yaml("environment:\n  duration: 3.0  # or { frames: 90 }")
@@ -181,7 +183,7 @@ pub fn suggest_fix_for_validation_error(error_message: &str) -> Option<Suggested
                     }]),
             );
         }
-        if error_message.contains("'fps'") {
+        if lower_error.contains("fps") {
             return Some(
                 SuggestedFix::new("Add the 'fps' field to the environment block")
                     .with_yaml("environment:\n  fps: 30")
@@ -192,7 +194,7 @@ pub fn suggest_fix_for_validation_error(error_message: &str) -> Option<Suggested
                     }]),
             );
         }
-        if error_message.contains("'resolution'") {
+        if lower_error.contains("resolution") {
             return Some(
                 SuggestedFix::new("Add the 'resolution' field to the environment block")
                     .with_yaml("environment:\n  resolution: { width: 1920, height: 1080 }")
@@ -206,7 +208,7 @@ pub fn suggest_fix_for_validation_error(error_message: &str) -> Option<Suggested
     }
 
     // Unknown variant errors
-    if error_message.contains("unknown variant") && error_message.contains("solid_colour") {
+    if lower_error.contains("unknown variant") && lower_error.contains("solid_colour") {
         return Some(
             SuggestedFix::new("Use 'solid_color' instead of 'solid_colour' (American spelling)")
                 .with_yaml("procedural:\n  kind: solid_color")
@@ -219,8 +221,8 @@ pub fn suggest_fix_for_validation_error(error_message: &str) -> Option<Suggested
     }
 
     // Type mismatch errors
-    if error_message.contains("expected") && error_message.contains("got") {
-        if error_message.contains("float") {
+    if lower_error.contains("expected") && lower_error.contains("got") {
+        if lower_error.contains("float") {
             return Some(
                 SuggestedFix::new("Value must be a number (integer or float)")
                     .with_yaml("# Example: opacity: 0.75"),

@@ -1059,14 +1059,14 @@ fn print_cli_error(command_name: &str, error: &anyhow::Error) {
 
         let mut report = AgentErrorReport {
             error_type,
-            summary,
+            summary: summary.clone(),
             suggested_fix: None,
             context: None,
         };
 
         // Try to generate suggested fix based on error message
         if matches!(report.error_type, AgentErrorType::Validation) {
-            if let Some(fix) = suggest_fix_for_validation_error(&head) {
+            if let Some(fix) = suggest_fix_for_validation_error(&summary) {
                 report.suggested_fix = Some(fix);
             }
         }
