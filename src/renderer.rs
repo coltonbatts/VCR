@@ -4101,7 +4101,14 @@ layers:
             scene,
         )) {
             Ok(renderer) => renderer,
-            Err(error) if error.to_string().contains(NO_GPU_ADAPTER_ERR) => return,
+            Err(error)
+                if error.to_string().contains(NO_GPU_ADAPTER_ERR)
+                    || error
+                        .to_string()
+                        .contains("software fallback is disabled because the manifest contains shader layers") =>
+            {
+                return;
+            }
             Err(error) => panic!("renderer initialization failed: {error:#}"),
         };
 
