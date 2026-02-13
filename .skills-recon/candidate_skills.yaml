@@ -1,0 +1,64 @@
+generated_at: "2026-02-13"
+source: "skills.sh"
+focus: "skills applicable to VCR engine + workflow layer"
+candidates:
+  - id: remotion-best-practices
+    url: "https://skills.sh/remotion-dev/skills/remotion-best-practices"
+    category: "motion grammar"
+    fit_score: 9
+    why:
+      - "Useful for codifying timing, transitions, and composition defaults into reusable style skills."
+      - "Good benchmark for animation structure without changing render core."
+    adopt_into:
+      - ".skills/vcr-manifest-author"
+      - ".skills/vcr-style-skill-template"
+  - id: ffmpeg
+    url: "https://skills.sh/digitalsamba/claude-code-video-toolkit/ffmpeg"
+    category: "media encoding"
+    fit_score: 9
+    why:
+      - "Strong patterns for encode profiles, quality checks, and pipeline troubleshooting."
+      - "Directly relevant to VCR output verification and transcode workflows."
+    adopt_into:
+      - ".skills/vcr-debugger"
+      - ".skills/vcr-ascii-pipeline"
+  - id: media-processing
+    url: "https://skills.sh/mrgoonie/claudekit-skills/media-processing"
+    category: "video/image pipeline"
+    fit_score: 8
+    why:
+      - "Generalized processing patterns map well to preview/build/check loops."
+      - "Can improve artifact QA conventions in VCR skills."
+    adopt_into:
+      - ".skills/vcr-ascii-pipeline"
+      - ".skills/vcr-debugger"
+  - id: figma
+    url: "https://skills.sh/openai/skills/figma"
+    category: "design-to-code"
+    fit_score: 8
+    why:
+      - "Useful structure for translating design intent into deterministic manifests."
+      - "Pairs naturally with figma-vcr-workflow binary behavior."
+    adopt_into:
+      - ".skills/vcr-figma-workflow"
+  - id: rust-best-practices
+    url: "https://skills.sh/apollographql/skills/rust-best-practices"
+    category: "engine quality"
+    fit_score: 8
+    why:
+      - "Supports robust Rust ergonomics and maintainability in engine/runtime code."
+      - "Complements deterministic render goals through code quality."
+    adopt_into:
+      - ".skills/vcr-debugger"
+  - id: rust-skills
+    url: "https://skills.sh/leonardomso/rust-skills/rust-skills"
+    category: "rust development workflow"
+    fit_score: 7
+    why:
+      - "Large rule corpus for refactor/review loops in Rust-heavy projects."
+      - "Can be mined selectively for lint/test/ownership heuristics."
+    adopt_into:
+      - ".skills/vcr-debugger"
+notes:
+  - "Treat VCR as stable runtime; evolve skills as composable behavior/style layer."
+  - "Prioritize small, focused skills over one monolithic handbook skill."

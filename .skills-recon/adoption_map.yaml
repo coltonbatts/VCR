@@ -1,0 +1,51 @@
+strategy:
+  core_model:
+    engine: "VCR runtime/compiler remains stable"
+    skills: "persona/team style + workflow behavior"
+  principles:
+    - "Keep skill scope narrow and composable."
+    - "Encode defaults as tokens/presets, not engine changes."
+    - "Validate outputs with deterministic command loops."
+
+mapping:
+  vcr-manifest-author:
+    borrow_from:
+      - remotion-best-practices
+    upgrades:
+      - "Add transition archetypes (cut/fade/slide/emphasis) with frame-based defaults."
+      - "Standardize entrance/exit timing tokens by scene class."
+  vcr-debugger:
+    borrow_from:
+      - ffmpeg
+      - media-processing
+      - rust-best-practices
+      - rust-skills
+    upgrades:
+      - "Add explicit codec/container sanity checks for produced artifacts."
+      - "Add structured repro template: command, backend, frame index, expected vs actual."
+      - "Add Rust-side guardrails for deterministic code paths."
+  vcr-ascii-pipeline:
+    borrow_from:
+      - ffmpeg
+      - media-processing
+    upgrades:
+      - "Add post-capture QA checklist (alpha integrity, first-frame non-blank, fps/duration)."
+      - "Add fallback ladder for source capture failures."
+  vcr-figma-workflow:
+    borrow_from:
+      - figma
+    upgrades:
+      - "Add mapping table from design tokens -> VCR manifest fields."
+      - "Define minimum acceptable parity checks at frame 0 and keyframes."
+  vcr-style-skill-template:
+    borrow_from:
+      - remotion-best-practices
+    upgrades:
+      - "Expand style token schema for transition families and cadence presets."
+      - "Add style conformance checklist as reusable policy."
+
+execution_order:
+  - "1) Enhance vcr-style-skill-template tokens and conformance rules."
+  - "2) Add debugger QA/repro templates."
+  - "3) Expand ascii pipeline validation ladder."
+  - "4) Add figma token mapping + parity checks."
