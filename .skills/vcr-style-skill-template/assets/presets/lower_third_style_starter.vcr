@@ -1,0 +1,57 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 3.0
+
+layers:
+  - id: "bg"
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.05, g: 0.05, b: 0.07, a: 1.0 }
+
+  - id: "bar"
+    z_index: 10
+    position: { x: 80, y: 900 }
+    procedural:
+      kind: rounded_rect
+      center: { x: 420, y: 48 }
+      size: { x: 840, y: 96 }
+      corner_radius: 8
+      color: { r: 0.08, g: 0.08, b: 0.12, a: 0.92 }
+
+  - id: "accent"
+    z_index: 11
+    position: { x: 80, y: 896 }
+    procedural:
+      kind: line
+      start: { x: 0, y: 0 }
+      end: { x: 840, y: 0 }
+      thickness: 3
+      color: { r: 0.0, g: 0.8, b: 1.0, a: 1.0 }
+
+  - id: "name"
+    z_index: 12
+    position: { x: 110, y: 912 }
+    opacity:
+      start_frame: 0
+      end_frame: 14
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    text:
+      content: "YOUR NAME"
+      font_family: "GeistPixel-Square"
+      font_size: 38
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: "title"
+    z_index: 12
+    position: { x: 110, y: 952 }
+    opacity: 0.78
+    text:
+      content: "Role / Descriptor"
+      font_family: "GeistPixel-Line"
+      font_size: 24
+      color: { r: 0.85, g: 0.85, b: 0.9, a: 1.0 }

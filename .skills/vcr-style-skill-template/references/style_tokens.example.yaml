@@ -1,0 +1,83 @@
+# Copy to style_tokens.yaml and customize values.
+
+style:
+  name: "my-style-v1"
+  description: "High-contrast techno editorial style"
+
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 30
+  duration_seconds_default: 4.0
+
+typography:
+  title:
+    font_family: "GeistPixel-Square"
+    font_size: 64
+    letter_spacing: 0
+    line_height: 1.0
+  body:
+    font_family: "GeistPixel-Line"
+    font_size: 30
+    letter_spacing: 0
+    line_height: 1.0
+  caption:
+    font_family: "GeistPixel-Line"
+    font_size: 22
+    letter_spacing: 0
+    line_height: 1.0
+
+palette:
+  bg:
+    r: 0.03
+    g: 0.03
+    b: 0.05
+    a: 1.0
+  fg:
+    r: 1.0
+    g: 1.0
+    b: 1.0
+    a: 1.0
+  accent_primary:
+    r: 0.0
+    g: 0.84
+    b: 1.0
+    a: 1.0
+  accent_secondary:
+    r: 0.63
+    g: 0.28
+    b: 1.0
+    a: 1.0
+
+motion:
+  easing:
+    entrance: "ease_out"
+    emphasis: "ease_in_out"
+    exit: "ease_in"
+  durations_frames:
+    entrance: 16
+    emphasis: 24
+    exit: 14
+  modulation:
+    pulse_expression: "sin(t * 0.18) * 0.02"
+    drift_expression: "noise1d(t * 0.5) * 4.0"
+
+composition:
+  safe_margin_px: 80
+  z_tiers:
+    background: 0
+    content: 10
+    ui: 20
+    fx: 30
+  anchors:
+    default: "top_left"
+    hero: "center"
+
+output:
+  naming:
+    suffix: "_style"
+  artifacts:
+    preview_frame: true
+    video: true
+    metadata: true

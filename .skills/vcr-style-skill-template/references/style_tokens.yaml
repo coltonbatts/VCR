@@ -1,0 +1,84 @@
+# Replace these values with your own style profile.
+# Keep keys stable for compatibility with style-aware workflows.
+
+style:
+  name: "starter-style-v1"
+  description: "Starter profile for custom style skills"
+
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 30
+  duration_seconds_default: 3.0
+
+typography:
+  title:
+    font_family: "GeistPixel-Square"
+    font_size: 56
+    letter_spacing: 0
+    line_height: 1.0
+  body:
+    font_family: "GeistPixel-Line"
+    font_size: 28
+    letter_spacing: 0
+    line_height: 1.0
+  caption:
+    font_family: "GeistPixel-Line"
+    font_size: 20
+    letter_spacing: 0
+    line_height: 1.0
+
+palette:
+  bg:
+    r: 0.05
+    g: 0.05
+    b: 0.07
+    a: 1.0
+  fg:
+    r: 1.0
+    g: 1.0
+    b: 1.0
+    a: 1.0
+  accent_primary:
+    r: 0.0
+    g: 0.8
+    b: 1.0
+    a: 1.0
+  accent_secondary:
+    r: 1.0
+    g: 0.4
+    b: 0.0
+    a: 1.0
+
+motion:
+  easing:
+    entrance: "ease_out"
+    emphasis: "ease_in_out"
+    exit: "ease_in"
+  durations_frames:
+    entrance: 14
+    emphasis: 20
+    exit: 12
+  modulation:
+    pulse_expression: "sin(t * 0.2) * 0.02"
+    drift_expression: "noise1d(t * 0.6) * 3.0"
+
+composition:
+  safe_margin_px: 64
+  z_tiers:
+    background: 0
+    content: 10
+    ui: 20
+    fx: 30
+  anchors:
+    default: "top_left"
+    hero: "center"
+
+output:
+  naming:
+    suffix: "_style"
+  artifacts:
+    preview_frame: true
+    video: true
+    metadata: true
