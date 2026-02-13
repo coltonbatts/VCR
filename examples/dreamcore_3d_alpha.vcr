@@ -1,0 +1,28 @@
+version: 1
+
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  duration: { frames: 240 }
+
+layers:
+  - id: dreamcore_bg
+    z_index: 0
+    opacity: 1.0
+    wgpu_shader:
+      shader_path: "shaders/dreamcore_3d_alpha.wgsl"
+      width: 1280
+      height: 720
+      time_mode: seconds
+
+  - id: title_text
+    z_index: 10
+    position: { x: 640, y: 360 }
+    anchor: center
+    text:
+      content: "DREAMCORE // VCR"
+      font_family: "GeistPixel-Square"
+      font_size: 48
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.8 }
