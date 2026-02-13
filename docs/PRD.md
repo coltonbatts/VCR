@@ -92,3 +92,43 @@ To become the **universal rendering target for Agentic Motion Design**, where an
 * **Determinism**: 100% bit-identity on software-backend golden tests.
 * **Speed**: <1s render time for standard 1080p frames.
 * **Agent Autonomy**: Decrease in human intervention required for AI-generated scene fixes.
+
+## 9. ASPECT_PRESET_SPEC_V1
+
+Allowed aspect preset set (closed enum):
+
+- `cinema`
+- `social`
+- `phone`
+
+Exact pixel dimensions (normative):
+
+- `cinema` = `1920x1080`
+- `social` = `1080x1350`
+- `phone` = `1080x1920`
+
+Safe-area insets (integer-only, deterministic):
+
+- `cinema`: 5% inset on all sides
+- `social`: 6% inset on all sides
+- `phone`: 7% inset on all sides
+- Rounding rule: `inset_px = floor(dimension_px * inset_percent / 100)` using integer division
+
+Grid-to-canvas mapping rule (integer-only letterbox):
+
+- Grid presets remain unchanged (for example `120x45`, `80x24`)
+- Grid content is rasterized first, then placed into a centered content window
+- Scale is an integer only: `scale = min(content_window_w / src_w, content_window_h / src_h)`
+- Fractional scales are forbidden
+- No cropping is allowed
+- Centering tie-break is deterministic: for odd remainder, extra pixel goes to right/bottom
+
+Output conventions:
+
+- Output folder must include aspect: `out/<pack_id>/<pack_version>/<aspect>_<fps>/`
+- Artifact filename must include aspect:
+  `<pack_id>__<artifact_id>__<aspect>__<fps>__core-<core_version>__pack-<pack_version>.mov`
+
+Versioning rule:
+
+- Any change to the allowed aspect set, dimensions, safe-area math, or mapping behavior requires a `core_version` bump.

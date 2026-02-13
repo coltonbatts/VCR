@@ -16,8 +16,8 @@ use vcr::agent_errors::{
     ErrorContext,
 };
 use vcr::ascii_capture::{
-    build_ascii_capture_plan, parse_capture_size, run_ascii_capture, AsciiCaptureArgs,
-    AsciiCaptureSource, SymbolRemapMode, DEFAULT_CAPTURE_DURATION_SECONDS,
+    build_ascii_capture_plan, derive_capture_output_paths, parse_capture_size, run_ascii_capture,
+    AsciiCaptureArgs, AsciiCaptureSource, SymbolRemapMode, DEFAULT_CAPTURE_DURATION_SECONDS,
     DEFAULT_CAPTURE_FIT_PADDING, DEFAULT_CAPTURE_FONT_SIZE, DEFAULT_CAPTURE_FPS,
 };
 use vcr::ascii_render::{
@@ -28,9 +28,12 @@ use vcr::ascii_sources::render_ascii_sources;
 use vcr::ascii_stage::{
     parse_ascii_stage_size, render_ascii_stage_video, AsciiStageRenderArgs, CameraMode,
 };
+use vcr::aspect_preset::AspectPreset;
 use vcr::chat::{render_chat_video, ChatRenderArgs};
 use vcr::encoding::{FfmpegMode, FfmpegPipe};
+use vcr::error_codes::{find_coded_error, CodedErrorKind};
 use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions, ParamOverride};
+use vcr::packs::{compile_pack, PackCompileBackend, PackCompileRequest};
 use vcr::play::{run_play, PlayArgs};
 use vcr::renderer::Renderer;
 use vcr::schema::{
@@ -325,6 +328,15 @@ enum Commands {
         #[command(subcommand)]
         command: AsciiCommands,
     },
+    Pack {
+        #[command(subcommand)]
+        command: PackCommands,
+    },
+    #[command(about = "Tape commands (tapes are versioned packs)")]
+    Tape {
+        #[command(subcommand)]
+        command: PackCommands,
+    },
     Doctor,
     DeterminismReport {
         manifest: PathBuf,
@@ -339,6 +351,26 @@ enum Commands {
         set: Vec<String>,
         #[arg(long = "json", help = "Emit machine-readable JSON output")]
         json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PackCommands {
+    Compile {
+        #[arg(long = "pack", value_name = "PACK_ID")]
+        pack: String,
+        #[arg(long = "fields", value_name = "PATH_OR_JSON")]
+        fields: String,
+        #[arg(long = "aspect", value_name = "{cinema|social|phone}")]
+        aspect: String,
+        #[arg(long = "fps")]
+        fps: u32,
+        #[arg(
+            long = "out",
+            value_name = "OUTPUT_ROOT",
+            help = "Deterministic output root. Artifacts are written to <out>/<pack_id>/<pack_version>/<aspect>_<fps>/"
+        )]
+        output: PathBuf,
     },
 }
 
@@ -420,7 +452,12 @@ enum AsciiCommands {
     Capture {
         #[arg(long = "source", value_name = "SOURCE")]
         source: String,
-        #[arg(long = "out", value_name = "OUTPUT")]
+        #[arg(
+            long = "out",
+            value_name = "OUTPUT_ROOT",
+            default_value = "out",
+            help = "Deterministic output root. Artifacts are written to <out>/<pack_id>/<pack_version>/<aspect>_<fps>/"
+        )]
         output: PathBuf,
         #[arg(long = "fps", default_value_t = DEFAULT_CAPTURE_FPS)]
         fps: u32,
@@ -446,6 +483,12 @@ enum AsciiCommands {
         fit_padding: f32,
         #[arg(long = "bg-alpha", default_value_t = 1.0)]
         bg_alpha: f32,
+        #[arg(
+            long = "aspect",
+            default_value = "cinema",
+            value_name = "{cinema|social|phone}"
+        )]
+        aspect: String,
         #[arg(long = "dry-run", default_value_t = false)]
         dry_run: bool,
     },
@@ -582,6 +625,8 @@ impl Commands {
             Self::Watch { .. } => "watch",
             Self::Chat { .. } => "chat",
             Self::Ascii { .. } => "ascii",
+            Self::Pack { .. } => "pack",
+            Self::Tape { .. } => "tape",
             Self::Doctor => "doctor",
             Self::DeterminismReport { .. } => "determinism-report",
         }
@@ -883,6 +928,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 symbol_ramp,
                 fit_padding,
                 bg_alpha,
+                aspect,
                 dry_run,
             } => run_ascii_capture_cli(
                 &source,
@@ -899,6 +945,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 symbol_ramp.as_deref(),
                 fit_padding,
                 bg_alpha,
+                &aspect,
                 dry_run,
                 quiet,
             ),
@@ -906,6 +953,24 @@ fn run_cli(cli: Cli) -> Result<()> {
                 export_dir,
                 debug_stage_hashes,
             } => run_ascii_lab(export_dir.as_deref(), debug_stage_hashes),
+        },
+        Commands::Pack { command } => match command {
+            PackCommands::Compile {
+                pack,
+                fields,
+                aspect,
+                fps,
+                output,
+            } => run_pack_compile_cli(&pack, &fields, &aspect, fps, &output, cli.backend),
+        },
+        Commands::Tape { command } => match command {
+            PackCommands::Compile {
+                pack,
+                fields,
+                aspect,
+                fps,
+                output,
+            } => run_pack_compile_cli(&pack, &fields, &aspect, fps, &output, cli.backend),
         },
         Commands::Doctor => run_doctor(),
         Commands::DeterminismReport {
@@ -917,7 +982,52 @@ fn run_cli(cli: Cli) -> Result<()> {
     }
 }
 
+fn run_pack_compile_cli(
+    pack: &str,
+    fields: &str,
+    aspect: &str,
+    fps: u32,
+    output_root: &Path,
+    backend: BackendArg,
+) -> Result<()> {
+    let backend = match backend {
+        BackendArg::Auto => PackCompileBackend::Auto,
+        BackendArg::Software => PackCompileBackend::Software,
+        BackendArg::Gpu => PackCompileBackend::Gpu,
+    };
+
+    let summary = compile_pack(PackCompileRequest {
+        pack_id: pack.to_owned(),
+        fields_arg: fields.to_owned(),
+        aspect_keyword: aspect.to_owned(),
+        fps,
+        output_root: output_root.to_path_buf(),
+        backend,
+    })?;
+    println!("Wrote {}", summary.mov_path.display());
+    println!("Wrote {}", summary.frame_hashes_path.display());
+    println!("Wrote {}", summary.artifact_manifest_path.display());
+    Ok(())
+}
+
 fn print_cli_error(command_name: &str, error: &anyhow::Error) {
+    if let Some(coded) = find_coded_error(error) {
+        let summary = format!("{}: {}", coded.code, coded.message);
+        let agent_mode = std::env::var("VCR_AGENT_MODE")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+
+        if agent_mode {
+            match serde_json::to_string_pretty(&coded.envelope()) {
+                Ok(json) => eprintln!("{json}"),
+                Err(_) => eprintln!("vcr {command_name}: {summary}"),
+            }
+        } else {
+            eprintln!("vcr {command_name}: {summary}");
+        }
+        return;
+    }
+
     let head = single_line(error.to_string());
     let root = error
         .chain()
@@ -988,6 +1098,11 @@ fn single_line(value: String) -> String {
 }
 
 fn classify_exit_code(error: &anyhow::Error) -> VcrExitCode {
+    if let Some(coded) = find_coded_error(error) {
+        return match coded.kind {
+            CodedErrorKind::Usage => VcrExitCode::Usage,
+        };
+    }
     if is_missing_dependency_error(error) {
         return VcrExitCode::MissingDependency;
     }
@@ -1010,6 +1125,7 @@ fn is_missing_dependency_error(error: &anyhow::Error) -> bool {
 
 fn is_usage_error(error: &anyhow::Error) -> bool {
     has_error_message_fragment(error, "invalid --set")
+        || has_error_message_fragment(error, "invalid_aspect_preset")
         || has_error_message_fragment(error, "expected name=value")
         || has_error_message_fragment(error, "use either --frame or --time")
         || has_error_message_fragment(error, "use either --end-frame or --frames")
@@ -1096,6 +1212,28 @@ fn resolve_output_path(
 
     progress_log(quiet, format_args!("[VCR] Output path: {}", path.display()));
     Ok(path)
+}
+
+fn resolve_ascii_capture_output_root(output_root: &Path) -> Result<PathBuf> {
+    if output_root.as_os_str().is_empty() {
+        bail!("--out must not be empty");
+    }
+    if output_root.is_absolute() {
+        bail!(
+            "--out must be a relative path (deterministic output root), got {}",
+            output_root.display()
+        );
+    }
+    if output_root
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        bail!(
+            "--out must not contain parent traversal components: {}",
+            output_root.display()
+        );
+    }
+    Ok(output_root.to_path_buf())
 }
 
 fn default_preview_sequence_output_dir(manifest_path: &Path) -> PathBuf {
@@ -1421,7 +1559,7 @@ fn run_ascii_render_cli(
 
 fn run_ascii_capture_cli(
     source: &str,
-    output: &Path,
+    output_root: &Path,
     fps: u32,
     duration: f32,
     frames: Option<u32>,
@@ -1434,21 +1572,34 @@ fn run_ascii_capture_cli(
     symbol_ramp: Option<&str>,
     fit_padding: f32,
     bg_alpha: f32,
+    aspect: &str,
     dry_run: bool,
     quiet: bool,
 ) -> Result<()> {
     let (cols, rows) = parse_capture_size(size)?;
     let source = AsciiCaptureSource::parse(source)?;
-    let resolved_output = resolve_output_path(
-        Path::new("ascii_capture"),
-        Some(output.to_path_buf()),
-        "mov",
-        None,
-        quiet,
-    )?;
+    let aspect = AspectPreset::from_keyword(aspect)?;
+    let output_root = resolve_ascii_capture_output_root(output_root)?;
+    let artifact_seed = format!(
+        "source={}|aspect={}|fps={}|duration={:.6}|frames={}|grid={}x{}|font_size={:.3}|fit_padding={:.6}|bg_alpha={:.6}|symbol_remap={:?}|symbol_ramp={}",
+        source.display_label(),
+        aspect.keyword(),
+        fps,
+        duration,
+        frames.map(|value| value.to_string()).unwrap_or_else(|| "auto".to_owned()),
+        cols,
+        rows,
+        font_size,
+        fit_padding,
+        bg_alpha,
+        symbol_remap,
+        symbol_ramp.unwrap_or("")
+    );
+    let derived = derive_capture_output_paths(&output_root, &source, aspect, fps, &artifact_seed);
+
     let args = AsciiCaptureArgs {
         source,
-        output: resolved_output.clone(),
+        output: derived.mov_path.clone(),
         fps,
         duration_seconds: duration,
         max_frames: frames,
@@ -1466,6 +1617,10 @@ fn run_ascii_capture_cli(
         symbol_ramp: symbol_ramp.map(ToOwned::to_owned),
         fit_padding,
         bg_alpha,
+        aspect,
+        pack_id: derived.names.pack_id.clone(),
+        pack_version: derived.names.pack_version.clone(),
+        artifact_id: derived.names.artifact_id.clone(),
     };
 
     let plan = build_ascii_capture_plan(&args)?;
@@ -1474,10 +1629,32 @@ fn run_ascii_capture_cli(
         println!("  source: {}", plan.source_label);
         println!("  source_command: {}", plan.source_command.join(" "));
         println!("  output: {}", plan.output.display());
+        println!("  output_dir: {}", derived.output_dir.display());
         println!("  frame_count: {}", plan.frame_count);
         println!("  fps: {}", plan.fps);
         println!("  duration_seconds: {:.3}", plan.duration_seconds);
         println!("  size: {}x{} cells", plan.cols, plan.rows);
+        println!(
+            "  aspect: {} ({}x{})",
+            plan.aspect.keyword(),
+            plan.canvas_width,
+            plan.canvas_height
+        );
+        println!(
+            "  safe_area: left={}, right={}, top={}, bottom={}",
+            plan.safe_insets.left,
+            plan.safe_insets.right,
+            plan.safe_insets.top,
+            plan.safe_insets.bottom
+        );
+        println!(
+            "  letterbox: scale={}, content={}x{} at ({}, {})",
+            plan.letterbox.integer_scale,
+            plan.letterbox.scaled_width,
+            plan.letterbox.scaled_height,
+            plan.letterbox.content_x,
+            plan.letterbox.content_y
+        );
         println!(
             "  font: {} @ {:.2}",
             plan.font_path.display(),
@@ -1523,16 +1700,19 @@ fn run_ascii_capture_cli(
 
     let summary = run_ascii_capture(&args)?;
     println!("Wrote {}", summary.output.display());
+    println!("Wrote {}", summary.frame_hashes_path.display());
+    println!("Wrote {}", summary.artifact_manifest_path.display());
     progress_log(
         quiet,
         format_args!(
-            "[VCR] ASCII capture complete: {} frames @ {} fps, grid={}x{}, output={}x{}",
+            "[VCR] ASCII capture complete: {} frames @ {} fps, grid={}x{}, output={}x{}, aspect={}",
             summary.frame_count,
             summary.fps,
             summary.cols,
             summary.rows,
             summary.pixel_width,
-            summary.pixel_height
+            summary.pixel_height,
+            aspect.keyword()
         ),
     );
 

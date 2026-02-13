@@ -10,9 +10,11 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context, Result};
 use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
 use fontdue::{Font, FontSettings};
+use serde::Serialize;
 
 use crate::ascii_frame::{AsciiFrame, AsciiFrameMetadata};
 use crate::ascii_sources::{ascii_live_stream_names, ascii_live_stream_url, library_source_names};
+use crate::aspect_preset::{compute_letterbox_layout, AspectPreset, LetterboxLayout, SafeInsetsPx};
 
 pub const DEFAULT_CAPTURE_FPS: u32 = 30;
 pub const DEFAULT_CAPTURE_DURATION_SECONDS: f32 = 5.0;
@@ -26,6 +28,7 @@ const SOURCE_RECV_POLL_MS: u64 = 20;
 const SOURCE_SYMBOL_RAMP: &str =
     " .'`^\",:;Il!i~+_-?][}{1)(|\\/*tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
 const DEFAULT_TARGET_SYMBOL_RAMP: &str = " .,:;iltfrxnuvczXYUJCLQOZmwqpdbkhao*#MW&@$";
+const PACK_VERSION_DEFAULT: &str = "1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolRemapMode {
@@ -104,6 +107,10 @@ pub struct AsciiCaptureArgs {
     pub symbol_ramp: Option<String>,
     pub fit_padding: f32,
     pub bg_alpha: f32,
+    pub aspect: AspectPreset,
+    pub pack_id: String,
+    pub pack_version: String,
+    pub artifact_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +132,14 @@ pub struct AsciiCapturePlan {
     pub symbol_ramp: String,
     pub fit_padding: f32,
     pub bg_alpha: f32,
+    pub aspect: AspectPreset,
+    pub canvas_width: u32,
+    pub canvas_height: u32,
+    pub safe_insets: SafeInsetsPx,
+    pub letterbox: LetterboxLayout,
+    pub pack_id: String,
+    pub pack_version: String,
+    pub artifact_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -136,6 +151,88 @@ pub struct AsciiCaptureSummary {
     pub rows: u32,
     pub pixel_width: u32,
     pub pixel_height: u32,
+    pub frame_hashes_path: PathBuf,
+    pub artifact_manifest_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct CaptureArtifactNames {
+    pub pack_id: String,
+    pub pack_version: String,
+    pub artifact_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CaptureOutputPaths {
+    pub output_dir: PathBuf,
+    pub mov_path: PathBuf,
+    pub frame_hashes_path: PathBuf,
+    pub artifact_manifest_path: PathBuf,
+    pub names: CaptureArtifactNames,
+}
+
+pub fn derive_capture_output_paths(
+    output_root: &Path,
+    source: &AsciiCaptureSource,
+    aspect: AspectPreset,
+    fps: u32,
+    artifact_seed: &str,
+) -> CaptureOutputPaths {
+    let pack_id = source_pack_id(source);
+    let pack_version = PACK_VERSION_DEFAULT.to_owned();
+    let artifact_id = format!("{:016x}", fnv1a64(artifact_seed.as_bytes()));
+    let aspect_keyword = aspect.keyword();
+    let output_dir = output_root
+        .join(&pack_id)
+        .join(&pack_version)
+        .join(format!("{aspect_keyword}_{fps}"));
+    let mov_path = output_dir.join(format!(
+        "{pack_id}__{artifact_id}__{aspect_keyword}__{fps}__core-{}__pack-{pack_version}.mov",
+        env!("CARGO_PKG_VERSION")
+    ));
+    let frame_hashes_path = output_dir.join("frame_hashes.json");
+    let artifact_manifest_path = output_dir.join("artifact_manifest.json");
+    CaptureOutputPaths {
+        output_dir,
+        mov_path,
+        frame_hashes_path,
+        artifact_manifest_path,
+        names: CaptureArtifactNames {
+            pack_id,
+            pack_version,
+            artifact_id,
+        },
+    }
+}
+
+fn source_pack_id(source: &AsciiCaptureSource) -> String {
+    let raw = match source {
+        AsciiCaptureSource::AsciiLive { stream } => format!("ascii_live_{stream}"),
+        AsciiCaptureSource::Library { id } => format!("library_{id}"),
+        AsciiCaptureSource::Chafa { input } => {
+            let stem = input
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or("input");
+            format!("chafa_{stem}")
+        }
+    };
+    sanitize_token(&raw)
+}
+
+fn sanitize_token(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push('_');
+        }
+    }
+    while out.contains("__") {
+        out = out.replace("__", "_");
+    }
+    out.trim_matches('_').to_owned()
 }
 
 pub fn parse_capture_size(raw: &str) -> Result<(u32, u32)> {
@@ -164,6 +261,19 @@ pub fn build_ascii_capture_plan(args: &AsciiCaptureArgs) -> Result<AsciiCaptureP
     let source_command = source_command_preview(&args.source, args.cols, args.rows)?;
     let font_path = resolve_font_path(args.font_path.as_deref())?;
     let symbol_ramp = resolve_target_symbol_ramp(args.symbol_ramp.as_deref())?;
+    let rasterizer = AsciiFrameRasterizer::new(
+        &font_path,
+        args.font_size,
+        args.cols as usize,
+        args.rows as usize,
+    )?;
+    let letterbox = compute_letterbox_layout(
+        args.aspect,
+        rasterizer.pixel_width(),
+        rasterizer.pixel_height(),
+    )?;
+    let (canvas_width, canvas_height) = args.aspect.dimensions_px();
+
     Ok(AsciiCapturePlan {
         source_label: args.source.display_label(),
         source_command,
@@ -186,6 +296,14 @@ pub fn build_ascii_capture_plan(args: &AsciiCaptureArgs) -> Result<AsciiCaptureP
         symbol_ramp,
         fit_padding: args.fit_padding,
         bg_alpha: args.bg_alpha,
+        aspect: args.aspect,
+        canvas_width,
+        canvas_height,
+        safe_insets: args.aspect.safe_insets_px(),
+        letterbox,
+        pack_id: args.pack_id.clone(),
+        pack_version: args.pack_version.clone(),
+        artifact_id: args.artifact_id.clone(),
     })
 }
 
@@ -237,29 +355,142 @@ pub fn run_ascii_capture(args: &AsciiCaptureArgs) -> Result<AsciiCaptureSummary>
 
     let mut encoder = ProResEncoder::spawn(
         &plan.output,
-        rasterizer.pixel_width(),
-        rasterizer.pixel_height(),
+        plan.canvas_width,
+        plan.canvas_height,
         plan.fps,
         profile,
         pix_fmt,
         plan.tmp_dir.as_deref(),
     )?;
 
+    let mut frame_hashes = Vec::with_capacity(frames.len());
     for (_i, frame) in frames.iter().enumerate() {
-        let rgba = rasterizer.render(frame);
+        let raster = rasterizer.render(frame);
+        let rgba = render_into_aspect_canvas(&raster, rasterizer.pixel_width(), &plan.letterbox)?;
+        frame_hashes.push(format!("0x{:016x}", fnv1a64(&rgba)));
         encoder.write_frame(&rgba)?;
     }
     encoder.finish()?;
 
+    write_capture_artifacts(&plan, &frame_hashes)?;
+
+    let output_path = plan.output.clone();
     Ok(AsciiCaptureSummary {
-        output: plan.output,
+        output: output_path.clone(),
         frame_count: plan.frame_count,
         fps: plan.fps,
         cols: plan.cols,
         rows: plan.rows,
-        pixel_width: rasterizer.pixel_width(),
-        pixel_height: rasterizer.pixel_height(),
+        pixel_width: plan.canvas_width,
+        pixel_height: plan.canvas_height,
+        frame_hashes_path: output_path.with_file_name("frame_hashes.json"),
+        artifact_manifest_path: output_path.with_file_name("artifact_manifest.json"),
     })
+}
+
+fn render_into_aspect_canvas(
+    source_rgba: &[u8],
+    source_width: u32,
+    layout: &LetterboxLayout,
+) -> Result<Vec<u8>> {
+    if source_width == 0 {
+        bail!("source width must be > 0");
+    }
+    if source_rgba.len() % 4 != 0 {
+        bail!("source RGBA buffer length must be divisible by 4");
+    }
+    let source_pixels = (source_rgba.len() / 4) as u32;
+    let source_height = source_pixels / source_width;
+    if source_width.saturating_mul(source_height).saturating_mul(4) as usize != source_rgba.len() {
+        bail!("source RGBA dimensions are invalid");
+    }
+
+    let mut out = vec![0_u8; (layout.canvas_width * layout.canvas_height * 4) as usize];
+    let k = layout.integer_scale;
+    for dy in 0..layout.scaled_height {
+        let sy = dy / k;
+        let dst_y = layout.content_y + dy;
+        for dx in 0..layout.scaled_width {
+            let sx = dx / k;
+            let dst_x = layout.content_x + dx;
+            let src_idx = ((sy * source_width + sx) * 4) as usize;
+            let dst_idx = ((dst_y * layout.canvas_width + dst_x) * 4) as usize;
+            out[dst_idx..dst_idx + 4].copy_from_slice(&source_rgba[src_idx..src_idx + 4]);
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Serialize)]
+struct FrameHashesFile<'a> {
+    algorithm: &'a str,
+    frame_hashes: &'a [String],
+}
+
+#[derive(Debug, Serialize)]
+struct ArtifactManifestFile<'a> {
+    pack_id: &'a str,
+    pack_version: &'a str,
+    artifact_id: &'a str,
+    aspect: AspectPreset,
+    fps: u32,
+    core_version: &'a str,
+    output_mov: String,
+    output_dir: String,
+    canvas: CanvasSpec,
+    safe_area: SafeInsetsPx,
+    letterbox: LetterboxLayout,
+}
+
+#[derive(Debug, Serialize)]
+struct CanvasSpec {
+    width: u32,
+    height: u32,
+}
+
+fn write_capture_artifacts(plan: &AsciiCapturePlan, frame_hashes: &[String]) -> Result<()> {
+    let output_dir = plan
+        .output
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    fs::create_dir_all(&output_dir)
+        .with_context(|| format!("failed to create output directory {}", output_dir.display()))?;
+
+    let frame_hashes_path = output_dir.join("frame_hashes.json");
+    let frame_hashes_payload = FrameHashesFile {
+        algorithm: "fnv1a64",
+        frame_hashes,
+    };
+    fs::write(
+        &frame_hashes_path,
+        format!("{}\n", serde_json::to_string_pretty(&frame_hashes_payload)?),
+    )
+    .with_context(|| format!("failed to write {}", frame_hashes_path.display()))?;
+
+    let artifact_manifest_path = output_dir.join("artifact_manifest.json");
+    let artifact_manifest = ArtifactManifestFile {
+        pack_id: &plan.pack_id,
+        pack_version: &plan.pack_version,
+        artifact_id: &plan.artifact_id,
+        aspect: plan.aspect,
+        fps: plan.fps,
+        core_version: env!("CARGO_PKG_VERSION"),
+        output_mov: plan.output.display().to_string(),
+        output_dir: output_dir.display().to_string(),
+        canvas: CanvasSpec {
+            width: plan.canvas_width,
+            height: plan.canvas_height,
+        },
+        safe_area: plan.safe_insets,
+        letterbox: plan.letterbox,
+    };
+    fs::write(
+        &artifact_manifest_path,
+        format!("{}\n", serde_json::to_string_pretty(&artifact_manifest)?),
+    )
+    .with_context(|| format!("failed to write {}", artifact_manifest_path.display()))?;
+    Ok(())
 }
 
 fn validate_capture_args(args: &AsciiCaptureArgs) -> Result<()> {
@@ -1132,6 +1363,8 @@ impl ProResEncoder {
             .arg("-hide_banner")
             .arg("-loglevel")
             .arg("error")
+            .arg("-fflags")
+            .arg("+bitexact")
             .arg("-y")
             .arg("-f")
             .arg("rawvideo")
@@ -1146,10 +1379,19 @@ impl ProResEncoder {
             .arg("-an")
             .arg("-c:v")
             .arg("prores_ks")
+            .arg("-flags:v")
+            .arg("+bitexact")
             .arg("-profile:v")
             .arg(profile)
             .arg("-pix_fmt")
             .arg(pix_fmt)
+            // Determinism guard: clear inherited metadata and pin volatile fields.
+            .arg("-map_metadata")
+            .arg("-1")
+            .arg("-metadata")
+            .arg("creation_time=1970-01-01T00:00:00Z")
+            .arg("-metadata")
+            .arg("encoder=VCR")
             .arg(output_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -1239,6 +1481,15 @@ fn blend_pixel(frame: &mut [u8], idx: usize, src: [u8; 4]) {
         frame[idx + channel] = ((src_c * alpha + dst * inv_alpha + 127) / 255) as u8;
     }
     frame[idx + 3] = 255;
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0001_0000_01b3);
+    }
+    hash
 }
 
 struct BestEffortAnsiFrameParser {
@@ -1474,6 +1725,7 @@ mod tests {
         resolve_target_frame_count, BestEffortAnsiFrameParser, SymbolRemapMode,
     };
     use crate::ascii_frame::AsciiFrame;
+    use crate::aspect_preset::{compute_letterbox_layout, AspectPreset};
 
     #[test]
     fn parse_size_supports_cols_x_rows() {
@@ -1532,5 +1784,40 @@ mod tests {
             .collect::<std::collections::BTreeSet<_>>();
         assert!(unique.len() >= 3);
         assert!(unique.contains(&b'@'));
+    }
+
+    #[test]
+    fn aspect_preset_dimensions_are_fixed() {
+        assert_eq!(AspectPreset::Cinema.dimensions_px(), (1920, 1080));
+        assert_eq!(AspectPreset::Social.dimensions_px(), (1080, 1350));
+        assert_eq!(AspectPreset::Phone.dimensions_px(), (1080, 1920));
+    }
+
+    #[test]
+    fn safe_area_rounds_down_with_integer_math() {
+        let social = AspectPreset::Social.safe_insets_px();
+        assert_eq!(social.left, 64);
+        assert_eq!(social.right, 64);
+        assert_eq!(social.top, 81);
+        assert_eq!(social.bottom, 81);
+    }
+
+    #[test]
+    fn letterbox_padding_odd_remainder_goes_right_and_bottom() {
+        let layout = compute_letterbox_layout(AspectPreset::Social, 500, 500).expect("layout");
+        let rem_x = layout.content_window_width - layout.scaled_width;
+        let rem_y = layout.content_window_height - layout.scaled_height;
+        assert_eq!(layout.padding_left + layout.padding_right, rem_x);
+        assert_eq!(layout.padding_top + layout.padding_bottom, rem_y);
+        if rem_x % 2 == 1 {
+            assert_eq!(layout.padding_right, layout.padding_left + 1);
+        } else {
+            assert_eq!(layout.padding_right, layout.padding_left);
+        }
+        if rem_y % 2 == 1 {
+            assert_eq!(layout.padding_bottom, layout.padding_top + 1);
+        } else {
+            assert_eq!(layout.padding_bottom, layout.padding_top);
+        }
     }
 }

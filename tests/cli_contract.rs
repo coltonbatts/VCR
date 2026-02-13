@@ -501,6 +501,7 @@ fn ascii_capture_help_lists_expected_flags() {
     assert!(stdout.contains("--symbol-remap"));
     assert!(stdout.contains("--symbol-ramp"));
     assert!(stdout.contains("--fit-padding"));
+    assert!(stdout.contains("--aspect"));
     assert!(stdout.contains("--dry-run"));
 }
 
@@ -515,7 +516,7 @@ fn ascii_capture_dry_run_prints_pipeline_plan() {
             "--source",
             "ascii-live:earth",
             "--out",
-            "earth.mov",
+            "custom_root",
             "--frames",
             "3",
             "--dry-run",
@@ -527,7 +528,10 @@ fn ascii_capture_dry_run_prints_pipeline_plan() {
     assert!(stdout.contains("Capture plan:"));
     assert!(stdout.contains("source: ascii-live:earth"));
     assert!(stdout.contains("source_command: curl -L --no-buffer https://ascii.live/earth"));
+    assert!(stdout.contains("output_dir: custom_root/ascii_live_earth/1/cinema_30"));
     assert!(stdout.contains("frame_count: 3"));
+    assert!(stdout.contains("aspect: cinema (1920x1080)"));
+    assert!(stdout.contains("safe_area: left=96, right=96, top=54, bottom=54"));
     assert!(stdout.contains("encoder: ffmpeg -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le"));
     assert!(stdout.contains("symbol_remap: Equalize"));
     assert!(stdout.contains("symbol_ramp: .,:;iltfrxnuvczXYUJCLQOZmwqpdbkhao*#MW&@$"));
@@ -553,13 +557,15 @@ fn ascii_capture_writes_output_mov_when_tools_are_available() {
             "--source",
             &source,
             "--out",
-            "capture.mov",
+            "custom_root",
             "--frames",
             "3",
             "--fps",
             "24",
             "--size",
             "80x40",
+            "--aspect",
+            "cinema",
         ],
     );
     assert!(
@@ -569,8 +575,67 @@ fn ascii_capture_writes_output_mov_when_tools_are_available() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let mov = dir.path().join("capture.mov");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mov_line = stdout
+        .lines()
+        .find(|line| line.starts_with("Wrote ") && line.ends_with(".mov"))
+        .expect("capture should print output mov path");
+    let mov_rel = mov_line.trim_start_matches("Wrote ").trim();
+    let mov = dir.path().join(mov_rel);
+    assert!(
+        mov_rel.starts_with("custom_root/"),
+        "mov path should be rooted under --out"
+    );
     assert!(mov.is_file(), "capture output should exist");
     let metadata = fs::metadata(&mov).expect("capture output metadata should load");
     assert!(metadata.len() > 0, "capture output should not be empty");
+    assert!(
+        mov.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .contains("__cinema__24__"),
+        "artifact filename should include aspect and fps"
+    );
+    let frame_hashes = mov
+        .parent()
+        .expect("mov should have parent")
+        .join("frame_hashes.json");
+    let artifact_manifest = mov
+        .parent()
+        .expect("mov should have parent")
+        .join("artifact_manifest.json");
+    assert!(frame_hashes.is_file(), "frame_hashes.json should exist");
+    assert!(
+        artifact_manifest.is_file(),
+        "artifact_manifest.json should exist"
+    );
+}
+
+#[test]
+fn ascii_capture_invalid_aspect_emits_typed_error_envelope() {
+    let dir = tempdir().expect("tempdir should create");
+    let output = Command::new(env!("CARGO_BIN_EXE_vcr"))
+        .current_dir(dir.path())
+        .env("VCR_AGENT_MODE", "1")
+        .args([
+            "ascii",
+            "capture",
+            "--source",
+            "library:geist-wave",
+            "--aspect",
+            "square",
+            "--frames",
+            "1",
+        ])
+        .output()
+        .expect("command should run");
+    assert_eq!(output.status.code(), Some(2));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let parsed: Value = serde_json::from_str(&stderr).expect("stderr should be envelope json");
+    assert_eq!(parsed["ok"], Value::Bool(false));
+    assert_eq!(
+        parsed["error"]["code"],
+        Value::String("INVALID_ASPECT_PRESET".to_owned())
+    );
 }
