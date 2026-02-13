@@ -1,0 +1,25 @@
+version: 1
+
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  duration: { frames: 300 }
+
+layers:
+  - id: statue_background
+    z_index: 0
+    sequence:
+      path: "assets/animations/statue_frames"
+      pattern: "{frame:04}.png"
+
+  - id: welcome_text
+    z_index: 10
+    position: { x: 640, y: 360 }
+    anchor: center
+    text:
+      content: "Welcome to VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 120
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
