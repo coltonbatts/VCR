@@ -24,6 +24,7 @@ use crate::schema::{
     Parameters, ProceduralLayer, ProceduralSource, PropertyValue, ScalarProperty, ShaderLayer,
     TextLayer, TimingControls, Vec2,
 };
+use crate::schema::{WgpuShaderLayer, WgpuShaderTimeMode};
 use crate::timeline::{
     evaluate_layer_state, evaluate_layer_state_or_hidden, resolve_group_chain,
     resolve_groups_by_id, RenderSceneData,
@@ -243,6 +244,41 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+const WGPU_LAYER_SHADER_PREAMBLE: &str = r#"
+struct WgpuLayerUniform {
+  time: f32,
+  _pad0: f32,
+  resolution: vec2<f32>,
+}
+
+@group(0) @binding(0) var<uniform> vcr_uniforms: WgpuLayerUniform;
+
+struct VertexOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+  var positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -3.0),
+    vec2<f32>(-1.0, 1.0),
+    vec2<f32>(3.0, 1.0)
+  );
+
+  var out: VertexOutput;
+  let p = positions[vertex_index];
+  out.position = vec4<f32>(p, 0.0, 1.0);
+  out.uv = p * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
+  return out;
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+  return shade(input.uv, vcr_uniforms.time, vcr_uniforms.resolution);
+}
+"#;
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct ShaderUniform {
@@ -250,6 +286,14 @@ struct ShaderUniform {
     frame: u32,
     resolution: [f32; 2],
     custom: [f32; 8],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct WgpuShaderUniform {
+    time: f32,
+    _pad0: f32,
+    resolution: [f32; 2],
 }
 
 const EPSILON: f32 = 0.0001;
@@ -321,6 +365,7 @@ impl GpuLayer {
             GpuLayerSource::Asset { .. } => true,
             GpuLayerSource::Procedural(gpu) => gpu.has_rendered,
             GpuLayerSource::Shader(gpu) => gpu.has_rendered && gpu.is_static,
+            GpuLayerSource::WgpuShader(_) => false,
             GpuLayerSource::Text { .. } => true,
             GpuLayerSource::Ascii(gpu) => gpu.has_rendered && gpu.is_static,
             GpuLayerSource::Sequence { .. } => false, // reloads each frame
@@ -329,12 +374,20 @@ impl GpuLayer {
 }
 
 enum GpuLayerSource {
-    Asset { _texture: wgpu::Texture },
+    Asset {
+        _texture: wgpu::Texture,
+    },
     Procedural(ProceduralGpu),
     Shader(CustomShaderGpu),
-    Text { _texture: wgpu::Texture },
+    WgpuShader(WgpuShaderGpu),
+    Text {
+        _texture: wgpu::Texture,
+    },
     Ascii(AsciiGpu),
-    Sequence { source: crate::schema::SequenceSource, _texture: wgpu::Texture },
+    Sequence {
+        source: crate::schema::SequenceSource,
+        _texture: wgpu::Texture,
+    },
 }
 
 struct CustomShaderGpu {
@@ -346,6 +399,16 @@ struct CustomShaderGpu {
     view: wgpu::TextureView,
     has_rendered: bool,
     is_static: bool,
+    last_rendered_frame: Option<u32>,
+}
+
+struct WgpuShaderGpu {
+    uniform_buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    pipeline: wgpu::RenderPipeline,
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    time_mode: WgpuShaderTimeMode,
     last_rendered_frame: Option<u32>,
 }
 
@@ -552,12 +615,21 @@ struct SoftwareLayer {
 }
 
 enum SoftwareLayerSource {
-    Asset { pixmap: Pixmap },
+    Asset {
+        pixmap: Pixmap,
+    },
     Procedural(ProceduralSource),
     Shader,
-    Text { pixmap: Pixmap },
-    Ascii { prepared: PreparedAsciiLayer },
-    Sequence { source: crate::schema::SequenceSource },
+    WgpuShader,
+    Text {
+        pixmap: Pixmap,
+    },
+    Ascii {
+        prepared: PreparedAsciiLayer,
+    },
+    Sequence {
+        source: crate::schema::SequenceSource,
+    },
 }
 
 impl GpuRenderer {
@@ -819,6 +891,20 @@ impl GpuRenderer {
                     width,
                     height,
                     shader_layer,
+                    group_chain,
+                    &blend_bind_group_layout,
+                    &sampler,
+                    &scene.params,
+                    &scene.modulators,
+                    scene.seed,
+                    environment.fps,
+                )?,
+                Layer::WgpuShader(wgpu_shader_layer) => build_wgpu_shader_layer(
+                    &device,
+                    &queue,
+                    width,
+                    height,
+                    wgpu_shader_layer,
                     group_chain,
                     &blend_bind_group_layout,
                     &sampler,
@@ -1233,6 +1319,52 @@ impl GpuRenderer {
 
         // ASCII layers
         for layer in &mut self.layers {
+            let GpuLayerSource::WgpuShader(shader) = &mut layer.source else {
+                continue;
+            };
+
+            let needs_update = shader_layer_needs_update(shader.last_rendered_frame, frame_index);
+            if !needs_update {
+                continue;
+            }
+
+            let time = match shader.time_mode {
+                WgpuShaderTimeMode::Seconds => frame_index as f32 / fps as f32,
+                WgpuShaderTimeMode::Frame => frame_index as f32,
+            };
+            let uniform = WgpuShaderUniform {
+                time,
+                _pad0: 0.0,
+                resolution: [layer.width as f32, layer.height as f32],
+            };
+            self.queue
+                .write_buffer(&shader.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("vcr-wgpu-shader-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &shader.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&shader.pipeline);
+                pass.set_bind_group(0, &shader.bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+
+            shader.last_rendered_frame = Some(frame_index);
+        }
+
+        // ASCII layers
+        for layer in &mut self.layers {
             let GpuLayerSource::Ascii(ascii) = &mut layer.source else {
                 continue;
             };
@@ -1492,6 +1624,12 @@ impl SoftwareRenderer {
                     eprintln!("[warn] custom shader layers require GPU backend; layer rendered as transparent");
                     SoftwareLayerSource::Shader
                 }
+                Layer::WgpuShader(_) => {
+                    eprintln!(
+                        "[warn] wgpu_shader layers require GPU backend; layer rendered as transparent"
+                    );
+                    SoftwareLayerSource::WgpuShader
+                }
                 Layer::Text(text_layer) => SoftwareLayerSource::Text {
                     pixmap: render_text_to_pixmap(text_layer)?,
                 },
@@ -1507,6 +1645,7 @@ impl SoftwareRenderer {
                 SoftwareLayerSource::Asset { pixmap } => (pixmap.width(), pixmap.height()),
                 SoftwareLayerSource::Procedural(_) => (width, height),
                 SoftwareLayerSource::Shader => (width, height),
+                SoftwareLayerSource::WgpuShader => (width, height),
                 SoftwareLayerSource::Text { pixmap } => (pixmap.width(), pixmap.height()),
                 SoftwareLayerSource::Ascii { prepared } => {
                     (prepared.pixel_width(), prepared.pixel_height())
@@ -1615,6 +1754,9 @@ impl SoftwareRenderer {
             }
             SoftwareLayerSource::Shader => {
                 // Custom WGSL shaders can't run on CPU — skip
+            }
+            SoftwareLayerSource::WgpuShader => {
+                // wgpu_shader layers can't run on CPU — skip
             }
             SoftwareLayerSource::Text { pixmap } => {
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
@@ -1732,8 +1874,13 @@ fn build_sequence_layer(
 
     let bytes_per_row =
         checked_bytes_per_row(layer_width, &format!("layer '{}' width", layer.common.id))?;
-    let rows_per_image = NonZeroU32::new(layer_height)
-        .ok_or_else(|| anyhow!("layer '{}' has invalid height {}", layer.common.id, layer_height))?;
+    let rows_per_image = NonZeroU32::new(layer_height).ok_or_else(|| {
+        anyhow!(
+            "layer '{}' has invalid height {}",
+            layer.common.id,
+            layer_height
+        )
+    })?;
 
     queue.write_texture(
         wgpu::ImageCopyTexture {
@@ -2478,7 +2625,9 @@ fn shader_layer_needs_update(last_rendered_frame: Option<u32>, frame_index: u32)
 }
 
 fn has_shader_layers(layers: &[Layer]) -> bool {
-    layers.iter().any(|layer| matches!(layer, Layer::Shader(_)))
+    layers
+        .iter()
+        .any(|layer| matches!(layer, Layer::Shader(_) | Layer::WgpuShader(_)))
 }
 
 fn can_use_software_fallback(gpu_error_message: &str, layers: &[Layer]) -> bool {
@@ -3262,6 +3411,191 @@ fn build_shader_layer(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn build_wgpu_shader_layer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame_width: u32,
+    frame_height: u32,
+    layer: &WgpuShaderLayer,
+    group_chain: Vec<Group>,
+    blend_bind_group_layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    params: &Parameters,
+    modulators: &ModulatorMap,
+    seed: u64,
+    fps: u32,
+) -> Result<GpuLayer> {
+    let user_shader =
+        std::fs::read_to_string(&layer.wgpu_shader.shader_path).with_context(|| {
+            format!(
+                "layer '{}': failed reading wgpu shader file {}",
+                layer.common.id,
+                layer.wgpu_shader.shader_path.display()
+            )
+        })?;
+    let full_wgsl = format!("{}\n{}", user_shader, WGPU_LAYER_SHADER_PREAMBLE);
+    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(&format!("vcr-wgpu-layer-shader-{}", layer.common.id)),
+        source: wgpu::ShaderSource::Wgsl(full_wgsl.into()),
+    });
+
+    let shader_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some(&format!("vcr-wgpu-layer-bgl-{}", layer.common.id)),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        std::mem::size_of::<WgpuShaderUniform>() as u64,
+                    ),
+                },
+                count: None,
+            }],
+        });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(&format!("vcr-wgpu-layer-pl-{}", layer.common.id)),
+        bind_group_layouts: &[&shader_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(&format!("vcr-wgpu-layer-pipeline-{}", layer.common.id)),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader_module,
+            entry_point: "vs_main",
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader_module,
+            entry_point: "fs_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        multiview: None,
+    });
+
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(&format!("vcr-wgpu-layer-tex-{}", layer.common.id)),
+        size: wgpu::Extent3d {
+            width: layer.wgpu_shader.width,
+            height: layer.wgpu_shader.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let initial_uniform = WgpuShaderUniform {
+        time: 0.0,
+        _pad0: 0.0,
+        resolution: [
+            layer.wgpu_shader.width as f32,
+            layer.wgpu_shader.height as f32,
+        ],
+    };
+    let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(&format!("vcr-wgpu-layer-uniform-{}", layer.common.id)),
+        contents: bytemuck::bytes_of(&initial_uniform),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(&format!("vcr-wgpu-layer-bg-{}", layer.common.id)),
+        layout: &shader_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buffer.as_entire_binding(),
+        }],
+    });
+
+    let state = evaluate_layer_state_or_hidden(
+        &layer.common.id,
+        &layer.common.position,
+        layer.common.pos_x.as_ref(),
+        layer.common.pos_y.as_ref(),
+        &layer.common.scale,
+        &layer.common.rotation_degrees,
+        &layer.common.opacity,
+        layer.common.timing_controls(),
+        &layer.common.modulators,
+        &group_chain,
+        0,
+        fps,
+        params,
+        seed,
+        modulators,
+    )?;
+
+    let draw_resources = build_layer_draw_resources(
+        device,
+        queue,
+        frame_width,
+        frame_height,
+        &layer.common,
+        state.position,
+        state.scale,
+        state.rotation_degrees,
+        state.opacity,
+        layer.wgpu_shader.width,
+        layer.wgpu_shader.height,
+        &view,
+        blend_bind_group_layout,
+        sampler,
+    )?;
+
+    let shader_gpu = WgpuShaderGpu {
+        uniform_buffer,
+        bind_group,
+        pipeline,
+        _texture: texture,
+        view,
+        time_mode: layer.wgpu_shader.time_mode,
+        last_rendered_frame: None,
+    };
+
+    Ok(GpuLayer {
+        id: layer.common.id.clone(),
+        z_index: layer.common.z_index,
+        width: layer.wgpu_shader.width,
+        height: layer.wgpu_shader.height,
+        position: layer.common.position.clone(),
+        position_x: layer.common.pos_x.clone(),
+        position_y: layer.common.pos_y.clone(),
+        scale: layer.common.scale.clone(),
+        rotation_degrees: layer.common.rotation_degrees.clone(),
+        opacity: layer.common.opacity.clone(),
+        timing: layer.common.timing_controls(),
+        modulators: layer.common.modulators.clone(),
+        all_properties_static: false,
+        group_chain,
+        anchor: layer.common.anchor,
+        uniform_buffer: draw_resources.uniform_buffer,
+        blend_bind_group: draw_resources.blend_bind_group,
+        vertex_buffer: draw_resources.vertex_buffer,
+        last_vertices: Some(draw_resources.initial_vertices),
+        last_opacity: Some(draw_resources.initial_opacity),
+        source: GpuLayerSource::WgpuShader(shader_gpu),
+    })
+}
+
 fn build_text_layer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -3534,8 +3868,10 @@ mod tests {
         align_to, can_use_software_fallback, checked_bytes_per_row, copy_tight_rows,
         shader_layer_needs_update, SoftwareRenderer, PROCEDURAL_SHADER,
     };
+    use super::{Renderer, NO_GPU_ADAPTER_ERR};
     use crate::schema::Manifest;
     use crate::timeline::RenderSceneData;
+    use std::path::PathBuf;
 
     #[test]
     fn copy_tight_rows_strips_padding() {
@@ -3724,6 +4060,55 @@ layers:
             .expect("frame render should succeed");
         let checksum = fnv1a64(&frame);
         assert_eq!(checksum, 2991149225877046887);
+    }
+
+    #[test]
+    fn wgpu_shader_layer_smoke_renders_expected_rgba_size() {
+        let shader_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples")
+            .join("shaders")
+            .join("wgpu_shader_test.wgsl");
+        let shader_path_yaml = shader_path
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+
+        let manifest_yaml = format!(
+            r#"
+version: 1
+environment:
+  resolution: {{ width: 16, height: 16 }}
+  fps: 24
+  duration: {{ frames: 1 }}
+layers:
+  - id: wgpu_smoke
+    z_index: 1
+    opacity: 1.0
+    wgpu_shader:
+      shader_path: "{shader_path_yaml}"
+      width: 16
+      height: 16
+      time_mode: seconds
+"#
+        );
+        let manifest: Manifest =
+            serde_yaml::from_str(&manifest_yaml).expect("manifest should parse");
+
+        let scene = RenderSceneData::from_manifest(&manifest);
+        let mut renderer = match pollster::block_on(Renderer::new_with_scene(
+            &manifest.environment,
+            &manifest.layers,
+            scene,
+        )) {
+            Ok(renderer) => renderer,
+            Err(error) if error.to_string().contains(NO_GPU_ADAPTER_ERR) => return,
+            Err(error) => panic!("renderer initialization failed: {error:#}"),
+        };
+
+        let rgba = renderer
+            .render_frame_rgba(0)
+            .expect("wgpu shader smoke render should succeed");
+        assert_eq!(rgba.len(), 16 * 16 * 4);
     }
 
     fn pixel_at(frame: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {

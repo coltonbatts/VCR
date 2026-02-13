@@ -739,6 +739,15 @@ fn validate_manifest(manifest: &mut Manifest, manifest_path: &Path) -> Result<()
                     shader_layer.shader.path = Some(resolved);
                 }
             }
+            Layer::WgpuShader(wgpu_shader_layer) => {
+                let resolved = resolve_and_validate_asset_path(
+                    &manifest_dir,
+                    &wgpu_shader_layer.wgpu_shader.shader_path,
+                    &wgpu_shader_layer.common.id,
+                    "wgpu_shader.shader_path",
+                )?;
+                wgpu_shader_layer.wgpu_shader.shader_path = resolved;
+            }
             Layer::Text(_) => {}
             Layer::Ascii(ascii_layer) => {
                 if let Some(path) = &ascii_layer.ascii.path {

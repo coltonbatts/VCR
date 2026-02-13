@@ -8,6 +8,7 @@ license = "MIT"
 [features]
 default = []
 sidecar_ffmpeg = ["dep:ffmpeg-sidecar"]
+wgpu_layers = []
 
 [dependencies]
 anyhow = "1.0"

@@ -609,6 +609,7 @@ pub enum Layer {
     Image(ImageLayer),
     Procedural(ProceduralLayer),
     Shader(ShaderLayer),
+    WgpuShader(WgpuShaderLayer),
     Text(TextLayer),
     Ascii(AsciiLayer),
     Sequence(SequenceLayer),
@@ -627,6 +628,8 @@ struct LayerWire {
     procedural: Option<ProceduralSource>,
     #[serde(default)]
     shader: Option<ShaderSource>,
+    #[serde(default)]
+    wgpu_shader: Option<WgpuShaderSource>,
     #[serde(default)]
     text: Option<TextSource>,
     #[serde(default)]
@@ -647,7 +650,7 @@ impl<'de> Deserialize<'de> for Layer {
             wire.common.id.as_str()
         };
 
-        let mut present_sources = Vec::with_capacity(7);
+        let mut present_sources = Vec::with_capacity(8);
         if wire.source_path.is_some() {
             present_sources.push("source_path");
         }
@@ -659,6 +662,9 @@ impl<'de> Deserialize<'de> for Layer {
         }
         if wire.shader.is_some() {
             present_sources.push("shader");
+        }
+        if wire.wgpu_shader.is_some() {
+            present_sources.push("wgpu_shader");
         }
         if wire.text.is_some() {
             present_sources.push("text");
@@ -672,14 +678,16 @@ impl<'de> Deserialize<'de> for Layer {
 
         if present_sources.is_empty() {
             return Err(DeError::custom(format!(
-                "layer '{layer_id}' must define exactly one source block: `source_path` (legacy image path), `image`, `procedural`, `shader`, `text`, `ascii`, or `sequence`"
+                "layer '{layer_id}' must define exactly one source block: `source_path` (legacy image path), `image`, `procedural`, `shader`, {} `text`, `ascii`, or `sequence`",
+                layer_wgpu_source_label()
             )));
         }
 
         if present_sources.len() > 1 {
             return Err(DeError::custom(format!(
-                "layer '{layer_id}' defines multiple source blocks ({}) but exactly one is required: `source_path` (legacy image path), `image`, `procedural`, `shader`, `text`, `ascii`, or `sequence`",
-                present_sources.join(", ")
+                "layer '{layer_id}' defines multiple source blocks ({}) but exactly one is required: `source_path` (legacy image path), `image`, `procedural`, `shader`, {} `text`, `ascii`, or `sequence`",
+                present_sources.join(", "),
+                layer_wgpu_source_label()
             )));
         }
 
@@ -689,6 +697,7 @@ impl<'de> Deserialize<'de> for Layer {
             image,
             procedural,
             shader,
+            wgpu_shader,
             text,
             ascii,
             sequence,
@@ -697,6 +706,12 @@ impl<'de> Deserialize<'de> for Layer {
         // Sequence is checked first (before the 6-tuple) to avoid a 7-tuple match.
         if let Some(sequence) = sequence {
             return Ok(Self::Sequence(SequenceLayer { common, sequence }));
+        }
+        if let Some(wgpu_shader) = wgpu_shader {
+            return Ok(Self::WgpuShader(WgpuShaderLayer {
+                common,
+                wgpu_shader,
+            }));
         }
 
         match (source_path, image, procedural, shader, text, ascii) {
@@ -741,6 +756,7 @@ impl Layer {
             Self::Image(layer) => &layer.common,
             Self::Procedural(layer) => &layer.common,
             Self::Shader(layer) => &layer.common,
+            Self::WgpuShader(layer) => &layer.common,
             Self::Text(layer) => &layer.common,
             Self::Ascii(layer) => &layer.common,
             Self::Sequence(layer) => &layer.common,
@@ -760,11 +776,16 @@ impl Layer {
             Self::Image(layer) => layer.validate(),
             Self::Procedural(layer) => layer.validate(params, seed),
             Self::Shader(layer) => layer.validate(params, seed),
+            Self::WgpuShader(layer) => layer.validate(),
             Self::Text(layer) => layer.validate(),
             Self::Ascii(layer) => layer.validate(),
             Self::Sequence(layer) => layer.validate(),
         }
     }
+}
+
+fn layer_wgpu_source_label() -> &'static str {
+    "`wgpu_shader`,"
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1134,10 +1155,7 @@ pub struct SequenceLayer {
 impl SequenceLayer {
     fn validate(&self) -> Result<()> {
         if self.sequence.path.as_os_str().is_empty() {
-            bail!(
-                "layer '{}' sequence.path cannot be empty",
-                self.common.id
-            );
+            bail!("layer '{}' sequence.path cannot be empty", self.common.id);
         }
         if self.sequence.pattern.is_empty() {
             bail!(
@@ -1226,6 +1244,50 @@ impl ShaderLayer {
         }
         for (name, prop) in &self.shader.uniforms {
             prop.validate_with_context(&format!("{label}.uniforms.{name}"), params, seed)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WgpuShaderLayer {
+    #[serde(flatten)]
+    pub common: LayerCommon,
+    pub wgpu_shader: WgpuShaderSource,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WgpuShaderSource {
+    pub shader_path: PathBuf,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default)]
+    pub time_mode: WgpuShaderTimeMode,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WgpuShaderTimeMode {
+    #[default]
+    Seconds,
+    Frame,
+}
+
+impl WgpuShaderLayer {
+    fn validate(&self) -> Result<()> {
+        if self.wgpu_shader.shader_path.as_os_str().is_empty() {
+            bail!(
+                "layer '{}' wgpu_shader.shader_path cannot be empty",
+                self.common.id
+            );
+        }
+        if self.wgpu_shader.width == 0 || self.wgpu_shader.height == 0 {
+            bail!(
+                "layer '{}' wgpu_shader width and height must both be > 0",
+                self.common.id
+            );
         }
         Ok(())
     }
@@ -2759,6 +2821,34 @@ layers:
         assert!(message.contains("layer 'too_many_sources'"));
         assert!(message.contains("multiple source blocks"));
         assert!(message.contains("source_path, image"));
+    }
+
+    #[test]
+    fn manifest_parses_wgpu_shader_layer() {
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+environment:
+  resolution: { width: 64, height: 64 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: gpu_layer
+    z_index: 2
+    opacity: 0.8
+    wgpu_shader:
+      shader_path: "examples/shaders/wgpu_shader_test.wgsl"
+      width: 64
+      height: 64
+      time_mode: frame
+"#,
+        )
+        .expect("manifest should parse wgpu_shader layer");
+
+        assert!(matches!(
+            manifest.layers.first(),
+            Some(Layer::WgpuShader(_))
+        ));
     }
 
     #[test]

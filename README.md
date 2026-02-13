@@ -386,6 +386,7 @@ Example payload (missing required `environment.duration`):
 
 ## Project Docs
 
+- `docs/PRD.md` - Product Requirements Document (Vision & Roadmap)
 - `docs/PARAMS.md` - typed params and `--set` semantics
 - `docs/PLAYGROUND.md` - preset playground runner and outputs
 - `docs/CHAT_RENDER.md` - tagged transcript to animated terminal video

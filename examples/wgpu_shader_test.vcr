@@ -1,0 +1,28 @@
+version: 1
+
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  duration: { frames: 60 }
+
+layers:
+  - id: wgpu_shader_bg
+    z_index: 0
+    opacity: 1.0
+    wgpu_shader:
+      shader_path: "shaders/wgpu_shader_test.wgsl"
+      width: 1280
+      height: 720
+      time_mode: seconds
+
+  - id: label
+    z_index: 2
+    position: { x: 640, y: 360 }
+    anchor: center
+    text:
+      content: "WGPU LAYER"
+      font_family: "GeistPixel-Square"
+      font_size: 72
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
