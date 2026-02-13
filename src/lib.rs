@@ -15,6 +15,7 @@ pub mod chat;
 pub mod decoding;
 pub mod encoding;
 pub mod error_codes;
+pub mod font_assets;
 pub mod manifest;
 pub mod packs;
 pub mod play;

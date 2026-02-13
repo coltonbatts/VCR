@@ -4,21 +4,16 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 
+use crate::font_assets::{
+    ensure_supported_codepoints, read_verified_font_bytes, verify_geist_pixel_bundle,
+};
 use anyhow::{anyhow, bail, Context, Result};
 use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
-use fontdue::{Font, FontSettings};
+use fontdue::Font;
 
 const DEFAULT_FINAL_HOLD_MS: u64 = 700;
 const MIN_WIDTH: u32 = 320;
 const MIN_HEIGHT: u32 = 180;
-
-const GEIST_PIXEL_FILES: [&str; 5] = [
-    "GeistPixel-Line.ttf",
-    "GeistPixel-Square.ttf",
-    "GeistPixel-Grid.ttf",
-    "GeistPixel-Circle.ttf",
-    "GeistPixel-Triangle.ttf",
-];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraMode {
@@ -310,19 +305,10 @@ struct TextPainter {
 }
 
 impl TextPainter {
-    fn new(font_path: &Path, font_size: f32) -> Result<Self> {
-        let font_bytes = fs::read(font_path).with_context(|| {
-            format!(
-                "missing Geist Pixel font '{}'; install Geist Pixel variants in assets/fonts/geist_pixel",
-                font_path.display()
-            )
-        })?;
-        let font = Font::from_bytes(font_bytes, FontSettings::default()).map_err(|error| {
-            anyhow!(
-                "failed to parse Geist Pixel font {}: {error}",
-                font_path.display()
-            )
-        })?;
+    fn new(manifest_root: &Path, font_file: &str, font_size: f32) -> Result<Self> {
+        let font_bytes = read_verified_font_bytes(manifest_root, font_file)?;
+        let font = Font::from_bytes(font_bytes, fontdue::FontSettings::default())
+            .map_err(|error| anyhow!("failed to parse Geist Pixel font {font_file}: {error}"))?;
         Ok(Self {
             font,
             font_size,
@@ -348,7 +334,9 @@ impl TextPainter {
         y: u32,
         text: &str,
         color: [u8; 4],
-    ) {
+    ) -> Result<()> {
+        ensure_supported_codepoints(&self.font, text, "ascii_stage")?;
+
         let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
         layout.reset(&LayoutSettings {
             x: x as f32,
@@ -385,6 +373,7 @@ impl TextPainter {
                 color,
             );
         }
+        Ok(())
     }
 }
 
@@ -400,25 +389,13 @@ struct FontPack {
 
 impl FontPack {
     fn load(manifest_root: &Path, font_size: f32) -> Result<Self> {
-        let font_dir = manifest_root.join("assets/fonts/geist_pixel");
-        let missing = GEIST_PIXEL_FILES
-            .iter()
-            .filter(|name| !font_dir.join(name).exists())
-            .copied()
-            .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            bail!(
-                "missing Geist Pixel font variants: {}. Install all five in '{}': GeistPixel-Line.ttf, GeistPixel-Square.ttf, GeistPixel-Grid.ttf, GeistPixel-Circle.ttf, GeistPixel-Triangle.ttf",
-                missing.join(", "),
-                font_dir.display()
-            );
-        }
+        verify_geist_pixel_bundle(manifest_root)?;
 
-        let mut line = TextPainter::new(&font_dir.join("GeistPixel-Line.ttf"), font_size)?;
-        let square = TextPainter::new(&font_dir.join("GeistPixel-Square.ttf"), font_size)?;
-        let grid = TextPainter::new(&font_dir.join("GeistPixel-Grid.ttf"), font_size)?;
-        let circle = TextPainter::new(&font_dir.join("GeistPixel-Circle.ttf"), font_size)?;
-        let triangle = TextPainter::new(&font_dir.join("GeistPixel-Triangle.ttf"), font_size)?;
+        let mut line = TextPainter::new(manifest_root, "GeistPixel-Line.ttf", font_size)?;
+        let square = TextPainter::new(manifest_root, "GeistPixel-Square.ttf", font_size)?;
+        let grid = TextPainter::new(manifest_root, "GeistPixel-Grid.ttf", font_size)?;
+        let circle = TextPainter::new(manifest_root, "GeistPixel-Circle.ttf", font_size)?;
+        let triangle = TextPainter::new(manifest_root, "GeistPixel-Triangle.ttf", font_size)?;
 
         let max_cell_width = [
             line.cell_width(),
@@ -466,7 +443,7 @@ impl FontPack {
         y: u32,
         text: &str,
         color: [u8; 4],
-    ) {
+    ) -> Result<()> {
         let painter = match kind {
             LineKind::User => &mut self.triangle,
             LineKind::Assistant => &mut self.line,
@@ -475,7 +452,7 @@ impl FontPack {
             LineKind::ToolBody => &mut self.circle,
             LineKind::Spacer => &mut self.line,
         };
-        painter.draw_line(frame, width, height, x, y, text, color);
+        painter.draw_line(frame, width, height, x, y, text, color)
     }
 }
 
@@ -708,7 +685,7 @@ pub fn render_ascii_stage_video(args: &AsciiStageRenderArgs) -> Result<AsciiStag
                 y_u32,
                 &line.text,
                 color,
-            );
+            )?;
         }
 
         if let Some(zoomed) = zoomed_frame.as_mut() {

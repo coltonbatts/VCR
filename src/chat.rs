@@ -4,9 +4,12 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 
+use crate::font_assets::{
+    ensure_supported_codepoints, font_path, read_verified_font_bytes, verify_geist_pixel_bundle,
+};
 use anyhow::{anyhow, bail, Context, Result};
 use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
-use fontdue::{Font, FontSettings};
+use fontdue::Font;
 
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
@@ -85,7 +88,7 @@ struct TimedEvent {
 
 #[derive(Debug, Clone)]
 struct Theme {
-    font_path: PathBuf,
+    font_file: &'static str,
     bg_top: [u8; 4],
     bg_bottom: [u8; 4],
     terminal_bg: [u8; 4],
@@ -263,19 +266,10 @@ struct TextPainter {
 }
 
 impl TextPainter {
-    fn new(font_path: &Path, font_size: f32) -> Result<Self> {
-        let font_bytes = fs::read(font_path).with_context(|| {
-            format!(
-                "missing Geist Pixel font '{}'; run `vcr doctor` to verify local dependencies",
-                font_path.display()
-            )
-        })?;
-        let font = Font::from_bytes(font_bytes, FontSettings::default()).map_err(|error| {
-            anyhow!(
-                "failed to parse Geist Pixel font {}: {error}",
-                font_path.display()
-            )
-        })?;
+    fn new(manifest_root: &Path, font_file: &str, font_size: f32) -> Result<Self> {
+        let font_bytes = read_verified_font_bytes(manifest_root, font_file)?;
+        let font = Font::from_bytes(font_bytes, fontdue::FontSettings::default())
+            .map_err(|error| anyhow!("failed to parse Geist Pixel font {font_file}: {error}"))?;
         Ok(Self {
             font,
             font_size,
@@ -301,7 +295,8 @@ impl TextPainter {
         y: u32,
         text: &str,
         color: [u8; 4],
-    ) {
+    ) -> Result<()> {
+        ensure_supported_codepoints(&self.font, text, "chat")?;
         let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
         layout.reset(&LayoutSettings {
             x: x as f32,
@@ -339,6 +334,7 @@ impl TextPainter {
                 color,
             );
         }
+        Ok(())
     }
 }
 
@@ -358,7 +354,8 @@ pub fn render_chat_video(args: &ChatRenderArgs) -> Result<ChatRenderSummary> {
     }
 
     let theme = resolve_theme(&args.theme)?;
-    let mut painter = TextPainter::new(&theme.font_path, DEFAULT_FONT_SIZE)?;
+    let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut painter = TextPainter::new(manifest_root, theme.font_file, DEFAULT_FONT_SIZE)?;
 
     let actions = build_actions(&blocks);
     let (events, total_ms) = build_timeline(&actions, args.seed, args.speed);
@@ -455,7 +452,7 @@ pub fn render_chat_video(args: &ChatRenderArgs) -> Result<ChatRenderSummary> {
                 y,
                 &line.text,
                 color,
-            );
+            )?;
         }
 
         if let Some((cursor_x, cursor_y)) = state.cursor_position(
@@ -1101,7 +1098,7 @@ fn resolve_theme(raw: &str) -> Result<Theme> {
     let normalized = raw.trim().to_ascii_lowercase();
     let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    let font_file = match normalized.as_str() {
+    let font_file: &'static str = match normalized.as_str() {
         "" | "default" | "geist" | "geist-pixel" | "line" => "GeistPixel-Line.ttf",
         "square" | "geist-square" => "GeistPixel-Square.ttf",
         "grid" | "geist-grid" => "GeistPixel-Grid.ttf",
@@ -1115,18 +1112,11 @@ fn resolve_theme(raw: &str) -> Result<Theme> {
         }
     };
 
-    let font_path = manifest_root
-        .join("assets/fonts/geist_pixel")
-        .join(font_file);
-    if !font_path.exists() {
-        bail!(
-            "missing Geist Pixel font '{}'; run `vcr doctor` to verify local dependencies",
-            font_path.display()
-        );
-    }
+    verify_geist_pixel_bundle(manifest_root)?;
+    let _ = font_path(manifest_root, font_file)?;
 
     Ok(Theme {
-        font_path,
+        font_file,
         bg_top: [12, 15, 24, 255],
         bg_bottom: [22, 30, 44, 255],
         terminal_bg: [8, 12, 18, 245],

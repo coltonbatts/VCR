@@ -12,12 +12,11 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::WindowBuilder;
 
+use crate::font_assets::read_verified_font_bytes;
 use crate::manifest::load_and_validate_manifest;
 use crate::renderer::{Renderer, RendererGpuContext};
 use crate::schema::Manifest;
 use crate::timeline::RenderSceneData;
-
-const VCR_PIXEL_FONT: &str = "assets/fonts/geist_pixel/GeistPixel-Line.ttf";
 
 #[derive(Debug, Clone, Copy)]
 pub struct PlayArgs {
@@ -403,8 +402,8 @@ fn draw_overlay(
 }
 
 fn configure_egui_fonts(egui_ctx: &egui::Context) {
-    let font_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(VCR_PIXEL_FONT);
-    match std::fs::read(&font_path) {
+    let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    match read_verified_font_bytes(manifest_root, "GeistPixel-Line.ttf") {
         Ok(font_bytes) => {
             let mut fonts = FontDefinitions::default();
             fonts.font_data.insert(
@@ -425,8 +424,7 @@ fn configure_egui_fonts(egui_ctx: &egui::Context) {
         }
         Err(error) => {
             eprintln!(
-                "[VCR] play: failed to load Geist Pixel font {}: {error}",
-                font_path.display()
+                "[VCR] play: failed to load verified Geist Pixel font GeistPixel-Line.ttf: {error}"
             );
         }
     }

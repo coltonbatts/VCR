@@ -32,6 +32,7 @@ use vcr::aspect_preset::AspectPreset;
 use vcr::chat::{render_chat_video, ChatRenderArgs};
 use vcr::encoding::{FfmpegMode, FfmpegPipe};
 use vcr::error_codes::{find_coded_error, CodedErrorKind};
+use vcr::font_assets::verify_geist_pixel_bundle;
 use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions, ParamOverride};
 use vcr::packs::{compile_pack, PackCompileBackend, PackCompileRequest};
 use vcr::play::{run_play, PlayArgs};
@@ -1121,6 +1122,8 @@ fn is_missing_dependency_error(error: &anyhow::Error) -> bool {
         || has_error_message_fragment(error, "chafa was not found on path")
         || has_error_message_fragment(error, "missing dependency")
         || has_error_message_fragment(error, "geist pixel font")
+        || has_error_message_fragment(error, "invalid geist pixel bundle")
+        || has_error_message_fragment(error, "font_asset_hash_mismatch")
 }
 
 fn is_usage_error(error: &anyhow::Error) -> bool {
@@ -1268,14 +1271,14 @@ fn run_doctor() -> Result<()> {
 
     // 2. Check Fonts
     print!("- Fonts (Geist Pixel): ");
-    let font_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/geist_pixel/GeistPixel-Line.ttf");
-    if font_path.exists() {
-        println!("OK");
-    } else {
-        println!("MISSING ({})", font_path.display());
-        all_ok = false;
-        missing_dependencies.push("fonts");
+    let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    match verify_geist_pixel_bundle(manifest_root) {
+        Ok(()) => println!("OK"),
+        Err(error) => {
+            println!("INVALID ({error})");
+            all_ok = false;
+            missing_dependencies.push("fonts");
+        }
     }
 
     // 3. Check Backend

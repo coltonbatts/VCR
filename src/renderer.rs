@@ -1,5 +1,5 @@
 use std::num::NonZeroU32;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -17,6 +17,9 @@ use wgpu::util::DeviceExt;
 use crate::animation_engine::{AnimationLayer, AnimationManager};
 use crate::ascii::PreparedAsciiLayer;
 use crate::ascii_pipeline::AsciiPipeline;
+use crate::font_assets::{
+    ensure_supported_codepoints, read_verified_font_bytes, verify_geist_pixel_bundle,
+};
 use crate::post_process::PostStack;
 use crate::schema::{
     Anchor, AnimatableColor, AsciiLayer, AssetLayer, ColorRgba, Environment, ExpressionContext,
@@ -3066,7 +3069,7 @@ fn unpremultiply_rgba_in_place(bytes: &mut [u8]) {
     }
 }
 fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
-    let font_file = match layer.text.font_family.to_lowercase().as_str() {
+    let font_file: &'static str = match layer.text.font_family.to_lowercase().as_str() {
         "geistpixel-line" | "line" => "GeistPixel-Line.ttf",
         "geistpixel-square" | "square" => "GeistPixel-Square.ttf",
         "geistpixel-grid" | "grid" => "GeistPixel-Grid.ttf",
@@ -3075,24 +3078,12 @@ fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
         _ => "GeistPixel-Line.ttf",
     };
 
-    let repo_font_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("assets/fonts/geist_pixel")
-        .join(font_file);
-    let home_font_path = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join("Library/Fonts").join(font_file));
-    let font_path = if repo_font_path.exists() {
-        repo_font_path
-    } else if let Some(home_path) = home_font_path {
-        home_path
-    } else {
-        repo_font_path
-    };
-
-    let font_data = std::fs::read(&font_path)
-        .with_context(|| format!("failed to read font file {}", font_path.display()))?;
+    let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    verify_geist_pixel_bundle(manifest_root)?;
+    let font_data = read_verified_font_bytes(manifest_root, font_file)?;
     let font = fontdue::Font::from_bytes(font_data, fontdue::FontSettings::default())
         .map_err(|e| anyhow!("failed to parse font: {}", e))?;
+    ensure_supported_codepoints(&font, &layer.text.content, font_file)?;
 
     let mut layout = fontdue::layout::Layout::new(fontdue::layout::CoordinateSystem::PositiveYDown);
     layout.reset(&fontdue::layout::LayoutSettings {
@@ -4103,9 +4094,9 @@ layers:
             Ok(renderer) => renderer,
             Err(error)
                 if error.to_string().contains(NO_GPU_ADAPTER_ERR)
-                    || error
-                        .to_string()
-                        .contains("software fallback is disabled because the manifest contains shader layers") =>
+                    || error.to_string().contains(
+                        "software fallback is disabled because the manifest contains shader layers",
+                    ) =>
             {
                 return;
             }
