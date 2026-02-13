@@ -37,12 +37,23 @@ layers:
     let manifest: Manifest = serde_yaml::from_str(&manifest_yaml).expect("manifest should parse");
     let scene = RenderSceneData::from_manifest(&manifest);
 
-    let mut renderer = pollster::block_on(Renderer::new_with_scene(
+    let renderer_result = pollster::block_on(Renderer::new_with_scene(
         &manifest.environment,
         &manifest.layers,
         scene,
-    ))
-    .expect("renderer should initialize");
+    ));
+
+    let mut renderer = match renderer_result {
+        Ok(r) => r,
+        Err(e) => {
+            let err_str = e.to_string();
+            if err_str.contains("no suitable GPU adapter found") {
+                eprintln!("Skipping test: no GPU adapter found");
+                return;
+            }
+            panic!("renderer failed to initialize: {e:?}");
+        }
+    };
 
     let rgba = renderer
         .render_frame_rgba(0)
