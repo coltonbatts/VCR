@@ -1,0 +1,39 @@
+name: Baseline Matrix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  baseline:
+    name: Baseline Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Generate baseline report (software matrix in CI)
+        run: BASELINE_GPU=0 ./scripts/baseline_report.sh
+
+      - name: Upload baseline JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-report
+          path: renders/baseline/baseline_report.json
+          if-no-files-found: error

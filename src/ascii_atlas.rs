@@ -121,7 +121,13 @@ pub fn standard_ascii_density(ch: u8) -> f32 {
         b'A' | b'V' | b'W' | b'H' | b'M' | b'Y' | b'G' | b'P' | b'D' | b'B' | b'R' => 0.6,
         b'0'..=b'9' => 0.55,
         b'&' | b'$' | b'%' | b'#' | b'@' => 0.7,
-        _ => if ch.is_ascii_graphic() { 0.5 } else { 0.0 },
+        _ => {
+            if ch.is_ascii_graphic() {
+                0.5
+            } else {
+                0.0
+            }
+        }
     }
 }
 

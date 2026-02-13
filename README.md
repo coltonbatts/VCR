@@ -89,6 +89,11 @@ cargo build --release --bin vcr --bin figma-vcr-workflow
 
 ```bash
 ./target/release/vcr build examples/welcome_terminal_scene.vcr -o renders/output.mov
+
+# FFmpeg mode (Phase 2 scaffolding)
+./target/release/vcr --ffmpeg system build examples/welcome_terminal_scene.vcr -o renders/output.mov
+# sidecar mode requires feature flag:
+# cargo run --features sidecar_ffmpeg --bin vcr -- --ffmpeg sidecar build ...
 ```
 
 ## ASCII Stage (Transcript -> Terminal Cinema)
@@ -202,6 +207,37 @@ Outputs:
 - optional `renders/playground/<scene>/contact_sheet.png` when FFmpeg is available
 
 See `docs/PLAYGROUND.md` for details.
+
+## Baseline Performance + Determinism Report
+
+Capture a reproducible Phase 0 baseline (timing + frame hash) across a small manifest matrix:
+
+```bash
+./scripts/baseline_report.sh
+```
+
+Default output:
+
+- `renders/baseline/baseline_report.json`
+- per-case rendered PNGs + metadata sidecars in `renders/baseline/`
+
+Optional custom output directory:
+
+```bash
+./scripts/baseline_report.sh renders/my_baseline
+```
+
+CI-safe mode (skip GPU-forced cases):
+
+```bash
+BASELINE_GPU=0 ./scripts/baseline_report.sh
+```
+
+Optional stress sample:
+
+```bash
+BASELINE_STRESS=1 ./scripts/baseline_report.sh
+```
 
 ## Agent Workflow (Figma -> VCR)
 

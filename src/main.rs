@@ -29,7 +29,7 @@ use vcr::ascii_stage::{
     parse_ascii_stage_size, render_ascii_stage_video, AsciiStageRenderArgs, CameraMode,
 };
 use vcr::chat::{render_chat_video, ChatRenderArgs};
-use vcr::encoding::FfmpegPipe;
+use vcr::encoding::{FfmpegMode, FfmpegPipe};
 use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions, ParamOverride};
 use vcr::play::{run_play, PlayArgs};
 use vcr::renderer::Renderer;
@@ -98,6 +98,23 @@ enum BackendArg {
     Gpu,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum FfmpegArg {
+    Auto,
+    System,
+    Sidecar,
+}
+
+impl From<FfmpegArg> for FfmpegMode {
+    fn from(value: FfmpegArg) -> Self {
+        match value {
+            FfmpegArg::Auto => FfmpegMode::Auto,
+            FfmpegArg::System => FfmpegMode::System,
+            FfmpegArg::Sidecar => FfmpegMode::Sidecar,
+        }
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "vcr")]
 #[command(about = "VCR (Video Component Renderer)")]
@@ -118,6 +135,14 @@ struct Cli {
         help = "Force render backend: auto (default), software (deterministic), gpu"
     )]
     backend: BackendArg,
+    #[arg(
+        long = "ffmpeg",
+        value_enum,
+        global = true,
+        default_value_t = FfmpegArg::Auto,
+        help = "FFmpeg executable mode: auto/system/sidecar"
+    )]
+    ffmpeg: FfmpegArg,
     #[arg(
         long = "ascii-edge-boost",
         value_enum,
@@ -600,6 +625,7 @@ fn main() -> ExitCode {
 fn run_cli(cli: Cli) -> Result<()> {
     let quiet = cli.quiet;
     let ascii_overrides = resolve_ascii_overrides(cli.ascii_edge_boost, cli.ascii_bayer_dither);
+    let ffmpeg_mode = FfmpegMode::from(cli.ffmpeg);
 
     match cli.command {
         Commands::Build {
@@ -623,6 +649,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 &set,
                 ascii_overrides,
                 cli.backend,
+                ffmpeg_mode,
                 quiet,
             )
         }
@@ -673,6 +700,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 &set,
                 ascii_overrides.as_ref(),
                 cli.backend,
+                ffmpeg_mode,
                 quiet,
             )
             .map(|_| ())
@@ -768,6 +796,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 &set,
                 ascii_overrides.as_ref(),
                 cli.backend,
+                ffmpeg_mode,
                 quiet,
             )
         }
@@ -810,7 +839,9 @@ fn run_cli(cli: Cli) -> Result<()> {
                 preset,
                 quiet,
             ),
-            AsciiCommands::Library { category, json } => run_ascii_library(category.as_deref(), json),
+            AsciiCommands::Library { category, json } => {
+                run_ascii_library(category.as_deref(), json)
+            }
             AsciiCommands::Render {
                 input,
                 output,
@@ -2272,6 +2303,7 @@ fn run_build(
     set_values: &[String],
     ascii_overrides: Option<AsciiRuntimeOverrides>,
     backend: BackendArg,
+    ffmpeg_mode: FfmpegMode,
     quiet: bool,
 ) -> Result<()> {
     let parse_start = Instant::now();
@@ -2306,7 +2338,7 @@ fn run_build(
             renderer.backend_reason()
         ),
     );
-    let ffmpeg = FfmpegPipe::spawn(&manifest.environment, output_path)?;
+    let ffmpeg = FfmpegPipe::spawn_with_mode(&manifest.environment, output_path, ffmpeg_mode)?;
     let mut render_elapsed = Duration::ZERO;
     let mut encode_elapsed = Duration::ZERO;
 
@@ -2358,6 +2390,7 @@ fn run_preview(
     set_values: &[String],
     ascii_overrides: Option<&AsciiRuntimeOverrides>,
     backend: BackendArg,
+    ffmpeg_mode: FfmpegMode,
     quiet: bool,
 ) -> Result<ResolvedInputsSnapshot> {
     if !(0.0..=1.0).contains(&args.scale) || args.scale == 0.0 {
@@ -2456,7 +2489,7 @@ fn run_preview(
         let output_path = output
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("preview.mov"));
-        let ffmpeg = FfmpegPipe::spawn(&preview_environment, &output_path)?;
+        let ffmpeg = FfmpegPipe::spawn_with_mode(&preview_environment, &output_path, ffmpeg_mode)?;
 
         for frame_index in window.frame_indices() {
             let render_start = Instant::now();
@@ -2717,6 +2750,7 @@ fn run_watch(
     set_values: &[String],
     ascii_overrides: Option<&AsciiRuntimeOverrides>,
     backend: BackendArg,
+    ffmpeg_mode: FfmpegMode,
     quiet: bool,
 ) -> Result<()> {
     if interval_ms == 0 {
@@ -2740,6 +2774,7 @@ fn run_watch(
         set_values,
         ascii_overrides,
         backend,
+        ffmpeg_mode,
         quiet,
     ) {
         Ok(inputs) => Some(inputs),
@@ -2775,6 +2810,7 @@ fn run_watch(
                 set_values,
                 ascii_overrides,
                 backend,
+                ffmpeg_mode,
                 quiet,
             ) {
                 Ok(current_inputs) => {

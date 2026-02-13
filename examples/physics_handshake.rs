@@ -54,7 +54,9 @@ fn main() -> Result<()> {
         .translation(vector![0.0, 10.0, 0.0])
         .build();
     let handle = rigid_body_set.insert(rigid_body);
-    let collider = ColliderBuilder::cuboid(0.5, 0.5, 0.5).restitution(0.7).build();
+    let collider = ColliderBuilder::cuboid(0.5, 0.5, 0.5)
+        .restitution(0.7)
+        .build();
     collider_set.insert_with_parent(collider, handle, &mut rigid_body_set);
 
     // --- Rendering Setup ---
@@ -65,7 +67,7 @@ fn main() -> Result<()> {
 
     // Define a Procedural Circle layer that we'll drive with physics
     let py_expr: ScalarProperty = serde_json::from_str("\"180 - (cube_y * 15)\"")?;
-    
+
     let cube_layer = Layer::Procedural(ProceduralLayer {
         common: LayerCommon {
             id: "cube".to_string(),
@@ -90,7 +92,11 @@ fn main() -> Result<()> {
     let mut renderer = Renderer::new_software(&environment, &[cube_layer], scene)?;
     let ffmpeg = FfmpegPipe::spawn(&environment, &output_mov)?;
 
-    println!("📹 Recording {} frames to {}...", frame_count, output_mov.display());
+    println!(
+        "📹 Recording {} frames to {}...",
+        frame_count,
+        output_mov.display()
+    );
 
     for frame_index in 0..frame_count {
         // Step physics
@@ -112,12 +118,12 @@ fn main() -> Result<()> {
 
         let body = &rigid_body_set[handle];
         let pos = body.translation();
-        
+
         // Update parameters
         let mut params = BTreeMap::new();
         params.insert("cube_y".to_string(), pos.y);
         renderer.set_params(params);
-        
+
         if frame_index % 24 == 0 {
             println!("Frame {}: Cube Y = {:.2}", frame_index, pos.y);
         }

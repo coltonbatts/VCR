@@ -9,9 +9,9 @@ use vcr::animation_engine::{
     AnimationImportOptions, AnimationLayer, AnimationManager, AsciiCellMetrics, BoutiqueFilter,
     FitOptions, PlaybackOptions, DEFAULT_ANIMATIONS_ROOT,
 };
+use vcr::ascii_atlas::GeistPixelAtlas;
 use vcr::encoding::FfmpegPipe;
 use vcr::renderer::Renderer;
-use vcr::ascii_atlas::GeistPixelAtlas;
 use vcr::schema::{AsciiFontVariant, Duration as ManifestDuration, Environment, Resolution};
 use vcr::timeline::RenderSceneData;
 
@@ -35,7 +35,8 @@ struct Cli {
     frames: u32,
     #[arg(long, default_value_t = 16)]
     cell_width: u32,
-    #[arg(long, default_value_t = 31)] // Use 31 or 32 for ~1:2 ratio. 16x31 is a common Geist sweet spot.
+    #[arg(long, default_value_t = 31)]
+    // Use 31 or 32 for ~1:2 ratio. 16x31 is a common Geist sweet spot.
     cell_height: u32,
     #[arg(long, default_value_t = 0)]
     padding: u32,
@@ -54,10 +55,14 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     if let Some(w) = cli.width {
-        if w == 0 { bail!("--width must be > 0"); }
+        if w == 0 {
+            bail!("--width must be > 0");
+        }
     }
     if let Some(h) = cli.height {
-        if h == 0 { bail!("--height must be > 0"); }
+        if h == 0 {
+            bail!("--height must be > 0");
+        }
     }
     if cli.fps == 0 {
         bail!("--fps must be > 0");
@@ -144,8 +149,12 @@ fn main() -> Result<()> {
     let mut target_height = cli.height.unwrap_or(max_rows * cli.cell_height);
 
     // Ensure even dimensions for ffmpeg yuv420p compatibility
-    if target_width % 2 != 0 { target_width += 1; }
-    if target_height % 2 != 0 { target_height += 1; }
+    if target_width % 2 != 0 {
+        target_width += 1;
+    }
+    if target_height % 2 != 0 {
+        target_height += 1;
+    }
 
     println!(
         "Grid size: {}x{} | Native Resolution: {}x{}",

@@ -1,4 +1,4 @@
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -13,8 +13,41 @@ pub struct FfmpegPipe {
     worker: Option<JoinHandle<Result<()>>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfmpegMode {
+    Auto,
+    System,
+    Sidecar,
+}
+
+trait VideoEncoderBackend: Send {
+    fn mode_label(&self) -> &'static str;
+    fn run(self: Box<Self>, receiver: mpsc::Receiver<Vec<u8>>) -> Result<()>;
+}
+
+struct SystemFfmpegBackend {
+    size: String,
+    fps: String,
+    output_path: std::path::PathBuf,
+}
+
+#[cfg(feature = "sidecar_ffmpeg")]
+struct SidecarFfmpegBackend {
+    size: String,
+    fps: String,
+    output_path: std::path::PathBuf,
+}
+
 impl FfmpegPipe {
     pub fn spawn(environment: &Environment, output_path: &Path) -> Result<Self> {
+        Self::spawn_with_mode(environment, output_path, FfmpegMode::Auto)
+    }
+
+    pub fn spawn_with_mode(
+        environment: &Environment,
+        output_path: &Path,
+        mode: FfmpegMode,
+    ) -> Result<Self> {
         let size = format!(
             "{}x{}",
             environment.resolution.width, environment.resolution.height
@@ -22,10 +55,12 @@ impl FfmpegPipe {
         let fps = environment.fps.to_string();
         let output_path = output_path.to_path_buf();
         let (sender, receiver) = mpsc::sync_channel::<Vec<u8>>(4);
+        let backend = select_backend(mode, size, fps, output_path)?;
+        let worker_name = format!("vcr-ffmpeg-encoder-{}", backend.mode_label());
 
         let worker = thread::Builder::new()
-            .name("vcr-ffmpeg-encoder".to_owned())
-            .spawn(move || encoding_worker(receiver, size, fps, &output_path))
+            .name(worker_name)
+            .spawn(move || backend.run(receiver))
             .context("failed to spawn ffmpeg writer thread")?;
 
         Ok(Self {
@@ -58,11 +93,84 @@ impl FfmpegPipe {
     }
 }
 
-fn encoding_worker(
-    receiver: mpsc::Receiver<Vec<u8>>,
+fn select_backend(
+    mode: FfmpegMode,
     size: String,
     fps: String,
+    output_path: std::path::PathBuf,
+) -> Result<Box<dyn VideoEncoderBackend>> {
+    match mode {
+        FfmpegMode::Auto | FfmpegMode::System => Ok(Box::new(SystemFfmpegBackend {
+            size,
+            fps,
+            output_path,
+        })),
+        FfmpegMode::Sidecar => {
+            #[cfg(feature = "sidecar_ffmpeg")]
+            {
+                Ok(Box::new(SidecarFfmpegBackend {
+                    size,
+                    fps,
+                    output_path,
+                }))
+            }
+            #[cfg(not(feature = "sidecar_ffmpeg"))]
+            {
+                Err(anyhow!(
+                    "ffmpeg sidecar mode requested but VCR was built without `sidecar_ffmpeg`. Rebuild with `--features sidecar_ffmpeg`."
+                ))
+            }
+        }
+    }
+}
+
+impl VideoEncoderBackend for SystemFfmpegBackend {
+    fn mode_label(&self) -> &'static str {
+        "system"
+    }
+
+    fn run(self: Box<Self>, receiver: mpsc::Receiver<Vec<u8>>) -> Result<()> {
+        run_ffmpeg_process(
+            Path::new("ffmpeg"),
+            receiver,
+            &self.size,
+            &self.fps,
+            &self.output_path,
+            self.mode_label(),
+        )
+    }
+}
+
+#[cfg(feature = "sidecar_ffmpeg")]
+impl VideoEncoderBackend for SidecarFfmpegBackend {
+    fn mode_label(&self) -> &'static str {
+        "sidecar"
+    }
+
+    fn run(self: Box<Self>, receiver: mpsc::Receiver<Vec<u8>>) -> Result<()> {
+        let path = ffmpeg_sidecar::paths::ffmpeg_path();
+        if !path.exists() {
+            ffmpeg_sidecar::download::auto_download()
+                .context("failed to auto-download ffmpeg sidecar binary")?;
+        }
+        run_ffmpeg_process(
+            &path,
+            receiver,
+            &self.size,
+            &self.fps,
+            &self.output_path,
+            self.mode_label(),
+        )
+    }
+}
+
+fn run_ffmpeg_process(
+    ffmpeg_path: &Path,
+    receiver: mpsc::Receiver<Vec<u8>>,
+    size: &str,
+    fps: &str,
     output_path: &Path,
+    mode_label: &str,
 ) -> Result<()> {
     // Basic sanity check on output path
     let path_str = output_path.to_string_lossy();
@@ -73,40 +181,27 @@ fn encoding_worker(
         bail!("Output path contains invalid control characters");
     }
 
-    let mut child = Command::new("ffmpeg")
-        .arg("-hide_banner")
-        .arg("-loglevel")
-        .arg("error")
-        .arg("-y")
-        .arg("-f")
-        .arg("rawvideo")
-        .arg("-pix_fmt")
-        .arg("rgba")
-        .arg("-s:v")
-        .arg(size)
-        .arg("-r")
-        .arg(fps)
-        .arg("-i")
-        .arg("-")
-        .arg("-an")
-        .arg("-c:v")
-        .arg("prores_ks")
-        .arg("-profile:v")
-        .arg("4444")
-        .arg("-pix_fmt")
-        .arg("yuva444p10le")
-        .arg(output_path.as_os_str())
+    let args = ffmpeg_args(size, fps, output_path);
+    let mut command = Command::new(ffmpeg_path);
+    command
+        .args(args.iter().map(String::as_str))
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped());
+    let mut child = command
         .spawn()
         .map_err(|error| {
             if error.kind() == ErrorKind::NotFound {
                 anyhow!(
-                    "ffmpeg was not found on PATH. Install ffmpeg and verify `ffmpeg -version` works before running `vcr build` or `vcr preview` video output."
+                    "ffmpeg executable not found (mode={mode_label}, resolved_path={}). Install ffmpeg (system mode) or use sidecar mode with `--features sidecar_ffmpeg`.",
+                    ffmpeg_path.display()
                 )
             } else {
-                anyhow!("failed to spawn ffmpeg sidecar process: {error}")
+                anyhow!(
+                    "failed to spawn ffmpeg process (mode={mode_label}, resolved_path={}, args='{}'): {error}",
+                    ffmpeg_path.display(),
+                    args.join(" ")
+                )
             }
         })?;
 
@@ -114,6 +209,7 @@ fn encoding_worker(
         .stdin
         .take()
         .ok_or_else(|| anyhow!("failed to capture ffmpeg stdin"))?;
+    let mut stderr_pipe = child.stderr.take();
 
     while let Ok(frame) = receiver.recv() {
         stdin
@@ -125,9 +221,61 @@ fn encoding_worker(
     drop(stdin);
 
     let status = child.wait().context("failed waiting for ffmpeg process")?;
+    let stderr_tail = read_stderr_tail(&mut stderr_pipe)?;
     if !status.success() {
-        return Err(anyhow!("ffmpeg failed with status {status}"));
+        return Err(anyhow!(
+            "ffmpeg failed with status {status} (mode={mode_label}, resolved_path={}, args='{}', stderr_tail='{}')",
+            ffmpeg_path.display(),
+            args.join(" "),
+            stderr_tail
+        ));
     }
 
     Ok(())
+}
+
+fn ffmpeg_args(size: &str, fps: &str, output_path: &Path) -> Vec<String> {
+    vec![
+        "-hide_banner".to_owned(),
+        "-loglevel".to_owned(),
+        "error".to_owned(),
+        "-y".to_owned(),
+        "-f".to_owned(),
+        "rawvideo".to_owned(),
+        "-pix_fmt".to_owned(),
+        "rgba".to_owned(),
+        "-s:v".to_owned(),
+        size.to_owned(),
+        "-r".to_owned(),
+        fps.to_owned(),
+        "-i".to_owned(),
+        "-".to_owned(),
+        "-an".to_owned(),
+        "-c:v".to_owned(),
+        "prores_ks".to_owned(),
+        "-profile:v".to_owned(),
+        "4444".to_owned(),
+        "-pix_fmt".to_owned(),
+        "yuva444p10le".to_owned(),
+        output_path.to_string_lossy().into_owned(),
+    ]
+}
+
+fn read_stderr_tail(stderr: &mut Option<std::process::ChildStderr>) -> Result<String> {
+    let Some(mut pipe) = stderr.take() else {
+        return Ok(String::new());
+    };
+    let mut buf = Vec::new();
+    pipe.read_to_end(&mut buf)
+        .context("failed reading ffmpeg stderr")?;
+    let text = String::from_utf8_lossy(&buf).to_string();
+    Ok(last_n_chars(&text, 500))
+}
+
+fn last_n_chars(s: &str, max_chars: usize) -> String {
+    let mut chars = s.chars().collect::<Vec<_>>();
+    if chars.len() > max_chars {
+        chars = chars[chars.len().saturating_sub(max_chars)..].to_vec();
+    }
+    chars.into_iter().collect::<String>().trim().to_owned()
 }
