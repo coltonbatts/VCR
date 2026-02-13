@@ -488,7 +488,7 @@ pub enum Anchor {
     Center,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct LayerCommon {
     pub id: String,

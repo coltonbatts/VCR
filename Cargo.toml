@@ -26,6 +26,7 @@ winit = "0.29"
 egui = "0.28"
 egui-wgpu = "0.28"
 egui-winit = "0.28"
+rapier3d = "0.19.0"
 
 [dev-dependencies]
 tempfile = "3.10"

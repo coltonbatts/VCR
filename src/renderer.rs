@@ -375,7 +375,7 @@ struct GpuRenderer {
     height: u32,
     fps: u32,
     seed: u64,
-    params: Parameters,
+    pub params: Parameters,
     modulators: ModulatorMap,
     output_texture: wgpu::Texture,
     readback_buffers: [wgpu::Buffer; READBACK_BUFFER_COUNT],
@@ -526,7 +526,7 @@ struct SoftwareRenderer {
     height: u32,
     fps: u32,
     seed: u64,
-    params: Parameters,
+    pub params: Parameters,
     modulators: ModulatorMap,
     layers: Vec<SoftwareLayer>,
 }
@@ -1403,6 +1403,13 @@ impl Renderer {
             RendererBackend::Software(_) => {
                 bail!("direct rendering to window surface requires GPU backend")
             }
+        }
+    }
+
+    pub fn set_params(&mut self, params: crate::schema::Parameters) {
+        match &mut self.backend {
+            RendererBackend::Gpu(renderer) => renderer.params = params,
+            RendererBackend::Software(renderer) => renderer.params = params,
         }
     }
 }

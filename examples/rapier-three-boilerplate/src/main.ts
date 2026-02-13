@@ -59,35 +59,12 @@ class RapierThreeApp {
     }
 
     private setupLights() {
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
         this.scene.add(ambientLight);
-
-        const mainLight = new THREE.PointLight(0x00ffff, 200, 50);
-        mainLight.position.set(5, 10, 5);
-        this.scene.add(mainLight);
-
-        const rimLight = new THREE.PointLight(0xff00ff, 150, 50);
-        rimLight.position.set(-5, 5, -5);
-        this.scene.add(rimLight);
     }
 
     private createEnvironment() {
-        // Metallic Ground with Grid
         const groundSize = 40;
-        const groundGeometry = new THREE.PlaneGeometry(groundSize, groundSize);
-        const groundMaterial = new THREE.MeshStandardMaterial({
-            color: 0x0a0b1e,
-            metalness: 0.8,
-            roughness: 0.2
-        });
-        const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
-        groundMesh.rotation.x = -Math.PI / 2;
-        this.scene.add(groundMesh);
-
-        // Grid Helper for "VCR" aesthetic
-        const grid = new THREE.GridHelper(groundSize, 40, 0x00ffff, 0x1a1a2e);
-        grid.position.y = 0.01;
-        this.scene.add(grid);
 
         // Physics for ground
         const groundBodyDesc = RAPIER.RigidBodyDesc.fixed();
@@ -102,23 +79,16 @@ class RapierThreeApp {
         // Physics Cube
         const cubeBodyDesc = RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(0, 10, 0)
-            .setAngularDamping(0.5)
-            .setCanSleep(false);
+            .setAngularDamping(0.5);
         this.cubeBody = this.world.createRigidBody(cubeBodyDesc);
 
         const cubeColliderDesc = RAPIER.ColliderDesc.cuboid(cubeSize / 2, cubeSize / 2, cubeSize / 2)
             .setRestitution(0.5);
         this.world.createCollider(cubeColliderDesc, this.cubeBody);
 
-        // Graphics Cube
+        // Graphics Cube - Flat White
         const cubeGeometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
-        const cubeMaterial = new THREE.MeshStandardMaterial({
-            color: 0xff00ff,
-            metalness: 0.6,
-            roughness: 0.1,
-            emissive: 0xff00ff,
-            emissiveIntensity: 0.2
-        });
+        const cubeMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
         this.cubeMesh = new THREE.Mesh(cubeGeometry, cubeMaterial);
         this.scene.add(this.cubeMesh);
     }
@@ -156,14 +126,13 @@ class RapierThreeApp {
     private handleError(err: any) {
         console.error("❌ Initialization failed:", err);
         const errorDiv = document.createElement('div');
-        errorDiv.style.color = '#ff00ff';
+        errorDiv.style.color = 'white';
         errorDiv.style.fontFamily = 'monospace';
         errorDiv.style.position = 'absolute';
         errorDiv.style.top = '20px';
         errorDiv.style.left = '20px';
-        errorDiv.style.background = 'rgba(0,0,0,0.8)';
+        errorDiv.style.background = 'rgba(255,0,0,0.8)';
         errorDiv.style.padding = '10px';
-        errorDiv.style.border = '1px solid #ff00ff';
         errorDiv.innerText = "FATAL ERROR: " + (err instanceof Error ? err.message : String(err));
         document.body.appendChild(errorDiv);
     }
