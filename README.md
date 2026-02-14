@@ -10,7 +10,7 @@
 ```
 
 ```text
-vcr version 0.1.1 (62c31bc)
+vcr version 0.1.2
 ```
 
 ![Welcome to VCR](assets/welcome%20to%20VCR.jpg)
@@ -58,6 +58,9 @@ VCR exists to make motion generation scriptable and reproducible.
 - Deterministic output and deterministic metadata sidecars
 - GPU backend on supported systems with software fallback
 - Preview/build/watch flows via CLI
+- High-fidelity QuickTime compatibility (`-vendor apl0`)
+- Explicit ProRes profile control (`proxy` to `prores4444_xq`)
+- Alpha-consistency linting for transparent renders
 - Agent-oriented workflow protocol docs (`docs/SKILLS_PROTOCOL.md`)
 - Figma-to-scene workflow binary (`figma-vcr-workflow`)
 

@@ -171,6 +171,7 @@ fn main() -> Result<()> {
             frames: output_frames,
         },
         color_space: Default::default(),
+        encoding: Default::default(),
     };
 
     let mut renderer = Renderer::new_software(&environment, &[], RenderSceneData::default())?;

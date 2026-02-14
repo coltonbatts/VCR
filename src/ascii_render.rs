@@ -401,6 +401,7 @@ pub fn run_ascii_render(args: AsciiRenderArgs) -> Result<()> {
         fps: 30, // Default to 30 or probe from video? FfmpegInput doesn't probe yet.
         duration: ManifestDuration::Seconds(0.0), // Placeholder
         color_space: Default::default(),
+        encoding: Default::default(),
     };
     let encoder = FfmpegPipe::spawn(&environment, args.output)?;
 

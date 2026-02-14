@@ -38,8 +38,8 @@ use vcr::packs::{compile_pack, PackCompileBackend, PackCompileRequest};
 use vcr::play::{run_play, PlayArgs};
 use vcr::renderer::Renderer;
 use vcr::schema::{
-    AsciiFontVariant, Duration as ManifestDuration, Environment, Manifest, ParamType, ParamValue,
-    Resolution,
+    AsciiFontVariant, Duration as ManifestDuration, Environment, Layer, Manifest, ParamType,
+    ParamValue, ProceduralSource, ProResProfile, Resolution, ScalarProperty,
 };
 use vcr::timeline::{
     ascii_overrides_from_flags, evaluate_manifest_layers_at_frame, resolve_bayer_dither_override,
@@ -1291,6 +1291,7 @@ fn run_doctor() -> Result<()> {
         fps: 24,
         duration: ManifestDuration::Frames { frames: 1 },
         color_space: Default::default(),
+        encoding: Default::default(),
     };
     match pollster::block_on(Renderer::new_with_scene(
         &temp_env,
@@ -2225,6 +2226,42 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
     }
 
     let mut issues = Vec::new();
+
+    // Check for alpha-blocking
+    let profile = manifest.environment.encoding.prores_profile;
+    if profile == ProResProfile::Prores4444 || profile == ProResProfile::Prores4444Xq {
+        let mut sorted_layers = manifest.layers.clone();
+        sorted_layers.sort_by_key(|l| l.z_index());
+        if let Some(bottom) = sorted_layers.first() {
+            let common = bottom.common();
+            let opacity = match &common.opacity {
+                ScalarProperty::Static(v) => *v,
+                _ => 1.0, // Assume opaque if dynamic for linting purposes
+            };
+            if opacity >= 0.999 && common.start_time.is_none() && common.end_time.is_none() {
+                let is_full_frame = match bottom {
+                    Layer::Procedural(p) => {
+                        matches!(
+                            p.procedural,
+                            ProceduralSource::SolidColor { .. } | ProceduralSource::Gradient { .. }
+                        )
+                    }
+                    _ => false,
+                };
+
+                if is_full_frame {
+                    issues.push((
+                        bottom.id().to_owned(),
+                        format!(
+                            "Layer '{}' is opaque and likely blocks the alpha channel. Consider reducing its opacity if transparency is required for ProRes 4444.",
+                            bottom.id()
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
     for layer in &manifest.layers {
         let id = layer.id();
         if !visible.get(id).copied().unwrap_or(false) {
@@ -3320,6 +3357,7 @@ fn scaled_environment(environment: &Environment, scale: f32) -> Environment {
             frames: environment.total_frames(),
         },
         color_space: environment.color_space,
+        encoding: environment.encoding.clone(),
     }
 }
 

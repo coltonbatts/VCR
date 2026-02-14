@@ -28,6 +28,7 @@ trait VideoEncoderBackend: Send {
 struct SystemFfmpegBackend {
     size: String,
     fps: String,
+    encoding: crate::schema::EncodingConfig,
     output_path: std::path::PathBuf,
 }
 
@@ -35,6 +36,7 @@ struct SystemFfmpegBackend {
 struct SidecarFfmpegBackend {
     size: String,
     fps: String,
+    encoding: crate::schema::EncodingConfig,
     output_path: std::path::PathBuf,
 }
 
@@ -53,9 +55,10 @@ impl FfmpegPipe {
             environment.resolution.width, environment.resolution.height
         );
         let fps = environment.fps.to_string();
+        let encoding = environment.encoding.clone();
         let output_path = output_path.to_path_buf();
         let (sender, receiver) = mpsc::sync_channel::<Vec<u8>>(4);
-        let backend = select_backend(mode, size, fps, output_path)?;
+        let backend = select_backend(mode, size, fps, encoding, output_path)?;
         let worker_name = format!("vcr-ffmpeg-encoder-{}", backend.mode_label());
 
         let worker = thread::Builder::new()
@@ -97,12 +100,14 @@ fn select_backend(
     mode: FfmpegMode,
     size: String,
     fps: String,
+    encoding: crate::schema::EncodingConfig,
     output_path: std::path::PathBuf,
 ) -> Result<Box<dyn VideoEncoderBackend>> {
     match mode {
         FfmpegMode::Auto | FfmpegMode::System => Ok(Box::new(SystemFfmpegBackend {
             size,
             fps,
+            encoding,
             output_path,
         })),
         FfmpegMode::Sidecar => {
@@ -111,6 +116,7 @@ fn select_backend(
                 Ok(Box::new(SidecarFfmpegBackend {
                     size,
                     fps,
+                    encoding,
                     output_path,
                 }))
             }
@@ -135,6 +141,7 @@ impl VideoEncoderBackend for SystemFfmpegBackend {
             receiver,
             &self.size,
             &self.fps,
+            &self.encoding,
             &self.output_path,
             self.mode_label(),
         )
@@ -158,6 +165,7 @@ impl VideoEncoderBackend for SidecarFfmpegBackend {
             receiver,
             &self.size,
             &self.fps,
+            &self.encoding,
             &self.output_path,
             self.mode_label(),
         )
@@ -169,6 +177,7 @@ fn run_ffmpeg_process(
     receiver: mpsc::Receiver<Vec<u8>>,
     size: &str,
     fps: &str,
+    encoding: &crate::schema::EncodingConfig,
     output_path: &Path,
     mode_label: &str,
 ) -> Result<()> {
@@ -181,7 +190,7 @@ fn run_ffmpeg_process(
         bail!("Output path contains invalid control characters");
     }
 
-    let args = ffmpeg_args(size, fps, output_path);
+    let args = ffmpeg_args(size, fps, encoding, output_path);
     let mut command = Command::new(ffmpeg_path);
     command
         .args(args.iter().map(String::as_str))
@@ -234,8 +243,13 @@ fn run_ffmpeg_process(
     Ok(())
 }
 
-fn ffmpeg_args(size: &str, fps: &str, output_path: &Path) -> Vec<String> {
-    vec![
+fn ffmpeg_args(
+    size: &str,
+    fps: &str,
+    encoding: &crate::schema::EncodingConfig,
+    output_path: &Path,
+) -> Vec<String> {
+    let mut args = vec![
         "-hide_banner".to_owned(),
         "-loglevel".to_owned(),
         "error".to_owned(),
@@ -254,11 +268,23 @@ fn ffmpeg_args(size: &str, fps: &str, output_path: &Path) -> Vec<String> {
         "-c:v".to_owned(),
         "prores_ks".to_owned(),
         "-profile:v".to_owned(),
-        "4444".to_owned(),
-        "-pix_fmt".to_owned(),
-        "yuva444p10le".to_owned(),
-        output_path.to_string_lossy().into_owned(),
-    ]
+        encoding.prores_profile.to_ffmpeg_profile().to_owned(),
+        "-vendor".to_owned(),
+        encoding.vendor.clone(),
+    ];
+
+    if encoding.prores_profile == crate::schema::ProResProfile::Prores4444
+        || encoding.prores_profile == crate::schema::ProResProfile::Prores4444Xq
+    {
+        args.push("-pix_fmt".to_owned());
+        args.push("yuva444p10le".to_owned());
+    } else {
+        args.push("-pix_fmt".to_owned());
+        args.push("yuv422p10le".to_owned());
+    }
+
+    args.push(output_path.to_string_lossy().into_owned());
+    args
 }
 
 fn read_stderr_tail(stderr: &mut Option<std::process::ChildStderr>) -> Result<String> {

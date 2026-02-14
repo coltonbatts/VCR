@@ -91,6 +91,55 @@ pub struct Environment {
     pub duration: Duration,
     #[serde(default)]
     pub color_space: ColorSpace,
+    #[serde(default)]
+    pub encoding: EncodingConfig,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProResProfile {
+    Proxy,
+    Lt,
+    Standard,
+    #[default]
+    Hq,
+    Prores4444,
+    Prores4444Xq,
+}
+
+impl ProResProfile {
+    pub fn to_ffmpeg_profile(self) -> &'static str {
+        match self {
+            Self::Proxy => "0",
+            Self::Lt => "1",
+            Self::Standard => "2",
+            Self::Hq => "3",
+            Self::Prores4444 => "4",
+            Self::Prores4444Xq => "5",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EncodingConfig {
+    #[serde(default)]
+    pub prores_profile: ProResProfile,
+    #[serde(default = "default_vendor")]
+    pub vendor: String,
+}
+
+impl Default for EncodingConfig {
+    fn default() -> Self {
+        Self {
+            prores_profile: ProResProfile::Hq,
+            vendor: "apl0".to_owned(),
+        }
+    }
+}
+
+fn default_vendor() -> String {
+    "apl0".to_owned()
 }
 
 impl Environment {
