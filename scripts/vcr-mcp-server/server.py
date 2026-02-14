@@ -310,5 +310,111 @@ async def render_video_from_prompt(
     return f"RENDER COMPLETE\nOutput: {abs_path}\n\nLog:\n" + "\n".join(status_log)
 
 
+@mcp.tool()
+def vcr_render_plan(
+    prompt: str,
+    resolution: str | None = None,
+    fps: int | None = None,
+    duration: float | None = None,
+    alpha: bool | None = None,
+    backend: str | None = None,
+    manifest_path: str | None = None,
+) -> str:
+    """Plan a VCR render from a natural language video description.
+
+    Returns a structured render plan with CLI commands — does NOT execute them.
+    The calling agent decides whether to run the commands.
+
+    This tool enforces the VCR capability contract:
+    - 2D only (no 3D). Procedural shapes, text, ASCII, custom WGSL shaders.
+    - ProRes 4444 (alpha) or 422HQ output.
+    - Fonts: GeistPixel-Line, Square, Grid, Circle, Triangle only.
+    - Post-processing (levels, sobel, passthrough) requires GPU backend.
+    - Deterministic output on software backend.
+    - No audio, no network, no video editing.
+
+    If a manifest_path is provided, validates it with `vcr check` and includes
+    the result. Otherwise, the plan specifies what manifest is needed.
+
+    Args:
+        prompt: Natural language description of the video to create.
+        resolution: Override resolution (e.g. "1920x1080"). Default: 1920x1080.
+        fps: Override frames per second. Default: 24.
+        duration: Override duration in seconds. Default: 5.0.
+        alpha: Whether to produce alpha channel. Default: false unless implied.
+        backend: Force backend: "software", "gpu", or "auto". Default: software.
+        manifest_path: Optional path to existing .vcr manifest to validate and use.
+    """
+    # Apply defaults
+    res = resolution or "1920x1080"
+    fps_val = fps or 24
+    dur = duration or 5.0
+    alpha_val = alpha if alpha is not None else False
+    backend_val = backend or "software"
+
+    if backend_val not in ("software", "gpu", "auto"):
+        return f"ERROR: backend must be 'software', 'gpu', or 'auto', got '{backend_val}'"
+
+    # Determine ProRes profile
+    prores = "4444" if alpha_val else "422hq"
+
+    # Determine output filename from prompt
+    slug = re.sub(r"[^a-z0-9]+", "_", prompt.lower().strip())[:40].strip("_")
+    output_path = f"renders/{slug}.mov"
+
+    # Build plan
+    plan = {
+        "intent_summary": prompt,
+        "render_plan": {
+            "resolution": res,
+            "fps": fps_val,
+            "duration": dur,
+            "backend": backend_val,
+            "alpha": alpha_val,
+            "prores_profile": prores,
+            "determinism_mode": "on" if backend_val == "software" else "off",
+        },
+        "cli_commands": [],
+        "expected_outputs": [output_path],
+        "validation_steps": [
+            f"test -f {output_path}",
+            f"ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,pix_fmt {output_path}",
+        ],
+    }
+
+    # If manifest provided, validate it
+    if manifest_path:
+        try:
+            vcr = _find_vcr_binary()
+        except FileNotFoundError as e:
+            return f"ERROR: {e}"
+
+        check_result = _run([vcr, "check", manifest_path], timeout=30)
+        check_output = (check_result.stdout + check_result.stderr).strip()
+
+        if check_result.returncode != 0:
+            plan["manifest_validation"] = f"FAILED: {check_output}"
+            return json.dumps(plan, indent=2)
+
+        plan["manifest_validation"] = "PASSED"
+        plan["cli_commands"] = [
+            f"vcr check {manifest_path}",
+            f"vcr build {manifest_path} -o {output_path} --backend {backend_val}",
+        ]
+    else:
+        plan["required_assets"] = f"A .vcr manifest matching this request. Write it, then validate with: vcr check <file>"
+        plan["cli_commands"] = [
+            "vcr check <MANIFEST_PATH>",
+            f"vcr build <MANIFEST_PATH> -o {output_path} --backend {backend_val}",
+        ]
+
+    if alpha_val:
+        plan["validation_steps"].append(
+            "Expect pix_fmt=yuva444p10le (alpha present)"
+        )
+
+    return json.dumps(plan, indent=2)
+
+
 if __name__ == "__main__":
     mcp.run()
