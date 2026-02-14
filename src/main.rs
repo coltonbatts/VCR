@@ -39,7 +39,7 @@ use vcr::play::{run_play, PlayArgs};
 use vcr::renderer::Renderer;
 use vcr::schema::{
     AsciiFontVariant, Duration as ManifestDuration, Environment, Layer, Manifest, ParamType,
-    ParamValue, ProceduralSource, ProResProfile, Resolution, ScalarProperty,
+    ParamValue, ProResProfile, ProceduralSource, Resolution, ScalarProperty,
 };
 use vcr::timeline::{
     ascii_overrides_from_flags, evaluate_manifest_layers_at_frame, resolve_bayer_dither_override,
