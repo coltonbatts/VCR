@@ -46,14 +46,17 @@ layers:
     let mut renderer = match renderer_result {
         Ok(r) => r,
         Err(e) => {
-            let err_str = e.to_string();
-            if err_str.contains("no suitable GPU adapter found") {
+            let err_str = format!("{e:#}");
+            if err_str.contains("no suitable GPU adapter found")
+                || err_str.contains("software fallback is disabled")
+            {
                 eprintln!("Skipping test: no GPU adapter found");
                 return;
             }
             panic!("renderer failed to initialize: {e:?}");
         }
     };
+
 
     let rgba = renderer
         .render_frame_rgba(0)
