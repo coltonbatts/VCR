@@ -1,6 +1,6 @@
 [package]
 name = "vcr"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "VCR (Video Component Renderer): headless, local-first motion graphics compiler"
 license = "MIT"
