@@ -57,7 +57,6 @@ layers:
         }
     };
 
-
     let rgba = renderer
         .render_frame_rgba(0)
         .expect("render_frame_rgba should succeed");
