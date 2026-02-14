@@ -25,6 +25,7 @@ fn main() -> Result<()> {
             frames: frame_count,
         },
         color_space: Default::default(),
+        encoding: Default::default(),
     };
 
     println!("🚀 Starting Native Physics Handshake (Rapier3D)...");

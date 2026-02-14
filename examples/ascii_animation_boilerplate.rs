@@ -72,6 +72,7 @@ fn render_overlay_outputs(manager: &AnimationManager, animation_name: &str) -> R
             frames: frame_count,
         },
         color_space: Default::default(),
+        encoding: Default::default(),
     };
     let scene = RenderSceneData::default();
     let mut renderer = Renderer::new_software(&environment, &[], scene)?;
