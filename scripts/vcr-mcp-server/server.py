@@ -14,8 +14,11 @@ from pathlib import Path
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 log = logging.getLogger("vcr-mcp")
+
+READ_ONLY = ToolAnnotations(readOnlyHint=True)
 
 mcp = FastMCP("vcr")
 
@@ -117,16 +120,44 @@ def _run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess:
     )
 
 
+def _resolve_manifest_path(manifest_path: str) -> Path:
+    """Resolve manifest path to absolute Path. Paths are relative to PROJECT_ROOT."""
+    p = Path(manifest_path)
+    if not p.is_absolute():
+        p = PROJECT_ROOT / p
+    p = p.resolve()
+    if not p.exists():
+        raise FileNotFoundError(
+            f"Manifest not found: {manifest_path}\n"
+            f"Resolved to: {p}\n"
+            f"Paths are relative to project root: {PROJECT_ROOT}"
+        )
+    if not p.is_file():
+        raise FileNotFoundError(f"Not a file: {p}")
+    return p
+
+
+def _resolve_output_path(output: str) -> Path:
+    """Resolve output path relative to PROJECT_ROOT."""
+    p = Path(output)
+    if not p.is_absolute():
+        p = PROJECT_ROOT / p
+    return p.resolve()
+
+
 # ── Tools ────────────────────────────────────────────────────────────────────
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def vcr_doctor() -> str:
     """Check VCR system health: binary availability, FFmpeg, GPU support."""
     try:
         vcr = _find_vcr_binary()
     except FileNotFoundError as e:
-        return f"FAIL: {e}"
+        return (
+            f"FAIL: {e}\n\n"
+            "Run `cargo build` in the VCR project root, or add the vcr binary to PATH."
+        )
 
     result = _run([vcr, "doctor"], timeout=30)
     output = (result.stdout + result.stderr).strip()
@@ -134,17 +165,21 @@ def vcr_doctor() -> str:
     return f"[{status}]\n{output}"
 
 
-@mcp.tool()
-def lint_vcr_manifest(manifest_yaml: str) -> str:
-    """Validate a VCR YAML manifest. Returns OK or structured lint errors.
+@mcp.tool(annotations=READ_ONLY)
+def validate_vcr_manifest(manifest_yaml: str, run_lint: bool = True) -> str:
+    """Validate a VCR YAML manifest: schema (vcr check) and optionally unreachable layers (vcr lint).
+
+    Runs vcr check first for schema validation. If run_lint is True, also runs vcr lint
+    to detect layers that never become visible across the timeline.
 
     Args:
         manifest_yaml: The full YAML content of a .vcr manifest to validate.
+        run_lint: If True, also run vcr lint for unreachable-layer analysis. Default: True.
     """
     try:
         vcr = _find_vcr_binary()
     except FileNotFoundError as e:
-        return f"ERROR: {e}"
+        return f"ERROR: {e}\n\nRun `vcr doctor` or `cargo build` in the VCR project root."
 
     with tempfile.NamedTemporaryFile(
         suffix=".vcr", mode="w", delete=False, dir=str(PROJECT_ROOT)
@@ -153,13 +188,126 @@ def lint_vcr_manifest(manifest_yaml: str) -> str:
         tmp_path = f.name
 
     try:
-        result = _run([vcr, "lint", tmp_path], timeout=30)
-        output = (result.stdout + result.stderr).strip()
-        if result.returncode == 0:
-            return f"OK: Manifest is valid.\n{output}" if output else "OK: Manifest is valid."
-        return f"LINT ERRORS:\n{output}"
+        # 1. Schema validation (vcr check) — fast, required for any render
+        check_result = _run([vcr, "check", tmp_path], timeout=30)
+        check_out = (check_result.stdout + check_result.stderr).strip()
+        if check_result.returncode != 0:
+            return (
+                f"SCHEMA VALIDATION FAILED (vcr check):\n{check_out}\n\n"
+                "Fix schema errors (typos, unknown fields, invalid values) and retry."
+            )
+
+        # 2. Unreachable layer analysis (vcr lint) — optional, samples frames
+        if run_lint:
+            lint_result = _run([vcr, "lint", tmp_path], timeout=60)
+            lint_out = (lint_result.stdout + lint_result.stderr).strip()
+            if lint_result.returncode != 0:
+                return (
+                    f"SCHEMA OK (vcr check passed)\n\n"
+                    f"LINT WARNINGS (vcr lint — unreachable layers):\n{lint_out}\n\n"
+                    "Unreachable layers never become visible. Consider removing them or fixing timing/opacity."
+                )
+
+        return "OK: Manifest is valid. Schema (vcr check) passed." + (
+            " Lint (vcr lint) passed." if run_lint else ""
+        )
     finally:
         os.unlink(tmp_path)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def lint_vcr_manifest(manifest_yaml: str) -> str:
+    """Validate a VCR YAML manifest (alias for validate_vcr_manifest). Prefer validate_vcr_manifest."""
+    return validate_vcr_manifest(manifest_yaml, run_lint=True)
+
+
+@mcp.tool()
+def vcr_render_frame(
+    manifest_path: str,
+    frame: int = 0,
+    output: str | None = None,
+    backend: str = "software",
+) -> str:
+    """Render a single frame from a VCR manifest to PNG. Fast preview without full video encode.
+
+    Use this to quickly verify a manifest renders correctly before running a full build.
+    Output is written to renders/ by default.
+
+    Args:
+        manifest_path: Path to the .vcr manifest (relative to project root).
+        frame: Frame index to render (0-based). Default: 0.
+        output: Output PNG path (relative). Default: renders/<manifest_stem>_f<frame>.png.
+        backend: Render backend: "software", "gpu", "auto". Default: software.
+    """
+    if backend not in ("software", "gpu", "auto"):
+        return f"ERROR: backend must be 'software', 'gpu', or 'auto', got '{backend}'"
+
+    if frame < 0:
+        return "ERROR: frame must be >= 0"
+
+    try:
+        vcr = _find_vcr_binary()
+        manifest_abs = _resolve_manifest_path(manifest_path)
+    except FileNotFoundError as e:
+        return f"ERROR: {e}\n\nRun `vcr doctor` to verify the VCR binary."
+
+    if not output:
+        RENDERS_DIR.mkdir(parents=True, exist_ok=True)
+        stem = manifest_abs.stem
+        output = f"renders/{stem}_f{frame}.png"
+    output_abs = _resolve_output_path(output)
+    output_abs.parent.mkdir(parents=True, exist_ok=True)
+
+    result = _run(
+        [vcr, "render-frame", str(manifest_abs), "--frame", str(frame), "-o", str(output_abs), "--backend", backend],
+        timeout=60,
+    )
+    out = (result.stdout + result.stderr).strip()
+    if result.returncode != 0:
+        return f"RENDER FRAME FAILED:\n{out}\n\nRun `vcr doctor` to verify dependencies."
+
+    return json.dumps({
+        "status": "OK",
+        "output": str(output_abs),
+        "manifest": manifest_path,
+        "frame": frame,
+        "backend": backend,
+    }, indent=2)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def vcr_list_examples() -> str:
+    """List available VCR example manifests in the examples/ directory.
+
+    Returns paths and descriptions for reference when creating or modifying manifests.
+    Use these as starting points or to understand VCR capabilities.
+    """
+    examples_dir = PROJECT_ROOT / "examples"
+    if not examples_dir.exists():
+        return json.dumps({"examples": [], "note": "examples/ directory not found"}, indent=2)
+
+    files = sorted(examples_dir.glob("*.vcr"))
+    examples = []
+    for f in files:
+        rel = str(f.relative_to(PROJECT_ROOT))
+        # Try to extract a one-line comment from the file
+        desc = ""
+        try:
+            first_lines = f.read_text()[:500]
+            for line in first_lines.splitlines():
+                line = line.strip()
+                if line.startswith("#") and "Render:" not in line and "Preview:" not in line:
+                    desc = line.lstrip("#").strip()
+                    break
+        except Exception:
+            pass
+        examples.append({"path": rel, "name": f.stem, "description": desc or "(no description)"})
+
+    return json.dumps({
+        "examples": examples,
+        "count": len(examples),
+        "usage": "Use vcr_render_frame or vcr_execute_plan with these paths, e.g. examples/demo_scene.vcr",
+    }, indent=2)
 
 
 def _extract_yaml(content: str) -> str:
@@ -273,9 +421,9 @@ async def render_video_from_prompt(
             resp.raise_for_status()
         except httpx.ConnectError:
             return (
-                f"ERROR: Could not connect to LLM at {VCR_LLM_ENDPOINT}.\n"
-                "Configure VCR_LLM_ENDPOINT, VCR_LLM_MODEL, and optionally VCR_LLM_API_KEY "
-                "to point to any OpenAI-compatible provider."
+                f"ERROR: Could not connect to LLM at {VCR_LLM_ENDPOINT}.\n\n"
+                "Ensure your LLM provider is running (e.g. LM Studio on 127.0.0.1:1234). "
+                "Set VCR_LLM_ENDPOINT, VCR_LLM_MODEL, and optionally VCR_LLM_API_KEY."
             )
         except httpx.HTTPStatusError as exc:
             return f"ERROR: LLM returned HTTP {exc.response.status_code}: {exc.response.text[:500]}"
@@ -305,11 +453,15 @@ async def render_video_from_prompt(
     with open(manifest_path, "w") as f:
         f.write(yaml_content)
 
-    # Lint
-    lint_result = _run([vcr, "lint", manifest_path], timeout=30)
-    if lint_result.returncode != 0:
-        lint_out = (lint_result.stdout + lint_result.stderr).strip()
-        return f"LINT ERRORS (manifest rejected):\n{lint_out}\n\nGenerated YAML:\n{yaml_content}"
+    # Schema validation (vcr check) — required before build
+    check_result = _run([vcr, "check", manifest_path], timeout=30)
+    if check_result.returncode != 0:
+        check_out = (check_result.stdout + check_result.stderr).strip()
+        return (
+            f"SCHEMA VALIDATION FAILED (manifest rejected):\n{check_out}\n\n"
+            f"Generated YAML:\n{yaml_content}\n\n"
+            "Fix schema errors and retry, or use validate_vcr_manifest to debug."
+        )
 
     status_log.append("Manifest validated. Starting GPU render...")
 
@@ -342,7 +494,7 @@ async def render_video_from_prompt(
     return f"RENDER COMPLETE\nOutput: {abs_path}\n\nLog:\n" + "\n".join(status_log)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def vcr_render_plan(
     prompt: str,
     resolution: str | None = None,
@@ -418,10 +570,11 @@ def vcr_render_plan(
     if manifest_path:
         try:
             vcr = _find_vcr_binary()
+            manifest_abs = _resolve_manifest_path(manifest_path)
         except FileNotFoundError as e:
             return f"ERROR: {e}"
 
-        check_result = _run([vcr, "check", manifest_path], timeout=30)
+        check_result = _run([vcr, "check", str(manifest_abs)], timeout=30)
         check_output = (check_result.stdout + check_result.stderr).strip()
 
         if check_result.returncode != 0:
@@ -523,8 +676,9 @@ async def vcr_synthesize_manifest(
             resp.raise_for_status()
         except httpx.ConnectError:
             return (
-                f"ERROR: Could not connect to LLM at {VCR_LLM_ENDPOINT}.\n"
-                "Set VCR_LLM_ENDPOINT, VCR_LLM_MODEL, VCR_LLM_API_KEY."
+                f"ERROR: Could not connect to LLM at {VCR_LLM_ENDPOINT}.\n\n"
+                "Ensure your LLM provider is running. Set VCR_LLM_ENDPOINT, VCR_LLM_MODEL, "
+                "and optionally VCR_LLM_API_KEY."
             )
         except httpx.HTTPStatusError as exc:
             return f"ERROR: LLM HTTP {exc.response.status_code}: {exc.response.text[:500]}"
@@ -590,24 +744,30 @@ async def vcr_execute_plan(
 
     try:
         vcr = _find_vcr_binary()
+        manifest_abs = _resolve_manifest_path(manifest_path)
     except FileNotFoundError as e:
-        return f"ERROR: {e}"
+        return f"ERROR: {e}\n\nRun `vcr doctor` to verify the VCR binary and dependencies."
 
     # Validate first
-    check = _run([vcr, "check", manifest_path], timeout=30)
+    check = _run([vcr, "check", str(manifest_abs)], timeout=30)
     if check.returncode != 0:
         check_out = (check.stdout + check.stderr).strip()
-        return f"VALIDATION FAILED:\n{check_out}\n\nFix the manifest and retry."
+        return (
+            f"VALIDATION FAILED:\n{check_out}\n\n"
+            "Fix the manifest and retry. Use validate_vcr_manifest to debug schema errors."
+        )
 
-    # Determine output path
+    # Determine output path (relative to project root for display)
     if not output:
         RENDERS_DIR.mkdir(parents=True, exist_ok=True)
-        stem = Path(manifest_path).stem
+        stem = manifest_abs.stem
         output = f"renders/{stem}.mov"
+    output_abs = _resolve_output_path(output)
+    output_abs.parent.mkdir(parents=True, exist_ok=True)
 
     # Render
     proc = await asyncio.create_subprocess_exec(
-        vcr, "build", manifest_path, "-o", output, "--backend", backend,
+        vcr, "build", str(manifest_abs), "-o", str(output_abs), "--backend", backend,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(PROJECT_ROOT),
@@ -621,12 +781,14 @@ async def vcr_execute_plan(
 
     if proc.returncode != 0:
         err = (stdout or b"").decode() + (stderr or b"").decode()
-        return f"RENDER FAILED (exit {proc.returncode}):\n{err.strip()}"
+        return (
+            f"RENDER FAILED (exit {proc.returncode}):\n{err.strip()}\n\n"
+            "Run `vcr doctor` to verify FFmpeg and GPU dependencies."
+        )
 
-    abs_path = str((PROJECT_ROOT / output).resolve())
     return json.dumps({
         "status": "RENDER COMPLETE",
-        "output": abs_path,
+        "output": str(output_abs),
         "manifest": manifest_path,
         "backend": backend,
         "commands_executed": [
