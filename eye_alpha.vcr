@@ -1,0 +1,21 @@
+# Dreamcore Opening Eye Element
+version: 1
+
+environment:
+  resolution:
+    width: 1080
+    height: 1920
+  fps: 30
+  duration: 10.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+layers:
+  - id: "eye_element"
+    z_index: 0
+    wgpu_shader:
+      shader_path: "shaders/dreamcore_eye.wgsl"
+      width: 1080
+      height: 1920
+      time_mode: seconds
