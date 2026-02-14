@@ -61,6 +61,7 @@ VCR exists to make motion generation scriptable and reproducible.
 - High-fidelity QuickTime compatibility (`-vendor apl0`)
 - Explicit ProRes profile control (`proxy` to `prores4444_xq`)
 - Alpha-consistency linting for transparent renders
+- Built-in WGSL Standard Library (`#include "vcr:<module>"`)
 - Agent-oriented workflow protocol docs (`docs/SKILLS_PROTOCOL.md`)
 - Figma-to-scene workflow binary (`figma-vcr-workflow`)
 
@@ -140,6 +141,28 @@ List curated source ids:
 ```
 
 See `docs/ASCII_CAPTURE.md` for source formats, flags, parser limitations, and determinism scope.
+
+## VCR Standard Library (WGSL)
+
+VCR includes a built-in library of WGSL modules for custom shaders. Use `#include "vcr:<module>"` to inject them.
+
+| Module | Description |
+| --- | --- |
+| `vcr:common` | Math (`rotate3d`) and color (`hsv2rgb`) utilities |
+| `vcr:noise` | 2D/3D Simplex, Voronoi, and fBm noise |
+| `vcr:sdf` | 3D SDF primitives (Sphere, Box, Torus) and booleans |
+| `vcr:raymarch` | Anti-aliased raymarching boilerplate with perfect alpha edges |
+
+Example usage:
+
+```wgsl
+#include "vcr:common"
+#include "vcr:sdf"
+
+fn map(p: vec3<f32>, u: ShaderUniforms) -> f32 {
+    return sdSphere(rotate3d(p, vec3<f32>(u.time*0.1)), 1.0);
+}
+```
 
 ## ASCII Animation Engine (Frame Packs -> Overlay Layer)
 

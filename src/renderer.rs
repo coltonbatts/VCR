@@ -3222,8 +3222,9 @@ fn build_shader_layer(
             layer.common.id
         );
     };
-
-    let full_wgsl = format!("{}\n{}", user_fragment, CUSTOM_SHADER_PREAMBLE);
+    
+    let processed_fragment = crate::vcr_std::preprocess_wgsl(&user_fragment);
+    let full_wgsl = format!("{}\n{}", processed_fragment, CUSTOM_SHADER_PREAMBLE);
 
     // Create per-layer pipeline
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -3425,7 +3426,9 @@ fn build_wgpu_shader_layer(
                 layer.wgpu_shader.shader_path.display()
             )
         })?;
-    let full_wgsl = format!("{}\n{}", user_shader, WGPU_LAYER_SHADER_PREAMBLE);
+
+    let processed_shader = crate::vcr_std::preprocess_wgsl(&user_shader);
+    let full_wgsl = format!("{}\n{}", processed_shader, WGPU_LAYER_SHADER_PREAMBLE);
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(&format!("vcr-wgpu-layer-shader-{}", layer.common.id)),
         source: wgpu::ShaderSource::Wgsl(full_wgsl.into()),

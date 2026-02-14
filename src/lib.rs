@@ -23,4 +23,5 @@ pub mod post_process;
 pub mod renderer;
 pub mod schema;
 pub mod timeline;
+pub mod vcr_std;
 pub mod workflow;

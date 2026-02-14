@@ -1,0 +1,21 @@
+version: 1
+environment:
+  resolution:
+    width: 1080
+    height: 1920
+  fps: 30
+  duration: 2.0
+
+layers:
+  - id: "bg"
+    procedural:
+      kind: gradient
+      start_color: { r: 0.05, g: 0.05, b: 0.1, a: 1.0 }
+      end_color: { r: 0.1, g: 0.1, b: 0.2, a: 1.0 }
+      direction: vertical
+
+  - id: "demo_shader"
+    shader:
+      path: "shaders/std_demo.wgsl"
+      uniforms:
+        speed: 1.0
