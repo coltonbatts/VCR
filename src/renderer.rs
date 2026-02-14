@@ -3222,7 +3222,7 @@ fn build_shader_layer(
             layer.common.id
         );
     };
-    
+
     let processed_fragment = crate::vcr_std::preprocess_wgsl(&user_fragment);
     let full_wgsl = format!("{}\n{}", processed_fragment, CUSTOM_SHADER_PREAMBLE);
 

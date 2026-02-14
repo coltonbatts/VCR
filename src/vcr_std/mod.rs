@@ -5,6 +5,8 @@ pub const COMMON_WGSL: &str = include_str!("common.wgsl");
 pub const NOISE_WGSL: &str = include_str!("noise.wgsl");
 pub const SDF_WGSL: &str = include_str!("sdf.wgsl");
 pub const RAYMARCH_WGSL: &str = include_str!("raymarch.wgsl");
+pub const ALPHA_WGSL: &str = include_str!("alpha.wgsl");
+pub const MATCAP_WGSL: &str = include_str!("matcap.wgsl");
 
 pub fn get_module(name: &str) -> Option<&'static str> {
     match name {
@@ -12,6 +14,8 @@ pub fn get_module(name: &str) -> Option<&'static str> {
         "noise" => Some(NOISE_WGSL),
         "sdf" => Some(SDF_WGSL),
         "raymarch" => Some(RAYMARCH_WGSL),
+        "alpha" => Some(ALPHA_WGSL),
+        "matcap" => Some(MATCAP_WGSL),
         _ => None,
     }
 }
@@ -20,7 +24,8 @@ pub fn preprocess_wgsl(source: &str) -> String {
     let mut output = String::new();
     for line in source.lines() {
         let trimmed = line.trim();
-        if (trimmed.starts_with("#include \"vcr:") || trimmed.starts_with("@import \"vcr:")) && trimmed.ends_with("\"")
+        if (trimmed.starts_with("#include \"vcr:") || trimmed.starts_with("@import \"vcr:"))
+            && trimmed.ends_with("\"")
         {
             let parts: Vec<&str> = trimmed.split('"').collect();
             if parts.len() >= 2 {
