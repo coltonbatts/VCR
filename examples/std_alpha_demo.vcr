@@ -1,0 +1,45 @@
+# =============================================================================
+# VCR Standard Library: Alpha-Correct 3D Demo
+# =============================================================================
+# Demonstrates: SDF raymarching, matcap shading, noise distortion, clean alpha
+# Render:  vcr build examples/std_alpha_demo.vcr -o renders/std_alpha_demo.mov --backend gpu
+# Preview: vcr render examples/std_alpha_demo.vcr --frame 30 --backend gpu
+#
+# This scene renders a smooth-unioned sphere+box+torus with clay matcap
+# shading and noise surface distortion. The background is fully transparent,
+# producing clean ProRes 4444 alpha suitable for compositing over any color.
+# =============================================================================
+
+version: 1
+
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 24
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+
+params:
+  speed:
+    type: float
+    default: 0.6
+    min: 0.0
+    max: 3.0
+    description: "Object rotation speed"
+  distort:
+    type: float
+    default: 0.08
+    min: 0.0
+    max: 0.5
+    description: "Noise surface distortion amount"
+
+layers:
+  - id: "sdf_scene"
+    z_index: 0
+    shader:
+      path: "std_alpha_demo.wgsl"
+      uniforms:
+        speed: "${speed}"
+        distort: "${distort}"
