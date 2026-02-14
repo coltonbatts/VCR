@@ -1,0 +1,23 @@
+# Wobble Material Demo
+# Demonstrates the wobble effect material shader
+# Inspired by drei's MeshWobbleMaterial
+version: 1
+
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+layers:
+  - id: wobble_sphere
+    z_index: 0
+    wgpu_shader:
+      shader_path: wobble.wgsl
+      width: 1280
+      height: 720
+      time_mode: seconds

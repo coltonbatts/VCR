@@ -1,0 +1,23 @@
+# Distort Material Demo
+# Demonstrates the organic distortion effect using Simplex noise
+# Inspired by drei's MeshDistortMaterial
+version: 1
+
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+layers:
+  - id: distort_sphere
+    z_index: 0
+    wgpu_shader:
+      shader_path: distort.wgsl
+      width: 1280
+      height: 720
+      time_mode: seconds
