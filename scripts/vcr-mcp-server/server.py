@@ -59,6 +59,38 @@ Rules:
 4. Use ONLY font_family: "GeistPixel-Line".
 5. Resolution and position are integers."""
 
+# Load SKILL.md for the synthesizer system prompt (comprehensive manifest reference)
+_SKILL_MD_PATH = PROJECT_ROOT / "SKILL.md"
+_SKILL_MD = ""
+if _SKILL_MD_PATH.exists():
+    _SKILL_MD = _SKILL_MD_PATH.read_text()
+
+SYNTHESIZER_SYSTEM_PROMPT = f"""\
+You are a VCR manifest synthesizer. You output ONLY valid VCR YAML — no prose, no markdown
+fences, no explanation. The YAML must pass `vcr check` without errors.
+
+You will receive a render plan (JSON) describing what to produce. Generate a manifest that
+exactly satisfies the plan's resolution, fps, duration, alpha, and backend requirements.
+
+If alpha is true, do NOT add a solid_color background layer — leave the background transparent.
+If alpha is false, add a solid_color background as the first layer.
+
+STRICT RULES:
+- version must be 1
+- All layer ids must be unique non-empty strings
+- Colors are {{r: 0.0-1.0, g: 0.0-1.0, b: 0.0-1.0, a: 0.0-1.0}}
+- Fonts: GeistPixel-Line, GeistPixel-Square, GeistPixel-Grid, GeistPixel-Circle, GeistPixel-Triangle
+- Procedural kinds: solid_color, gradient, circle, rounded_rect, ring, line, triangle, polygon
+- Expressions use `t` (frame number float). Functions: sin, cos, abs, floor, ceil, round, fract,
+  clamp, lerp, smoothstep, step, easeinout, saw, tri, random, noise1d, glitch, env
+- Post-processing (levels, sobel, passthrough) requires GPU backend
+- Shader layers require GPU backend
+- Image paths must be relative
+- No unknown fields (deny_unknown_fields is active)
+
+{_SKILL_MD[:8000] if _SKILL_MD else ""}
+Output the YAML now. Nothing else."""
+
 
 def _find_vcr_binary() -> str:
     """Locate the vcr binary — prefer PATH, fall back to local debug build."""
@@ -414,6 +446,194 @@ def vcr_render_plan(
         )
 
     return json.dumps(plan, indent=2)
+
+
+@mcp.tool()
+async def vcr_synthesize_manifest(
+    prompt: str,
+    resolution: str = "1920x1080",
+    fps: int = 24,
+    duration: float = 5.0,
+    alpha: bool = False,
+    backend: str = "software",
+    output_manifest: str | None = None,
+) -> str:
+    """Generate a valid VCR YAML manifest from a natural language description.
+
+    Writes the manifest to disk and validates it with `vcr check`. Returns the
+    manifest YAML and validation result. Does NOT render — use vcr_execute_plan
+    or vcr build separately.
+
+    Args:
+        prompt: Natural language description of the video to create.
+        resolution: Resolution as "WIDTHxHEIGHT". Default: 1920x1080.
+        fps: Frames per second. Default: 24.
+        duration: Duration in seconds. Default: 5.0.
+        alpha: Produce transparent background. Default: false.
+        backend: Target backend: "software", "gpu", "auto". Default: software.
+        output_manifest: Where to write the .vcr file. Default: auto-generated.
+    """
+    if backend not in ("software", "gpu", "auto"):
+        return f"ERROR: backend must be 'software', 'gpu', or 'auto', got '{backend}'"
+
+    # Parse resolution
+    m = re.match(r"(\d+)x(\d+)", resolution)
+    if not m:
+        return f"ERROR: resolution must be WIDTHxHEIGHT, got '{resolution}'"
+    width, height = int(m.group(1)), int(m.group(2))
+
+    # Build the render plan context for the LLM
+    render_plan = json.dumps({
+        "prompt": prompt,
+        "resolution": {"width": width, "height": height},
+        "fps": fps,
+        "duration": duration,
+        "alpha": alpha,
+        "backend": backend,
+        "prores_profile": "4444" if alpha else "422hq",
+    })
+
+    # Call LLM to generate manifest
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if VCR_LLM_API_KEY:
+        headers["Authorization"] = f"Bearer {VCR_LLM_API_KEY}"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            model = await _resolve_model(client)
+        except Exception:
+            model = "local-model"
+
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": SYNTHESIZER_SYSTEM_PROMPT},
+                {"role": "user", "content": render_plan},
+            ],
+            "temperature": 0.0,
+        }
+
+        try:
+            resp = await client.post(
+                f"{VCR_LLM_ENDPOINT}/chat/completions",
+                json=payload,
+                headers=headers,
+                timeout=90,
+            )
+            resp.raise_for_status()
+        except httpx.ConnectError:
+            return (
+                f"ERROR: Could not connect to LLM at {VCR_LLM_ENDPOINT}.\n"
+                "Set VCR_LLM_ENDPOINT, VCR_LLM_MODEL, VCR_LLM_API_KEY."
+            )
+        except httpx.HTTPStatusError as exc:
+            return f"ERROR: LLM HTTP {exc.response.status_code}: {exc.response.text[:500]}"
+        except httpx.TimeoutException:
+            return "ERROR: LLM request timed out."
+
+    choices = resp.json().get("choices", [])
+    if not choices:
+        return "ERROR: LLM returned empty response."
+
+    content = choices[0].get("message", {}).get("content", "")
+    yaml_content = _extract_yaml(content)
+    if not yaml_content:
+        return "ERROR: Could not extract YAML from LLM response."
+
+    # Write manifest
+    slug = re.sub(r"[^a-z0-9]+", "_", prompt.lower().strip())[:40].strip("_")
+    manifest_file = output_manifest or f"{slug}.vcr"
+    manifest_abs = str(PROJECT_ROOT / manifest_file)
+
+    with open(manifest_abs, "w") as f:
+        f.write(yaml_content)
+
+    # Validate
+    try:
+        vcr = _find_vcr_binary()
+    except FileNotFoundError as e:
+        return f"ERROR: {e}\n\nManifest written to: {manifest_file}\n\n{yaml_content}"
+
+    check = _run([vcr, "check", manifest_abs], timeout=30)
+    check_output = (check.stdout + check.stderr).strip()
+
+    result = {
+        "manifest_path": manifest_file,
+        "validation": "PASSED" if check.returncode == 0 else f"FAILED: {check_output}",
+        "yaml": yaml_content,
+    }
+
+    if check.returncode != 0:
+        result["hint"] = "Fix the errors above and re-run vcr check, or call this tool again with a refined prompt."
+
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def vcr_execute_plan(
+    manifest_path: str,
+    output: str | None = None,
+    backend: str = "software",
+) -> str:
+    """Validate and render a VCR manifest to ProRes video.
+
+    Runs vcr check, then vcr build. Returns the output path or error details.
+    This is the final step after vcr_render_plan and vcr_synthesize_manifest.
+
+    Args:
+        manifest_path: Path to the .vcr manifest (relative to project root).
+        output: Output .mov path (relative). Default: renders/<manifest_name>.mov.
+        backend: Render backend: "software", "gpu", "auto". Default: software.
+    """
+    if backend not in ("software", "gpu", "auto"):
+        return f"ERROR: backend must be 'software', 'gpu', or 'auto', got '{backend}'"
+
+    try:
+        vcr = _find_vcr_binary()
+    except FileNotFoundError as e:
+        return f"ERROR: {e}"
+
+    # Validate first
+    check = _run([vcr, "check", manifest_path], timeout=30)
+    if check.returncode != 0:
+        check_out = (check.stdout + check.stderr).strip()
+        return f"VALIDATION FAILED:\n{check_out}\n\nFix the manifest and retry."
+
+    # Determine output path
+    if not output:
+        RENDERS_DIR.mkdir(parents=True, exist_ok=True)
+        stem = Path(manifest_path).stem
+        output = f"renders/{stem}.mov"
+
+    # Render
+    proc = await asyncio.create_subprocess_exec(
+        vcr, "build", manifest_path, "-o", output, "--backend", backend,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=str(PROJECT_ROOT),
+    )
+
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return "ERROR: Render timed out after 300 seconds."
+
+    if proc.returncode != 0:
+        err = (stdout or b"").decode() + (stderr or b"").decode()
+        return f"RENDER FAILED (exit {proc.returncode}):\n{err.strip()}"
+
+    abs_path = str((PROJECT_ROOT / output).resolve())
+    return json.dumps({
+        "status": "RENDER COMPLETE",
+        "output": abs_path,
+        "manifest": manifest_path,
+        "backend": backend,
+        "commands_executed": [
+            f"vcr check {manifest_path}",
+            f"vcr build {manifest_path} -o {output} --backend {backend}",
+        ],
+    }, indent=2)
 
 
 if __name__ == "__main__":
