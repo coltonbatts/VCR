@@ -17,40 +17,48 @@ version: 1
 environment:
   resolution: { width: 1280, height: 720 }
   fps: 24
-  duration: 2.0
+  duration: 3.0
 
 layers:
-  # Dark background
+  # Dark gradient background
   - id: bg
+    z_index: 0
     procedural:
-      kind: solid_color
-      color: { r: 0.06, g: 0.06, b: 0.08, a: 1.0 }
+      kind: gradient
+      start_color: { r: 0.04, g: 0.03, b: 0.08, a: 1.0 }
+      end_color:   { r: 0.01, g: 0.01, b: 0.03, a: 1.0 }
+      direction: vertical
 
-  # Centered card
-  - id: card
+  # Spinning dreamcore pyramid (GPU shader)
+  - id: pyramid
     z_index: 1
-    procedural:
-      kind: rounded_rect
-      center: { x: 640, y: 360 }
-      size: { x: 400, y: 240 }
-      corner_radius: 16
-      color: { r: 0.12, g: 0.12, b: 0.16, a: 1.0 }
+    wgpu_shader:
+      shader_path: "shaders/dreamcore_pyramid.wgsl"
+      width: 1280
+      height: 720
+      time_mode: seconds
 
-  # Accent circle
-  - id: circle
-    z_index: 2
-    procedural:
-      kind: circle
-      center: { x: 640, y: 340 }
-      radius: 50
-      color: { r: 0.0, g: 0.85, b: 0.9, a: 1.0 }
+  # Title text — GeistPixel-Line
+  - id: title
+    z_index: 10
+    anchor: center
+    pos_x: 640
+    pos_y: 620
+    text:
+      content: "WELCOME TO VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 48
+      color: { r: 0.8, g: 0.9, b: 1.0, a: 1.0 }
 
-  # Accent line under circle
-  - id: line
-    z_index: 3
-    procedural:
-      kind: line
-      start: { x: 540, y: 420 }
-      end: { x: 740, y: 420 }
-      thickness: 2
-      color: { r: 0.0, g: 0.85, b: 0.9, a: 0.6 }
+  # Subtitle
+  - id: subtitle
+    z_index: 10
+    anchor: center
+    pos_x: 640
+    pos_y: 665
+    opacity: "0.4 + 0.2 * sin(t * 1.5)"
+    text:
+      content: "deterministic motion graphics"
+      font_family: "GeistPixel-Line"
+      font_size: 22
+      color: { r: 0.5, g: 0.7, b: 0.9, a: 1.0 }
