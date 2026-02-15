@@ -1,0 +1,104 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 10.0
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+params:
+  spin_speed: 1.0 # Slowed by 400%
+  flicker_speed: 10.0
+
+modulators:
+  # Making it more "sure of itself" with a smoother, slightly paused feeling at the front
+  spin:
+    expression: "cos(t * spin_speed)"
+  
+  # Subtle drift for the "Welcome" text
+  drift:
+    expression: "sin(t * 0.5) * 5.0"
+
+  # Flicker for CRT feel
+  flicker:
+    expression: "0.95 + glitch(t * flicker_speed, 0.05) * 0.05"
+
+groups:
+  - id: "vcr_spin_group"
+    position: { x: 960, y: 600 }
+    modulators:
+      - source: spin
+        weights: { scale_x: 1.0 }
+
+layers:
+  # "WELCOME TO" Text
+  - id: "welcome_text"
+    position: { x: 960, y: 400 }
+    anchor: center
+    text:
+      content: "WELCOME TO"
+      font_family: "GeistPixel-Line"
+      font_size: 60 # Slightly smaller for more focus on "VCR"
+      color: { r: 0.85, g: 0.85, b: 1.0, a: 1.0 }
+    modulators:
+      - source: flicker
+        weights: { opacity: 1.0 }
+      - source: drift
+        weights: { y: 1.0 }
+
+  # Cyan Offset
+  - id: "vcr_cyan"
+    group: "vcr_spin_group"
+    position: { x: 5, y: 3 }
+    anchor: center
+    opacity: 0.35
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 350
+      color: { r: 0.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  # Red Offset
+  - id: "vcr_red"
+    group: "vcr_spin_group"
+    position: { x: -5, y: -3 }
+    anchor: center
+    opacity: 0.35
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 350
+      color: { r: 1.0, g: 0.0, b: 0.2, a: 1.0 }
+
+  # Main Text
+  - id: "vcr_main"
+    group: "vcr_spin_group"
+    position: { x: 0, y: 0 }
+    anchor: center
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 350
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    modulators:
+      - source: flicker
+        weights: { opacity: 1.0 }
+
+  # CRT Shader Masked to Content Area
+  - id: "crt_overlay"
+    z_index: 20
+    shader:
+      fragment: |
+        fn shade(uv: vec2<f32>, u: ShaderUniforms) -> vec4<f32> {
+          // Mask to central area (expanded for larger text)
+          let mask = smoothstep(0.6, 0.45, abs(uv.x - 0.5)) * smoothstep(0.45, 0.3, abs(uv.y - 0.5));
+          if (mask <= 0.0) { return vec4<f32>(0.0); }
+
+          let scanline = sin(uv.y * 1000.0) * 0.1 + 0.9;
+          let static_noise = (fract(sin(dot(uv + u.time, vec2<f32>(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.04;
+          let roll = step(0.98, fract(uv.y - u.time * 0.08)) * 0.06;
+
+          let alpha = (1.0 - scanline + static_noise + roll) * mask;
+          return vec4<f32>(0.0, 0.0, 0.0, alpha);
+        }

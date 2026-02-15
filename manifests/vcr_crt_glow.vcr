@@ -1,0 +1,91 @@
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 30
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+params:
+  flicker_speed: 15.0
+  aberration_offset: 2.0
+
+modulators:
+  flicker:
+    expression: "0.8 + glitch(t * flicker_speed, 0.2) * 0.2"
+  drift:
+    expression: "sin(t * 0.1) * 2.0"
+
+layers:
+  # Chromatic Aberration Layers (Cyan and Red)
+  - id: "vcr_cyan"
+    position: { x: 642, y: 360 }
+    anchor: center
+    opacity: 0.4
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 200
+      color: { r: 0.0, g: 1.0, b: 1.0, a: 1.0 }
+    modulators:
+      - source: flicker
+        weights: { opacity: 1.0 }
+      - source: drift
+        weights: { x: 1.0 }
+
+  - id: "vcr_red"
+    position: { x: 638, y: 360 }
+    anchor: center
+    opacity: 0.4
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 200
+      color: { r: 1.0, g: 0.0, b: 0.2, a: 1.0 }
+    modulators:
+      - source: flicker
+        weights: { opacity: 1.0 }
+      - source: drift
+        weights: { x: -1.0 }
+
+  # Main White Text
+  - id: "vcr_main"
+    position: { x: 640, y: 360 }
+    anchor: center
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 200
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    modulators:
+      - source: flicker
+        weights: { opacity: 1.0 }
+
+  # CRT Post-Processing Layer (Shader)
+  - id: "crt_shader"
+    z_index: 10
+    shader:
+      fragment: |
+        fn shade(uv: vec2<f32>, u: ShaderUniforms) -> vec4<f32> {
+          // Mask effects to the central text area (approximate)
+          let dist_x = abs(uv.x - 0.5);
+          let dist_y = abs(uv.y - 0.5);
+          let text_mask = smoothstep(0.4, 0.3, dist_x) * smoothstep(0.2, 0.1, dist_y);
+          
+          if (text_mask <= 0.0) {
+            return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+          }
+
+          // Scanlines (Subtle darkening)
+          let scanline = sin(uv.y * 800.0) * 0.05 + 0.95;
+          
+          // Static Noise (Very subtle)
+          let noise = (fract(sin(dot(uv + u.time, vec2<f32>(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.02;
+          
+          // Intermittent "Rolling" Bar
+          let roll = step(0.98, fract(uv.y - u.time * 0.05)) * 0.05;
+          
+          let alpha_contrib = ((1.0 - scanline) + roll + noise) * text_mask;
+          return vec4<f32>(0.0, 0.0, 0.0, alpha_contrib);
+        }

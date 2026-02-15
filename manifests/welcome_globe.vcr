@@ -1,0 +1,39 @@
+version: 1
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 30
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+modulators:
+  flicker:
+    expression: "noise1d(t * 15.0) * 0.05"
+
+layers:
+  - id: techie_globe
+    z_index: 0
+    wgpu_shader:
+      shader_path: "techie_globe.wgsl"
+      width: 1920
+      height: 1080
+      time_mode: seconds
+
+  - id: welcome_text
+    z_index: 1
+    pos_x: 960
+    pos_y: 850
+    anchor: center
+    text:
+      content: "Welcome to VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 84.0
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    opacity: "smoothstep(0, 1.5, t)"
+    modulators:
+      - source: flicker
+        weights:
+          opacity: 1.0

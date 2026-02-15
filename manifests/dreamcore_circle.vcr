@@ -1,0 +1,14 @@
+version: 1
+environment:
+  resolution: { width: 720, height: 1280 }
+  fps: 30
+  duration: 10.0
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+layers:
+  - id: "dreamcore_circle"
+    sequence:
+      path: "../assets/sequences/dreamcore_circle"
+      pattern: "frame_{frame:04}.png"
