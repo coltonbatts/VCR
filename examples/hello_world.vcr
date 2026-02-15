@@ -29,25 +29,37 @@ layers:
       end_color:   { r: 0.01, g: 0.01, b: 0.03, a: 1.0 }
       direction: vertical
 
-  # Spinning dreamcore pyramid (GPU shader)
-  - id: pyramid
+  # Spinning dreamcore statue (GPU shader)
+  - id: statue
     z_index: 1
     wgpu_shader:
-      shader_path: "shaders/dreamcore_pyramid.wgsl"
+      shader_path: "shaders/dreamcore_statue.wgsl"
       width: 1280
       height: 720
       time_mode: seconds
 
-  # Title text — GeistPixel-Line
-  - id: title
+  # "WELCOME TO" — top line
+  - id: welcome
     z_index: 10
     anchor: center
     pos_x: 640
-    pos_y: 620
+    pos_y: 575
     text:
-      content: "WELCOME TO VCR"
+      content: "WELCOME TO"
       font_family: "GeistPixel-Line"
-      font_size: 48
+      font_size: 64
+      color: { r: 0.8, g: 0.9, b: 1.0, a: 1.0 }
+
+  # "VCR" — bottom line, sized to match visual width
+  - id: vcr
+    z_index: 10
+    anchor: center
+    pos_x: 640
+    pos_y: 650
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 140
       color: { r: 0.8, g: 0.9, b: 1.0, a: 1.0 }
 
   # Subtitle
@@ -55,10 +67,10 @@ layers:
     z_index: 10
     anchor: center
     pos_x: 640
-    pos_y: 665
+    pos_y: 695
     opacity: "0.4 + 0.2 * sin(t * 1.5)"
     text:
       content: "deterministic motion graphics"
       font_family: "GeistPixel-Line"
-      font_size: 22
+      font_size: 20
       color: { r: 0.5, g: 0.7, b: 0.9, a: 1.0 }
