@@ -16,3 +16,5 @@
 *.backup*
 node_modules/
 __pycache__/
+
+/assets/sequences/
