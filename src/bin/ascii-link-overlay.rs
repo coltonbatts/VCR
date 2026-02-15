@@ -1,4 +1,6 @@
-use std::fs;
+#[cfg(feature = "workflow")]
+mod implementation {
+    use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -52,7 +54,7 @@ struct Cli {
     font: String,
 }
 
-fn main() -> Result<()> {
+pub fn main() -> Result<()> {
     let cli = Cli::parse();
     if let Some(w) = cli.width {
         if w == 0 {
@@ -632,4 +634,16 @@ fn write_checker_preview(
         bail!("failed to render checker preview with ffmpeg");
     }
     Ok(())
+}
+}
+
+#[cfg(feature = "workflow")]
+fn main() -> anyhow::Result<()> {
+    implementation::main()
+}
+
+#[cfg(not(feature = "workflow"))]
+fn main() {
+    eprintln!("ascii-link-overlay requires the 'workflow' feature.");
+    std::process::exit(1);
 }

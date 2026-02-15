@@ -35,6 +35,7 @@ use vcr::error_codes::{find_coded_error, CodedErrorKind};
 use vcr::font_assets::verify_geist_pixel_bundle;
 use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions, ParamOverride};
 use vcr::packs::{compile_pack, PackCompileBackend, PackCompileRequest};
+#[cfg(feature = "play")]
 use vcr::play::{run_play, PlayArgs};
 use vcr::prompt_gate::translate_to_standard_prompt;
 use vcr::renderer::Renderer;
@@ -270,6 +271,7 @@ enum Commands {
         )]
         set: Vec<String>,
     },
+    #[cfg(feature = "play")]
     #[command(about = "Open a live playback window")]
     Play {
         manifest: PathBuf,
@@ -663,6 +665,7 @@ impl Commands {
             Self::Params { .. } => "params",
             Self::Explain { .. } => "explain",
             Self::Preview { .. } => "preview",
+            #[cfg(feature = "play")]
             Self::Play { .. } => "play",
             Self::RenderFrame { .. } => "render-frame",
             Self::RenderFrames { .. } => "render-frames",
@@ -795,6 +798,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             )
             .map(|_| ())
         }
+        #[cfg(feature = "play")]
         Commands::Play {
             manifest,
             start_frame,

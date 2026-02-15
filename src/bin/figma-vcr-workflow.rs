@@ -1,4 +1,6 @@
-use std::env;
+#[cfg(feature = "workflow")]
+mod implementation {
+    use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -43,7 +45,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+pub async fn main() -> Result<()> {
     let cli = Cli::parse();
     println!("{}", FIGMA_VCR_HEADER);
     println!("Figma -> VCR workflow initialization\n");
@@ -170,4 +172,16 @@ async fn main() -> Result<()> {
     );
 
     Ok(())
+}
+}
+
+#[cfg(feature = "workflow")]
+fn main() -> anyhow::Result<()> {
+    implementation::main()
+}
+
+#[cfg(not(feature = "workflow"))]
+fn main() {
+    eprintln!("figma-vcr-workflow requires the 'workflow' feature.");
+    std::process::exit(1);
 }

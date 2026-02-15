@@ -1,7 +1,12 @@
 # Changelog
 
-## v0.1.2 (2026-02-14)
+## v0.1.2 (2026-02-15)
 
+- **Feature-modularized release**
+  - Core renderer: 0 optional dependencies
+  - Optional: `play` (GUI previewer with hot-reload)
+  - Optional: `workflow` (Figma/Frame.io integrations)
+  - Reduced default binary size and dependency footprint
 - **MCP Server**: Major improvements to `scripts/vcr-mcp-server/`
   - Path resolution: manifest and output paths resolved consistently relative to project root
   - Validation: `validate_vcr_manifest` runs `vcr check` (schema) first, then optional `vcr lint` (unreachable layers)

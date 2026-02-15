@@ -37,8 +37,26 @@ For people who think code is faster than the Adobe ecosystem.
 ```bash
 git clone https://github.com/coltonbatts/VCR.git
 cd VCR
-cargo build --release
 ```
+
+#### Feature Flags
+
+VCR is built with a modular architecture to keep the core renderer lightweight.
+
+| Feature | Description | Dependency Cost |
+| --- | --- | --- |
+| **Core** (default) | Headless renderer, YAML compiler, ProRes export. | Minimal |
+| `play` | Adds `vcr play` live preview window with hot-reload. | `winit`, `egui`, `notify` |
+| `workflow` | Adds Figma and Frame.io integration tools. | `reqwest`, `tokio` |
+
+#### Build Commands
+
+| Target | Command |
+| --- | --- |
+| **Core Only** | `cargo build --release` |
+| **With Preview** | `cargo build --release --features play` |
+| **With Workflow** | `cargo build --release --features workflow` |
+| **Full Suite** | `cargo build --release --features "play workflow"` |
 
 ### Your First Render
 
