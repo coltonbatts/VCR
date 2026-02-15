@@ -25,6 +25,16 @@ For people who think code is faster than the Adobe ecosystem.
 - **ProRes 4444 output** via FFmpeg
 - **Headless rendering** without any graphics server
 
+## Quick Install (One-liner)
+
+If you have **Rust** and **FFmpeg** installed, you can install VCR with a single command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/coltonbatts/VCR/main/scripts/install.sh | bash
+```
+
+*Works on macOS, Linux, and WSL.*
+
 ## Quick Start
 
 ### Requirements
