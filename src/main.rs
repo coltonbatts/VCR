@@ -36,6 +36,7 @@ use vcr::font_assets::verify_geist_pixel_bundle;
 use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions, ParamOverride};
 use vcr::packs::{compile_pack, PackCompileBackend, PackCompileRequest};
 use vcr::play::{run_play, PlayArgs};
+use vcr::prompt_gate::translate_to_standard_prompt;
 use vcr::renderer::Renderer;
 use vcr::schema::{
     AsciiFontVariant, Duration as ManifestDuration, Environment, Layer, Manifest, ParamType,
@@ -320,6 +321,32 @@ enum Commands {
             help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
         )]
         set: Vec<String>,
+    },
+    #[command(
+        about = "Translate natural language or loose YAML into a standardized VCR prompt + QA report"
+    )]
+    Prompt {
+        #[arg(
+            long = "text",
+            value_name = "TEXT",
+            conflicts_with = "input",
+            help = "Natural language request or inline YAML"
+        )]
+        text: Option<String>,
+        #[arg(
+            long = "in",
+            value_name = "INPUT_FILE",
+            conflicts_with = "text",
+            help = "Input file containing natural language or YAML"
+        )]
+        input: Option<PathBuf>,
+        #[arg(
+            short = 'o',
+            long = "output",
+            value_name = "OUTPUT_FILE",
+            help = "Write translated YAML output to a file (default: stdout)"
+        )]
+        output: Option<PathBuf>,
     },
     Chat {
         #[command(subcommand)]
@@ -624,6 +651,7 @@ impl Commands {
             Self::RenderFrame { .. } => "render-frame",
             Self::RenderFrames { .. } => "render-frames",
             Self::Watch { .. } => "watch",
+            Self::Prompt { .. } => "prompt",
             Self::Chat { .. } => "chat",
             Self::Ascii { .. } => "ascii",
             Self::Pack { .. } => "pack",
@@ -846,6 +874,11 @@ fn run_cli(cli: Cli) -> Result<()> {
                 quiet,
             )
         }
+        Commands::Prompt {
+            text,
+            input,
+            output,
+        } => run_prompt_translate(text.as_deref(), input.as_deref(), output.as_deref()),
         Commands::Chat { command } => match command {
             ChatCommands::Render {
                 input,
@@ -1008,6 +1041,41 @@ fn run_pack_compile_cli(
     println!("Wrote {}", summary.mov_path.display());
     println!("Wrote {}", summary.frame_hashes_path.display());
     println!("Wrote {}", summary.artifact_manifest_path.display());
+    Ok(())
+}
+
+fn run_prompt_translate(
+    text: Option<&str>,
+    input_file: Option<&Path>,
+    output_file: Option<&Path>,
+) -> Result<()> {
+    let raw_input = match (text, input_file) {
+        (Some(inline), None) => inline.to_owned(),
+        (None, Some(path)) => fs::read_to_string(path)
+            .with_context(|| format!("failed to read input file {}", path.display()))?,
+        (Some(_), Some(_)) => bail!("provide only one of --text or --in"),
+        (None, None) => bail!("missing input: provide --text or --in"),
+    };
+
+    let translated = translate_to_standard_prompt(&raw_input)?;
+    let output_yaml =
+        serde_yaml::to_string(&translated).context("failed to serialize translated prompt YAML")?;
+
+    if let Some(path) = output_file {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create output directory {}", parent.display())
+                })?;
+            }
+        }
+        fs::write(path, output_yaml)
+            .with_context(|| format!("failed to write translated output {}", path.display()))?;
+        println!("Wrote {}", path.display());
+    } else {
+        print!("{output_yaml}");
+    }
+
     Ok(())
 }
 

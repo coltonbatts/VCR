@@ -3,6 +3,7 @@ use std::path::Path;
 use std::process::Command;
 
 use serde_json::Value;
+use serde_yaml::Value as YamlValue;
 use tempfile::tempdir;
 
 fn write_manifest(path: &Path, yaml: &str) {
@@ -25,6 +26,34 @@ fn command_available(name: &str, version_arg: &str) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+#[test]
+fn prompt_command_outputs_standardized_yaml_bundle() {
+    let dir = tempdir().expect("tempdir should create");
+    let output = run_vcr(
+        dir.path(),
+        &[
+            "prompt",
+            "--text",
+            "Render a 5s alpha intro at 30fps to ./renders/intro.mov",
+        ],
+    );
+    assert!(output.status.success(), "prompt command should succeed");
+
+    let parsed: YamlValue =
+        serde_yaml::from_slice(&output.stdout).expect("prompt output should be valid YAML");
+    assert!(parsed.get("standardized_vcr_prompt").is_some());
+    assert_eq!(
+        parsed["normalized_spec"]["render"]["fps"].as_i64(),
+        Some(30),
+        "render fps should be parsed from natural language input"
+    );
+    assert_eq!(
+        parsed["normalized_spec"]["output"]["path"].as_str(),
+        Some("./renders/intro.mov"),
+        "output path should round-trip into normalized spec"
+    );
 }
 
 #[test]

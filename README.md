@@ -100,6 +100,23 @@ cargo build --release --bin vcr --bin figma-vcr-workflow
 # cargo run --features sidecar_ffmpeg --bin vcr -- --ffmpeg sidecar build ...
 ```
 
+### First Boot: Natural Language -> Deterministic Spec
+
+Use `vcr prompt` to translate natural language (or loose YAML) into a standardized engine-ready prompt plus a QA report of unknowns/fixes.
+
+```bash
+./target/release/vcr prompt \
+  --text "Make a cinematic 5s title card at 60fps, transparent alpha, output ./renders/title.mov"
+```
+
+You can also read from a file and write the translated YAML:
+
+```bash
+./target/release/vcr prompt \
+  --in ./specs/request.yaml \
+  -o ./specs/request.normalized.yaml
+```
+
 ## ASCII Stage (Transcript -> Terminal Cinema)
 
 `vcr ascii stage` renders a plain-text `.vcrtxt` chat transcript into a stylized terminal video with deterministic timing.
@@ -333,6 +350,7 @@ Override at runtime:
 - `render-frame`
 - `render-frames`
 - `watch`
+- `prompt`
 - `chat render`
 - `ascii stage`
 - `ascii capture`

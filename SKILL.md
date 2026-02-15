@@ -23,6 +23,9 @@ VCR (Video Component Renderer) is a headless, deterministic motion graphics comp
 ## Quick Start
 
 ```bash
+# Normalize natural language (or loose YAML) into an engine-ready prompt bundle
+vcr prompt --text "5s alpha lower third at 60fps output ./renders/lower_third.mov"
+
 # Validate a manifest without rendering
 vcr check scene.vcr
 
@@ -38,6 +41,55 @@ vcr build scene.vcr --set speed=2.0 --set color=#ff0000
 # System health check
 vcr doctor
 ```
+
+---
+
+## Prompt Gate (Agent-First Entry)
+
+For agent workflows, start with `vcr prompt` before writing or editing manifests.
+
+`vcr prompt` accepts natural language or YAML-like input and returns a single YAML document with:
+
+- `standardized_vcr_prompt` (ROLE/TASK/INSTRUCTIONS/CONTEXT/OUTPUT FORMAT)
+- `normalized_spec` (defaults applied, explicit render/output/determinism fields)
+- `unknowns_and_fixes` (ambiguities, unsupported requests, invalid combos)
+- `assumptions_applied` (deterministic defaults that were auto-applied)
+- `acceptance_checks` (assertion-style checks for engine readiness)
+
+### Agent Command Patterns
+
+```bash
+# Inline natural language
+vcr prompt --text "Cinematic intro, 5 seconds, 60fps, transparent alpha, output ./renders/intro.mov"
+
+# From file
+vcr prompt --in ./request.yaml
+
+# Write normalized prompt bundle to file
+vcr prompt --in ./request.yaml -o ./request.normalized.yaml
+```
+
+### Agent Workflow Contract
+
+1. Run `vcr prompt` on the user's request first.
+2. Inspect `unknowns_and_fixes`:
+   - If non-empty, treat as blocking clarification/normalization work.
+   - Do not silently invent missing values.
+3. Use `normalized_spec` and `standardized_vcr_prompt` as the source of truth for manifest authoring.
+4. Validate generated manifests with `vcr check`/`vcr lint` before `vcr build`.
+
+### Deterministic Defaults Applied by Prompt Gate
+
+- Missing render fps defaults to 60.
+- Missing output fps defaults to render fps.
+- Missing resolution defaults to 1920x1080.
+- Missing seed defaults to `0`.
+- Missing codec defaults to:
+  - ProRes 4444 when alpha is enabled.
+  - ProRes 422 HQ when alpha is disabled.
+- Missing output path defaults to:
+  - `./renders/out.mov` for video.
+  - `./renders/out.png` for stills.
 
 ---
 

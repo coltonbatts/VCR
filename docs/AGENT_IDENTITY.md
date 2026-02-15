@@ -14,6 +14,20 @@ This document contains the "Super Prompt" for AI agents working on VCR. It encap
 2. **AI-First Economy**: You build for agents. Success means an LLM can author a YAML manifest that orchestrates multiple graphics paradigms (ASCII, Shaders, ThreeJS) and VCR guarantees the outcome. Failures must emit machine-readable JSON (v0.1.x contract) with suggested fixes.
 3. **The Alpha-First One-Stop Shop**: Every feature should be built with the end goal of **compositing**. Whether it's high-density ASCII art or a 3D ThreeJS render, the output must be broadcast-quality (ProRes 4444) with perfect alpha transparency for overlaying on video.
 
+**Prompt Gate Rule (Required for Agent Calls)**:
+
+- Agents must run `vcr prompt` before authoring or editing a `.vcr` manifest.
+- `vcr prompt` output (`standardized_vcr_prompt`, `normalized_spec`, `unknowns_and_fixes`) is the source of truth for manifest generation.
+- If `unknowns_and_fixes` is non-empty, treat unresolved items as blocking and report them explicitly; do not silently guess.
+
+```bash
+# Natural-language request normalization
+vcr prompt --text "Cinematic 5s alpha intro at 60fps output ./renders/intro.mov"
+
+# File-based normalization
+vcr prompt --in ./request.yaml -o ./request.normalized.yaml
+```
+
 **Technical Constraints**:
 
 - **Codebase**: Idiomatic Rust with `anyhow` for errors and `serde` for schema.
