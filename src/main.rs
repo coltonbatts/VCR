@@ -168,6 +168,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    #[command(about = "Render a manifest to ProRes .mov video")]
     Build {
         manifest: PathBuf,
         #[arg(short = 'o', long = "output")]
@@ -186,6 +187,7 @@ enum Commands {
         )]
         set: Vec<String>,
     },
+    #[command(about = "Validate a manifest without rendering")]
     Check {
         manifest: PathBuf,
         #[arg(
@@ -196,6 +198,7 @@ enum Commands {
         )]
         set: Vec<String>,
     },
+    #[command(about = "Check for unreachable layers and warnings")]
     Lint {
         manifest: PathBuf,
         #[arg(
@@ -206,6 +209,7 @@ enum Commands {
         )]
         set: Vec<String>,
     },
+    #[command(about = "Print resolved layer state at a given frame")]
     Dump {
         manifest: PathBuf,
         #[arg(long = "frame")]
@@ -220,6 +224,7 @@ enum Commands {
         )]
         set: Vec<String>,
     },
+    #[command(about = "List declared params and their defaults")]
     Params {
         manifest: PathBuf,
         #[arg(
@@ -228,6 +233,7 @@ enum Commands {
         )]
         json: bool,
     },
+    #[command(about = "Show how expressions and layers resolve")]
     Explain {
         manifest: PathBuf,
         #[arg(
@@ -243,6 +249,7 @@ enum Commands {
         )]
         json: bool,
     },
+    #[command(about = "Render a quick scaled-down preview")]
     Preview {
         manifest: PathBuf,
         #[arg(short = 'o', long = "output")]
@@ -263,6 +270,7 @@ enum Commands {
         )]
         set: Vec<String>,
     },
+    #[command(about = "Open a live playback window")]
     Play {
         manifest: PathBuf,
         #[arg(long = "start-frame", default_value_t = 0)]
@@ -270,6 +278,7 @@ enum Commands {
         #[arg(long = "paused")]
         paused: bool,
     },
+    #[command(about = "Render a single frame to PNG")]
     RenderFrame {
         manifest: PathBuf,
         #[arg(long = "frame")]
@@ -284,6 +293,7 @@ enum Commands {
         )]
         set: Vec<String>,
     },
+    #[command(about = "Render a range of frames to PNG sequence")]
     RenderFrames {
         manifest: PathBuf,
         #[arg(long = "start-frame", default_value_t = 0)]
@@ -300,6 +310,7 @@ enum Commands {
         )]
         set: Vec<String>,
     },
+    #[command(about = "Re-render on file change (live reload)")]
     Watch {
         manifest: PathBuf,
         #[arg(short = 'o', long = "output")]
@@ -348,14 +359,17 @@ enum Commands {
         )]
         output: Option<PathBuf>,
     },
+    #[command(about = "Chat transcript rendering commands")]
     Chat {
         #[command(subcommand)]
         command: ChatCommands,
     },
+    #[command(about = "ASCII art capture and rendering commands")]
     Ascii {
         #[command(subcommand)]
         command: AsciiCommands,
     },
+    #[command(about = "Pack/bundle manifest and assets")]
     Pack {
         #[command(subcommand)]
         command: PackCommands,
@@ -365,7 +379,9 @@ enum Commands {
         #[command(subcommand)]
         command: PackCommands,
     },
+    #[command(about = "Check system dependencies (FFmpeg, GPU)")]
     Doctor,
+    #[command(about = "Generate frame-hash determinism report")]
     DeterminismReport {
         manifest: PathBuf,
         #[arg(long = "frame", default_value_t = 0)]

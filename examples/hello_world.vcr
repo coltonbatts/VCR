@@ -1,0 +1,56 @@
+# =============================================================================
+# Hello World — Your first VCR scene
+# =============================================================================
+#
+# Render a single frame:
+#   vcr render-frame examples/hello_world.vcr --frame 0
+#
+# Render a .mov video:
+#   vcr build examples/hello_world.vcr -o renders/hello.mov
+#
+# Validate without rendering:
+#   vcr check examples/hello_world.vcr
+# =============================================================================
+
+version: 1
+
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 24
+  duration: 2.0
+
+layers:
+  # Dark background
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 0.06, g: 0.06, b: 0.08, a: 1.0 }
+
+  # Centered card
+  - id: card
+    z_index: 1
+    procedural:
+      kind: rounded_rect
+      center: { x: 640, y: 360 }
+      size: { x: 400, y: 240 }
+      corner_radius: 16
+      color: { r: 0.12, g: 0.12, b: 0.16, a: 1.0 }
+
+  # Accent circle
+  - id: circle
+    z_index: 2
+    procedural:
+      kind: circle
+      center: { x: 640, y: 340 }
+      radius: 50
+      color: { r: 0.0, g: 0.85, b: 0.9, a: 1.0 }
+
+  # Accent line under circle
+  - id: line
+    z_index: 3
+    procedural:
+      kind: line
+      start: { x: 540, y: 420 }
+      end: { x: 740, y: 420 }
+      thickness: 2
+      color: { r: 0.0, g: 0.85, b: 0.9, a: 0.6 }
