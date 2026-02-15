@@ -53,11 +53,11 @@ fn shade(uv: vec2<f32>, time: f32, resolution: vec2<f32>) -> vec4<f32> {
     let aspect = resolution.x / resolution.y;
     let p = (uv - 0.5) * vec2<f32>(aspect, 1.0);
     
-    // Camera — entire statue fits in upper half
+    // Camera — statue in upper 65% of frame
     let ro = vec3<f32>(0.0, 0.0, -5.0);
-    let rd = normalize(vec3<f32>(p + vec2<f32>(0.0, 0.15), 1.5));
-    // Hard cutoff: nothing renders below 55% of frame
-    if (uv.y > 0.55) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+    let rd = normalize(vec3<f32>(p + vec2<f32>(0.0, 0.20), 1.5));
+    // Hard cutoff: nothing renders below 65% of frame
+    if (uv.y > 0.65) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
     
     // Raymarching
     var t = 0.0;
