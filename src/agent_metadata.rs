@@ -56,6 +56,15 @@ impl AgentContextMetadata {
                     .map(classify_layer_type)
                     .unwrap_or_else(|| "unknown".to_string());
 
+                // Build expression values from the evaluated layer state
+                let mut expr_vals = BTreeMap::new();
+                expr_vals.insert("x".to_string(), layer_state.position.x);
+                expr_vals.insert("y".to_string(), layer_state.position.y);
+                expr_vals.insert("scale_x".to_string(), layer_state.scale.x);
+                expr_vals.insert("scale_y".to_string(), layer_state.scale.y);
+                expr_vals.insert("rotation_degrees".to_string(), layer_state.rotation_degrees);
+                expr_vals.insert("opacity".to_string(), layer_state.opacity);
+
                 LayerSummary {
                     id: layer_state.id.clone(),
                     layer_type,
@@ -64,7 +73,7 @@ impl AgentContextMetadata {
                     final_scale: (layer_state.scale.x, layer_state.scale.y),
                     final_rotation_degrees: layer_state.rotation_degrees,
                     was_visible: layer_state.visible && layer_state.opacity > 0.0,
-                    expression_values: None, // TODO: Track expression values during evaluation
+                    expression_values: Some(expr_vals),
                 }
             })
             .collect();
