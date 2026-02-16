@@ -1,0 +1,23 @@
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 24
+  duration:
+    frames: 120
+
+layers:
+  - id: background
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.05, g: 0.05, b: 0.05, a: 1.0 }
+
+  - id: animated_gradient
+    z_index: 1
+    pos_x: "t * 20"
+    procedural:
+      kind: gradient
+      start_color: { r: 0.2, g: 0.6, b: 1.0, a: 0.9 }
+      end_color: { r: 1.0, g: 0.3, b: 0.2, a: 0.9 }
+      direction: horizontal

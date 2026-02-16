@@ -1,0 +1,45 @@
+version: 1
+
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  duration: { frames: 150 }
+
+layers:
+  - id: background_gradient
+    z_index: -10
+    procedural:
+      kind: gradient
+      start_color: { r: 0.0, g: 0.05, b: 0.1, a: 1.0 }
+      end_color: { r: 0.02, g: 0.08, b: 0.15, a: 1.0 }
+      direction: vertical
+
+  - id: pyramid_shader
+    z_index: 0
+    wgpu_shader:
+      shader_path: "shaders/wgsl/cool_pyramid.wgsl"
+      width: 1280
+      height: 720
+      time_mode: seconds
+
+  - id: overlay_text_top
+    z_index: 20
+    position: { x: 640, y: 100 }
+    anchor: center
+    text:
+      content: "VCR // AGENTIC OVERRIDE"
+      font_family: "GeistPixel-Line"
+      font_size: 48
+      color: { r: 0.0, g: 1.0, b: 0.8, a: 0.8 }
+
+  - id: overlay_text_bottom
+    z_index: 20
+    position: { x: 640, y: 620 }
+    anchor: center
+    text:
+      content: "SYSTEM STATUS: COOL"
+      font_family: "GeistPixel-Square"
+      font_size: 32
+      color: { r: 0.8, g: 0.9, b: 1.0, a: 0.5 }

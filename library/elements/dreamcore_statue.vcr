@@ -1,0 +1,28 @@
+version: 1
+
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  duration: { frames: 300 }
+
+layers:
+  - id: statue_layer
+    z_index: 0
+    opacity: 1.0
+    wgpu_shader:
+      shader_path: "shaders/dreamcore_statue.wgsl"
+      width: 1280
+      height: 720
+      time_mode: seconds
+
+  - id: aesthetic_text
+    z_index: 10
+    position: { x: 640, y: 640 }
+    anchor: center
+    text:
+      content: "AESTHETIC // VCR"
+      font_family: "GeistPixel-Square"
+      font_size: 32
+      color: { r: 0.8, g: 0.9, b: 1.0, a: 0.6 }

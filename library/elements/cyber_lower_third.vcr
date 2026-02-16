@@ -1,0 +1,110 @@
+# Cyber-Analog Lower-Third Manifest
+# 10s, 1920x1080 @ 30fps
+# Sleek Cyber-Analog aesthetic
+
+version: 1
+
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 10.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+params:
+  panel_center:
+    type: vec2
+    default: { x: 450, y: 920 }
+  panel_size:
+    type: vec2
+    default: { x: 740, y: 120 }
+  flicker_intensity:
+    type: float
+    default: 1.0
+
+
+modulators:
+  drift:
+    expression: "sin(t * 0.05) * 5.0"
+  slide_in:
+    expression: "smoothstep(0, 15, t)"
+  brightness_flicker:
+    expression: "0.95 + glitch(t * 12.0) * 0.05"
+
+groups:
+  - id: "lower_third_root"
+    # Slide in from the left (-800 to 0 relative)
+    pos_x: "-800 + smoothstep(0, 15, t) * 800"
+    # Vertical drift
+    modulators:
+      - source: drift
+        weights: { y: 1.0 }
+
+layers:
+  # 1. Cyber Panel (Background)
+  - id: "panel_bg"
+    group: "lower_third_root"
+    z_index: 0
+    procedural:
+      kind: rounded_rect
+      center: "${panel_center}"
+      size: "${panel_size}"
+      corner_radius: 12
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.15 } # White-on-alpha frosted look
+
+  # 2. Chromatic Aberration Stack (Text)
+  # Cyan Layer (+4px offset)
+  - id: "vcr_cyan"
+    group: "lower_third_root"
+    z_index: 1
+    position: { x: 454, y: 920 } # 450 + 4
+    anchor: center
+    opacity: 0.8
+    text:
+      content: "VCR ENGINE"
+      font_family: "GeistPixel-Line"
+      font_size: 48
+      color: { r: 0.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  # Red Layer (-4px offset)
+  - id: "vcr_red"
+    group: "lower_third_root"
+    z_index: 1
+    position: { x: 446, y: 920 } # 450 - 4
+    anchor: center
+    opacity: 0.8
+    text:
+      content: "VCR ENGINE"
+      font_family: "GeistPixel-Line"
+      font_size: 48
+      color: { r: 1.0, g: 0.0, b: 0.2, a: 1.0 }
+
+  # Main White Text
+  - id: "vcr_main"
+    group: "lower_third_root"
+    z_index: 2
+    position: "${panel_center}"
+    anchor: center
+    text:
+      content: "VCR ENGINE"
+      font_family: "GeistPixel-Line"
+      font_size: 48
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    opacity: "0.9 + glitch(t * 12.0) * 0.1"
+
+
+  # 3. Subtle CRT Glow (Shader Layer)
+  # Masked strictly to the panel area
+  - id: "panel_glow"
+    group: "lower_third_root"
+    z_index: 3
+    shader:
+      path: "shaders/cyber_crt_glow.wgsl"
+
+      uniforms:
+        flicker: "0.95 + glitch(t * 12.0) * 0.05"
+        aspect: 1.777 # 1920/1080
+        radius: 0.01
+
+

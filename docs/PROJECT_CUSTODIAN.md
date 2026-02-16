@@ -30,15 +30,23 @@ VCR/
 │   ├── bin/               # Additional binaries (ascii-link-overlay, figma-vcr-workflow, etc.)
 │   └── packs/             # Frame pack system
 ├── examples/              # 28 .vcr manifest examples
-├── docs/                  # 18 documentation files
-├── .skills/               # 5 custom agent skills
+├── docs/                  # technical and custodian documentation
+│   ├── PROJECT_CUSTODIAN.md # This file
+│   └── ...                # 18+ other documentation files
+├── .skills/               # 6 custom agent skills
+├── .github/               # GitHub workflows and community docs
+│   ├── CODE_OF_CONDUCT.md
+│   ├── CONTRIBUTING.md
+│   └── SECURITY.md
 ├── scripts/               # Automation & CLI helpers
 ├── tests/                 # 12 integration tests
 ├── benches/               # Performance benchmarks
 ├── assets/                # Fonts, glyph atlases, animations
 ├── renders/               # Output videos & preview frames
 ├── Cargo.toml             # Dependencies & features
-└── SKILL.md               # AI agent reference (primary doc)
+├── Cargo.lock             # Lockfile
+├── AGENTS.md              # Agent protocol
+└── SKILL.md               # Primary AI reference
 ```
 
 ---
@@ -197,23 +205,9 @@ VCR/
 
 | File | Purpose | Status |
 |------|---------|--------|
-| `SKILL.md` | **Primary AI reference** - manifest format, CLI, expressions | ✅ Complete |
-| `PRD.md` | Vision, roadmap, design principles | ✅ Current |
-| `ARCHITECTURE.md` | System overview & design decisions | ✅ Current |
-| `DETERMINISM_SPEC.md` | Reproducibility contract | ✅ Detailed |
-| `PARAMS.md` | Typed params & `--set` semantics | ✅ Complete |
-| `PLAYGROUND.md` | Preset testing framework | ✅ Current |
-| `ASCII_STAGE.md` | `.vcrtxt` transcript rendering | ⚠️ Partial |
-| `ASCII_CAPTURE.md` | Animated ASCII pipeline | ⚠️ In dev |
-| `ASCII_SOURCES.md` | Built-in ASCII library catalog | 🟡 Growing |
-| `ANIMATION_ENGINE.md` | Frame pack & physics integration | 🟡 Evolving |
-| `EXIT_CODES.md` | CLI exit code contract | ✅ Reference |
-| `AGENT_IDENTITY.md` | Agent protocol & self-identification | 🟡 Draft |
-| `CHAT_RENDER.md` | Tagged transcript format | 🟡 Experimental |
-| `REPRODUCIBLE_BUILD.md` | Build instructions | ✅ Current |
-| `BENCHMARK_REPORT.md` | Performance guide | 🟡 Planned |
-| `ASCII_RENDERER_SPEC.md` | Terminal character rendering | 🟡 Draft |
-| `DELETIONS.md` | Removed features & deprecations | ℹ️ Reference |
+| `SKILL.md` | **Primary AI reference** - manifest format, CLI, expressions | ✅ Root (Standardized) |
+| `AGENTS.md` | Agent protocol & self-identification | ✅ Root (Standardized) |
+| `PROJECT_CUSTODIAN.md` | Custodian overview & project map | ✅ Relocated to `docs/` |
 
 ---
 

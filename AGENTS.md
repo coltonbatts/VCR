@@ -56,5 +56,5 @@ For high-quality results from natural language, use the **A.S.A.P** pattern:
 
 ## References
 
-- Agent skill reference: `SKILL.md`
-- Architect prompt + constraints: `docs/AGENT_IDENTITY.md`
+- Agent skill reference: [SKILL.md](SKILL.md)
+- Architect prompt + constraints: [AGENT_IDENTITY.md](docs/AGENT_IDENTITY.md)

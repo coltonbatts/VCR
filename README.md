@@ -13,7 +13,7 @@ Motion graphics from your terminal. Write YAML, render video. No Adobe, no GUI, 
 - **Terminal-Driven**: No GUI, no clicking. Just YAML and shaders.
 - **Deterministic**: Every render is identical, every time.
 - **Alpha-First**: Native ProRes 4444 support for professional compositing.
-- **[Element Library →](docs/library/neural_cores.md)**: Pro-grade shaders and technical guides.
+- **Element Library**: A curated collection of drag-and-drop ProRes movies and their source manifests.
 
 For people who think code is faster than the Adobe ecosystem.
 
@@ -40,7 +40,7 @@ VCR is designed to be **Agent-First**. It provides:
 ## What You Get
 
 - **YAML scene manifests** (`.vcr` files) that describe animations as data
-- **Library-first assets** via pinned IDs (`library:<id>`) for reproducible renders
+- **VCR Element Library** (`library/elements/`): Reusable, production-ready video clips with source manifests.
 - **Layered compositing** with z-order control
 - **Procedural sources**: solid colors, linear gradients, or bring your own assets
 - **Per-layer animation**: position, scale, rotation, opacity (keyframed or expression-driven)
@@ -92,7 +92,7 @@ VCR is built with a modular architecture to keep the core renderer lightweight.
 
 ### Your First Render
 
-Create a file called `hello.vcr`:
+Create a file called `manifests/hello.vcr`:
 
 ```yaml
 environment:
@@ -123,7 +123,7 @@ layers:
 Render it:
 
 ```bash
-vcr render hello.vcr -o hello.mov
+vcr render manifests/hello.vcr -o hello.mov
 ```
 
 ### Copy-Paste High-End Demo
@@ -215,6 +215,22 @@ Time-based variables in animation fields:
 
 Example: `pos_x: "t * 20"` moves the layer 20 units per frame.
 
+## Documentation
+
+Comprehensive guides and technical references are available in the `docs/` directory:
+
+- **[VCR Skill Reference](SKILL.md)**: The primary guide for authors and AI agents.
+- **[Agent Protocol](AGENTS.md)**: How automated tools interact with the engine.
+- **[Project Custodian](docs/PROJECT_CUSTODIAN.md)**: Architectural overview and project map.
+- **[PRD](docs/PRD.md)**: Product vision and roadmap.
+- **[Changelog](CHANGELOG.md)**: Latest features and fixes.
+
+Community guidelines can be found in the `.github/` directory:
+
+- **[Contributing](.github/CONTRIBUTING.md)**
+- **[Code of Conduct](.github/CODE_OF_CONDUCT.md)**
+- **[Security Policy](.github/SECURITY.md)**
+
 ## CLI
 
 ```bash
@@ -234,7 +250,7 @@ Validates the file and prints a summary.
 **Render to video:**
 
 ```bash
-cargo run -- render myanimation.vcr -o output.mov
+cargo run -- render manifests/hello.vcr -o output.mov
 ```
 
 Outputs a ProRes 4444 file.
@@ -305,6 +321,24 @@ See:
 
 - `docs/ASSETS.md` for quickstart
 - `docs/PACKS.md` for pack format and sharing
+
+## VCR Element Library
+
+The VCR Element Library (`library/elements/`) is the designated home for production-ready motion graphics elements. Each element includes its high-quality ProRes MOV file and the original `.vcr` manifest.
+
+### Exporting to Library
+
+Use the library export script to "promote" a manifest and its render to the library:
+
+```bash
+./scripts/lib_export.sh my_element.vcr renders/my_element.mov
+```
+
+This copies the files directly into `library/elements/`:
+
+- `my_element.mov` (The drag-and-drop video file)
+- `my_element.vcr` (The source manifest for reproducibility)
+- `my_element_preview.png` (Optional preview image)
 
 ## Examples
 

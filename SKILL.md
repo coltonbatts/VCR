@@ -203,7 +203,9 @@ opacity:
 opacity: "smoothstep(0.0, 1.0, t / 30.0)"
 ```
 
-### PropertyValue<Vec2> Types
+### PropertyValue### `Vec2`
+
+ Types
 
 Position and scale accept:
 
@@ -1265,7 +1267,7 @@ Procedural primitives are rendered to a texture the size of the full canvas. Pos
 
 ## File Structure Conventions
 
-```
+```text
 project/
   scene.vcr              # Manifest
   assets/                 # Images, videos
@@ -1353,11 +1355,27 @@ These are real error messages VCR produces, with exact fixes:
 
 ---
 
+### 7. Element Library Export
+
+Use the library export script to promote high-quality renders to the permanent element library.
+
+```bash
+# Basic export (auto-finds .mov in renders/)
+./scripts/lib_export.sh my_manifest.vcr
+
+# Explicit export
+./scripts/lib_export.sh manifests/effect.vcr renders/v2_refined.mov
+```
+
+This copies the files directly into `library/elements/`, ensuring a streamlined collection of reproducible clips.
+
+---
+
 ## Agent Workflow
 
 Recommended workflow for an AI agent generating VCR content:
 
-```
+```bash
 1. Write manifest YAML to a .vcr file
 2. Run `vcr check <file>` to validate (exit code 0 = valid)
 3. Run `vcr render-frame <file> --frame 0 -o frame.png` to test visually
