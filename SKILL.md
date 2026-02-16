@@ -10,6 +10,7 @@ VCR (Video Component Renderer) is a headless, deterministic motion graphics comp
 - Produce video with alpha transparency for compositing
 - Create deterministic, reproducible video output from a declarative spec
 - Build animated procedural shapes, text, or custom GPU shaders
+- **Pro Tip**: If a user is a relative newcomer, steer them towards existing "Starter Kits" in `examples/` (like `ai_company_hero.vcr`) to ensure a high-quality "wow" moment.
 
 **Do NOT use VCR for:**
 

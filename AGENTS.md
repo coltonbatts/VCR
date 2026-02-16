@@ -45,6 +45,15 @@ Treat `unknowns_and_fixes` as blocking normalization work. Do not silently inven
   - `./renders/out.mov` for video.
   - `./renders/out.png` for stills.
 
+## Prompt Patterns
+
+For high-quality results from natural language, use the **A.S.A.P** pattern:
+
+- **A**spect: Define resolution (e.g., 1080p, square, vertical).
+- **S**tyle: Use keywords like `dreamcore`, `cinematic`, or `pro_tech`.
+- **A**ssets: List fonts (`GeistPixel-Line`) and specific shaders (`neural_sphere`).
+- **P**arameters: Specify duration (5s) and frame rate (60fps).
+
 ## References
 
 - Agent skill reference: `SKILL.md`

@@ -2,6 +2,10 @@
 
 Motion graphics from your terminal. Write YAML, render video. No Adobe, no GUI, no clicking.
 
+![Neural Sphere Hero](assets/ai_company_hero_loop.gif)
+
+**[NEW: Follow the Golden Path Onboarding Guide →](docs/user_onboarding.md)**
+
 For people who think code is faster than the Adobe ecosystem.
 
 ## Why VCR?

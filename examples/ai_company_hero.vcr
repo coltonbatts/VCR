@@ -1,0 +1,68 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 10.0
+  color_space: rec709
+
+layers:
+  - id: background_gradient
+    z_index: 0
+    procedural:
+      kind: gradient
+      start_color: { r: 0.02, g: 0.02, b: 0.05, a: 1.0 }
+      end_color: { r: 0.05, g: 0.05, b: 0.1, a: 1.0 }
+      direction: vertical
+
+  - id: neural_sphere
+    z_index: 10
+    position: { x: 960, y: 500 }
+    anchor: center
+    scale: { x: 0.8, y: 0.8 }
+    shader:
+      path: "shaders/neural_sphere.wgsl"
+      uniforms:
+        speed: 1.0
+
+  - id: title_text
+    z_index: 20
+    position: { x: 960, y: 850 }
+    anchor: center
+    text:
+      content: "NEURAL CORE"
+      font_family: "GeistPixel-Line"
+      font_size: 84
+      letter_spacing: 12
+      color: { r: 0.9, g: 0.95, b: 1.0, a: 1.0 }
+    opacity:
+      start_frame: 30
+      end_frame: 90
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+
+  - id: sub_text
+    z_index: 21
+    position: { x: 960, y: 920 }
+    anchor: center
+    text:
+      content: "COGNITIVE ARCHITECTURE // NODE_01"
+      font_family: "GeistPixel-Square"
+      font_size: 24
+      letter_spacing: 4
+      color: { r: 0.4, g: 0.6, b: 0.8, a: 0.7 }
+    opacity:
+      start_frame: 60
+      end_frame: 120
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+
+  - id: scan_line_overlay
+    z_index: 100
+    opacity: 0.05
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    pos_y: "sin(t * 0.05) * 1080"
+    scale: { x: 1.0, y: 0.01 }
