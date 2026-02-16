@@ -108,6 +108,10 @@ pub enum ProResProfile {
 }
 
 impl ProResProfile {
+    pub fn supports_alpha(self) -> bool {
+        matches!(self, Self::Prores4444 | Self::Prores4444Xq)
+    }
+
     pub fn to_ffmpeg_profile(self) -> &'static str {
         match self {
             Self::Proxy => "proxy",
@@ -120,26 +124,164 @@ impl ProResProfile {
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProResEncoder {
+    #[default]
+    ProresKs,
+    ProresVideotoolbox,
+}
+
+impl ProResEncoder {
+    pub fn to_ffmpeg_codec(self) -> &'static str {
+        match self {
+            Self::ProresKs => "prores_ks",
+            Self::ProresVideotoolbox => "prores_videotoolbox",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProResQuantMat {
+    Auto,
+    Default,
+    Proxy,
+    Lt,
+    Standard,
+    Hq,
+}
+
+impl ProResQuantMat {
+    pub fn to_ffmpeg_value(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Default => "default",
+            Self::Proxy => "proxy",
+            Self::Lt => "lt",
+            Self::Standard => "standard",
+            Self::Hq => "hq",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorRange {
+    #[default]
+    Tv,
+    Pc,
+}
+
+impl ColorRange {
+    pub fn to_ffmpeg_value(self) -> &'static str {
+        match self {
+            Self::Tv => "tv",
+            Self::Pc => "pc",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct EncodingConfig {
     #[serde(default)]
+    pub encoder: ProResEncoder,
+    #[serde(default)]
     pub prores_profile: ProResProfile,
     #[serde(default = "default_vendor")]
     pub vendor: String,
+    #[serde(default)]
+    pub bits_per_mb: Option<u16>,
+    #[serde(default = "default_mbs_per_slice")]
+    pub mbs_per_slice: u8,
+    #[serde(default)]
+    pub quant_mat: Option<ProResQuantMat>,
+    #[serde(default)]
+    pub alpha_bits: Option<u8>,
+    #[serde(default)]
+    pub color_range: ColorRange,
 }
 
 impl Default for EncodingConfig {
     fn default() -> Self {
         Self {
+            encoder: ProResEncoder::ProresKs,
             prores_profile: ProResProfile::Hq,
             vendor: "apl0".to_owned(),
+            bits_per_mb: None,
+            mbs_per_slice: 8,
+            quant_mat: None,
+            alpha_bits: None,
+            color_range: ColorRange::Tv,
         }
     }
 }
 
+fn default_mbs_per_slice() -> u8 {
+    8
+}
+
 fn default_vendor() -> String {
     "apl0".to_owned()
+}
+
+impl EncodingConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.vendor.len() != 4 || !self.vendor.is_ascii() {
+            bail!(
+                "encoding.vendor must be exactly 4 ASCII characters, got '{}'",
+                self.vendor
+            );
+        }
+
+        if let Some(bits_per_mb) = self.bits_per_mb {
+            if !(200..=8000).contains(&bits_per_mb) {
+                bail!(
+                    "encoding.bits_per_mb must be within 200..=8000, got {}",
+                    bits_per_mb
+                );
+            }
+        }
+
+        if !(1..=8).contains(&self.mbs_per_slice) {
+            bail!(
+                "encoding.mbs_per_slice must be within 1..=8, got {}",
+                self.mbs_per_slice
+            );
+        }
+
+        if let Some(alpha_bits) = self.alpha_bits {
+            if alpha_bits != 0 && alpha_bits != 8 && alpha_bits != 16 {
+                bail!(
+                    "encoding.alpha_bits must be one of 0, 8, or 16 when set, got {}",
+                    alpha_bits
+                );
+            }
+            if alpha_bits > 0 && !self.prores_profile.supports_alpha() {
+                bail!(
+                    "encoding.alpha_bits={} requires a 4444 profile (prores4444/prores4444xq), got {:?}",
+                    alpha_bits,
+                    self.prores_profile
+                );
+            }
+        }
+
+        if self.encoder == ProResEncoder::ProresVideotoolbox {
+            if self.bits_per_mb.is_some()
+                || self.quant_mat.is_some()
+                || self.alpha_bits.is_some()
+                || self.mbs_per_slice != default_mbs_per_slice()
+                || self.vendor != default_vendor()
+            {
+                bail!(
+                    "encoding.bits_per_mb, encoding.quant_mat, encoding.alpha_bits, encoding.mbs_per_slice, and encoding.vendor are only supported with encoding.encoder=prores_ks"
+                );
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Environment {
@@ -195,6 +337,8 @@ impl Environment {
             );
         }
 
+        self.encoding.validate()?;
+
         Ok(())
     }
 
@@ -209,7 +353,7 @@ impl Environment {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ColorSpace {
     #[serde(alias = "rec709", alias = "rec_709")]
@@ -222,6 +366,17 @@ pub enum ColorSpace {
 impl Default for ColorSpace {
     fn default() -> Self {
         Self::Rec709
+    }
+}
+
+impl ColorSpace {
+    pub fn ffmpeg_tags(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::Rec709 => ("bt709", "bt709", "bt709"),
+            Self::Rec2020 => ("bt2020", "bt2020-10", "bt2020nc"),
+            // Display P3 is typically D65 primaries with a Rec.709 transfer and matrix in SDR workflows.
+            Self::DisplayP3 => ("smpte432", "iec61966-2-1", "bt709"),
+        }
     }
 }
 

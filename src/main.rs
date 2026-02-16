@@ -2,14 +2,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use image::RgbaImage;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use vcr::agent_errors::{
     suggest_fix_for_lint_error, suggest_fix_for_validation_error, AgentErrorReport, AgentErrorType,
@@ -1650,6 +1650,7 @@ fn classify_exit_code(error: &anyhow::Error) -> VcrExitCode {
 
 fn is_missing_dependency_error(error: &anyhow::Error) -> bool {
     has_error_message_fragment(error, "ffmpeg was not found on path")
+        || has_error_message_fragment(error, "ffprobe was not found on path")
         || has_error_message_fragment(error, "curl was not found on path")
         || has_error_message_fragment(error, "chafa was not found on path")
         || has_error_message_fragment(error, "missing dependency")
@@ -3120,6 +3121,7 @@ fn run_build(
     }
 
     ffmpeg.finish()?;
+    verify_encoded_output_conformance(output_path, &manifest.environment, quiet)?;
     println!("Wrote {}", output_path.display());
     let metadata_path = metadata_sidecar_for_file(output_path);
     emit_render_metadata(
@@ -4042,6 +4044,241 @@ fn metadata_sidecar_for_directory(output_dir: &Path, label: &str) -> PathBuf {
     output_dir.join(format!("{label}.metadata.json"))
 }
 
+#[derive(Debug, Deserialize)]
+struct FfprobeConformanceOutput {
+    #[serde(default)]
+    streams: Vec<FfprobeConformanceStream>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct FfprobeConformanceStream {
+    #[serde(default)]
+    codec_type: Option<String>,
+    #[serde(default)]
+    codec_name: Option<String>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    pix_fmt: Option<String>,
+    #[serde(default)]
+    color_range: Option<String>,
+    #[serde(default)]
+    color_space: Option<String>,
+    #[serde(default)]
+    color_transfer: Option<String>,
+    #[serde(default)]
+    color_primaries: Option<String>,
+}
+
+fn verify_encoded_output_conformance(
+    output_path: &Path,
+    environment: &Environment,
+    quiet: bool,
+) -> Result<()> {
+    let stream = probe_output_video_stream(output_path)?;
+    let mut issues = Vec::new();
+
+    if stream.codec_name.as_deref() != Some("prores") {
+        issues.push(format!(
+            "codec mismatch: expected 'prores', got '{}'",
+            stream.codec_name.as_deref().unwrap_or("<missing>")
+        ));
+    }
+
+    let actual_profile = stream.profile.as_deref().unwrap_or("<missing>");
+    if !prores_profile_matches(environment.encoding.prores_profile, actual_profile) {
+        issues.push(format!(
+            "profile mismatch: expected '{}', got '{}'",
+            environment.encoding.prores_profile.to_ffmpeg_profile(),
+            actual_profile
+        ));
+    }
+
+    let actual_pix_fmt = stream.pix_fmt.as_deref().unwrap_or("<missing>");
+    if !pix_fmt_matches_profile(environment.encoding.prores_profile, actual_pix_fmt) {
+        issues.push(format!(
+            "pix_fmt mismatch: expected a format compatible with profile '{}', got '{}'",
+            environment.encoding.prores_profile.to_ffmpeg_profile(),
+            actual_pix_fmt
+        ));
+    }
+
+    let expected_alpha = environment.encoding.prores_profile.supports_alpha();
+    let actual_alpha = stream
+        .pix_fmt
+        .as_deref()
+        .map(pix_fmt_has_alpha)
+        .unwrap_or(false);
+    if actual_alpha != expected_alpha {
+        issues.push(format!(
+            "alpha mismatch: expected alpha={} from profile '{}', got pix_fmt '{}'",
+            expected_alpha,
+            environment.encoding.prores_profile.to_ffmpeg_profile(),
+            actual_pix_fmt
+        ));
+    }
+
+    let (expected_primaries, expected_transfer, expected_colorspace) =
+        environment.color_space.ffmpeg_tags();
+    let mut known_color_tag_count = 0_u8;
+    if let Some(color_space) = known_ffprobe_tag(stream.color_space.as_deref()) {
+        known_color_tag_count = known_color_tag_count.saturating_add(1);
+        if color_space != expected_colorspace {
+            issues.push(format!(
+                "color_space mismatch: expected '{}', got '{}'",
+                expected_colorspace, color_space
+            ));
+        }
+    }
+    if let Some(color_primaries) = known_ffprobe_tag(stream.color_primaries.as_deref()) {
+        known_color_tag_count = known_color_tag_count.saturating_add(1);
+        if color_primaries != expected_primaries {
+            issues.push(format!(
+                "color_primaries mismatch: expected '{}', got '{}'",
+                expected_primaries, color_primaries
+            ));
+        }
+    }
+    if let Some(color_transfer) = known_ffprobe_tag(stream.color_transfer.as_deref()) {
+        known_color_tag_count = known_color_tag_count.saturating_add(1);
+        if color_transfer != expected_transfer {
+            issues.push(format!(
+                "color_transfer mismatch: expected '{}', got '{}'",
+                expected_transfer, color_transfer
+            ));
+        }
+    }
+    if let Some(color_range) = known_ffprobe_tag(stream.color_range.as_deref()) {
+        known_color_tag_count = known_color_tag_count.saturating_add(1);
+        let expected_range = environment.encoding.color_range.to_ffmpeg_value();
+        if color_range != expected_range {
+            issues.push(format!(
+                "color_range mismatch: expected '{}', got '{}'",
+                expected_range, color_range
+            ));
+        }
+    }
+    if known_color_tag_count == 0 {
+        issues
+            .push("no usable color tags were reported by ffprobe (all missing/unknown)".to_owned());
+    }
+
+    if !issues.is_empty() {
+        bail!(
+            "output conformance check failed for {}:\n- {}",
+            output_path.display(),
+            issues.join("\n- ")
+        );
+    }
+
+    progress_log(
+        quiet,
+        format_args!(
+            "[VCR] Output conformance OK: codec=prores profile={} pix_fmt={} color={}/{}/{} range={}",
+            stream.profile.as_deref().unwrap_or("<missing>"),
+            stream.pix_fmt.as_deref().unwrap_or("<missing>"),
+            stream.color_primaries.as_deref().unwrap_or("<missing>"),
+            stream.color_transfer.as_deref().unwrap_or("<missing>"),
+            stream.color_space.as_deref().unwrap_or("<missing>"),
+            stream.color_range.as_deref().unwrap_or("<missing>")
+        ),
+    );
+    Ok(())
+}
+
+fn probe_output_video_stream(output_path: &Path) -> Result<FfprobeConformanceStream> {
+    let output = Command::new("ffprobe")
+        .arg("-v")
+        .arg("error")
+        .arg("-show_streams")
+        .arg("-print_format")
+        .arg("json")
+        .arg(output_path)
+        .output()
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                anyhow::anyhow!(
+                    "ffprobe was not found on PATH. Install ffmpeg/ffprobe and verify `ffprobe -version` works before running `vcr build`."
+                )
+            } else {
+                anyhow::anyhow!(
+                    "failed to spawn ffprobe for output conformance check on {}: {error}",
+                    output_path.display()
+                )
+            }
+        })?;
+
+    if !output.status.success() {
+        bail!(
+            "ffprobe failed during output conformance check for {} (exit status: {})",
+            output_path.display(),
+            output.status
+        );
+    }
+
+    let parsed: FfprobeConformanceOutput =
+        serde_json::from_slice(&output.stdout).with_context(|| {
+            format!(
+                "failed to parse ffprobe JSON during output conformance check for {}",
+                output_path.display()
+            )
+        })?;
+
+    parsed
+        .streams
+        .iter()
+        .find(|stream| stream.codec_type.as_deref() == Some("video"))
+        .cloned()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "ffprobe did not report a video stream for output conformance check on {}",
+                output_path.display()
+            )
+        })
+}
+
+fn prores_profile_matches(expected: ProResProfile, actual: &str) -> bool {
+    let token = normalize_ffprobe_token(actual);
+    match expected {
+        ProResProfile::Proxy => token.contains("proxy"),
+        ProResProfile::Lt => token == "lt" || token.contains("422lt"),
+        ProResProfile::Standard => {
+            token == "standard" || token == "422" || token.contains("422standard")
+        }
+        ProResProfile::Hq => token == "hq" || token.contains("422hq"),
+        ProResProfile::Prores4444 => token == "4444",
+        ProResProfile::Prores4444Xq => token == "4444xq" || token == "xq",
+    }
+}
+
+fn pix_fmt_matches_profile(profile: ProResProfile, pix_fmt: &str) -> bool {
+    let normalized = pix_fmt.to_ascii_lowercase();
+    if profile.supports_alpha() {
+        normalized.starts_with("yuva444p")
+    } else {
+        normalized == "yuv422p10le"
+    }
+}
+
+fn pix_fmt_has_alpha(pix_fmt: &str) -> bool {
+    pix_fmt.to_ascii_lowercase().starts_with("yuva")
+}
+
+fn normalize_ffprobe_token(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
+fn known_ffprobe_tag(value: Option<&str>) -> Option<&str> {
+    value.filter(|raw| {
+        let normalized = raw.trim().to_ascii_lowercase();
+        !normalized.is_empty() && normalized != "unknown" && normalized != "unspecified"
+    })
+}
+
 fn save_rgba_png(path: &Path, width: u32, height: u32, rgba: Vec<u8>) -> Result<()> {
     let image = RgbaImage::from_raw(width, height, rgba).ok_or_else(|| {
         anyhow::anyhow!(
@@ -4190,10 +4427,11 @@ fn print_timing_summary(quiet: bool, timing: RenderTimingSummary) {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_exit_code, resolve_ascii_stage_options, should_emit_nonessential_logs,
-        AsciiPresetArg, VcrExitCode,
+        classify_exit_code, pix_fmt_matches_profile, prores_profile_matches,
+        resolve_ascii_stage_options, should_emit_nonessential_logs, AsciiPresetArg, VcrExitCode,
     };
     use anyhow::anyhow;
+    use vcr::schema::ProResProfile;
 
     #[test]
     fn quiet_mode_log_gate_is_predictable() {
@@ -4225,5 +4463,32 @@ mod tests {
         assert_eq!(explicit.size, "1280x720");
         assert!((explicit.speed - 0.9).abs() < f32::EPSILON);
         assert_eq!(explicit.theme, "void");
+    }
+
+    #[test]
+    fn prores_profile_matching_handles_ffprobe_variants() {
+        assert!(prores_profile_matches(ProResProfile::Hq, "HQ"));
+        assert!(prores_profile_matches(ProResProfile::Standard, "Standard"));
+        assert!(prores_profile_matches(ProResProfile::Prores4444, "4444"));
+        assert!(prores_profile_matches(
+            ProResProfile::Prores4444Xq,
+            "4444 XQ"
+        ));
+    }
+
+    #[test]
+    fn pix_fmt_matching_respects_alpha_profile_contract() {
+        assert!(pix_fmt_matches_profile(
+            ProResProfile::Prores4444,
+            "yuva444p12le"
+        ));
+        assert!(pix_fmt_matches_profile(
+            ProResProfile::Standard,
+            "yuv422p10le"
+        ));
+        assert!(!pix_fmt_matches_profile(
+            ProResProfile::Standard,
+            "yuva444p10le"
+        ));
     }
 }

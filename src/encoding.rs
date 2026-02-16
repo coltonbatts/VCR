@@ -6,7 +6,7 @@ use std::thread::{self, JoinHandle};
 
 use anyhow::{anyhow, bail, Context, Result};
 
-use crate::schema::Environment;
+use crate::schema::{ColorSpace, EncodingConfig, Environment, ProResEncoder, ProResProfile};
 
 pub struct FfmpegPipe {
     sender: Option<mpsc::SyncSender<Vec<u8>>>,
@@ -28,7 +28,8 @@ trait VideoEncoderBackend: Send {
 struct SystemFfmpegBackend {
     size: String,
     fps: String,
-    encoding: crate::schema::EncodingConfig,
+    color_space: ColorSpace,
+    encoding: EncodingConfig,
     output_path: std::path::PathBuf,
 }
 
@@ -36,7 +37,8 @@ struct SystemFfmpegBackend {
 struct SidecarFfmpegBackend {
     size: String,
     fps: String,
-    encoding: crate::schema::EncodingConfig,
+    color_space: ColorSpace,
+    encoding: EncodingConfig,
     output_path: std::path::PathBuf,
 }
 
@@ -55,10 +57,11 @@ impl FfmpegPipe {
             environment.resolution.width, environment.resolution.height
         );
         let fps = environment.fps.to_string();
+        let color_space = environment.color_space;
         let encoding = environment.encoding.clone();
         let output_path = output_path.to_path_buf();
         let (sender, receiver) = mpsc::sync_channel::<Vec<u8>>(4);
-        let backend = select_backend(mode, size, fps, encoding, output_path)?;
+        let backend = select_backend(mode, size, fps, color_space, encoding, output_path)?;
         let worker_name = format!("vcr-ffmpeg-encoder-{}", backend.mode_label());
 
         let worker = thread::Builder::new()
@@ -100,13 +103,15 @@ fn select_backend(
     mode: FfmpegMode,
     size: String,
     fps: String,
-    encoding: crate::schema::EncodingConfig,
+    color_space: ColorSpace,
+    encoding: EncodingConfig,
     output_path: std::path::PathBuf,
 ) -> Result<Box<dyn VideoEncoderBackend>> {
     match mode {
         FfmpegMode::Auto | FfmpegMode::System => Ok(Box::new(SystemFfmpegBackend {
             size,
             fps,
+            color_space,
             encoding,
             output_path,
         })),
@@ -116,6 +121,7 @@ fn select_backend(
                 Ok(Box::new(SidecarFfmpegBackend {
                     size,
                     fps,
+                    color_space,
                     encoding,
                     output_path,
                 }))
@@ -141,6 +147,7 @@ impl VideoEncoderBackend for SystemFfmpegBackend {
             receiver,
             &self.size,
             &self.fps,
+            self.color_space,
             &self.encoding,
             &self.output_path,
             self.mode_label(),
@@ -165,6 +172,7 @@ impl VideoEncoderBackend for SidecarFfmpegBackend {
             receiver,
             &self.size,
             &self.fps,
+            self.color_space,
             &self.encoding,
             &self.output_path,
             self.mode_label(),
@@ -177,7 +185,8 @@ fn run_ffmpeg_process(
     receiver: mpsc::Receiver<Vec<u8>>,
     size: &str,
     fps: &str,
-    encoding: &crate::schema::EncodingConfig,
+    color_space: ColorSpace,
+    encoding: &EncodingConfig,
     output_path: &Path,
     mode_label: &str,
 ) -> Result<()> {
@@ -190,7 +199,7 @@ fn run_ffmpeg_process(
         bail!("Output path contains invalid control characters");
     }
 
-    let args = ffmpeg_args(size, fps, encoding, output_path);
+    let args = ffmpeg_args(size, fps, color_space, encoding, output_path);
     let mut command = Command::new(ffmpeg_path);
     command
         .args(args.iter().map(String::as_str))
@@ -246,10 +255,20 @@ fn run_ffmpeg_process(
 fn ffmpeg_args(
     size: &str,
     fps: &str,
-    encoding: &crate::schema::EncodingConfig,
+    color_space: ColorSpace,
+    encoding: &EncodingConfig,
     output_path: &Path,
 ) -> Vec<String> {
-    let mut args = vec![
+    let mut args = ffmpeg_rawvideo_input_args(size, fps);
+    args.extend(ffmpeg_prores_output_args(encoding, color_space));
+    args.extend(ffmpeg_container_output_args(output_path));
+
+    args.push(output_path.to_string_lossy().into_owned());
+    args
+}
+
+pub fn ffmpeg_rawvideo_input_args(size: &str, fps: &str) -> Vec<String> {
+    vec![
         "-hide_banner".to_owned(),
         "-loglevel".to_owned(),
         "error".to_owned(),
@@ -265,26 +284,80 @@ fn ffmpeg_args(
         "-i".to_owned(),
         "-".to_owned(),
         "-an".to_owned(),
+    ]
+}
+
+pub fn ffmpeg_prores_output_args(
+    encoding: &EncodingConfig,
+    color_space: ColorSpace,
+) -> Vec<String> {
+    let mut args = vec![
         "-c:v".to_owned(),
-        "prores_ks".to_owned(),
+        encoding.encoder.to_ffmpeg_codec().to_owned(),
         "-profile:v".to_owned(),
         encoding.prores_profile.to_ffmpeg_profile().to_owned(),
-        "-vendor".to_owned(),
-        encoding.vendor.clone(),
+        "-pix_fmt".to_owned(),
+        prores_pix_fmt(encoding.prores_profile).to_owned(),
     ];
 
-    if encoding.prores_profile == crate::schema::ProResProfile::Prores4444
-        || encoding.prores_profile == crate::schema::ProResProfile::Prores4444Xq
-    {
-        args.push("-pix_fmt".to_owned());
-        args.push("yuva444p10le".to_owned());
-    } else {
-        args.push("-pix_fmt".to_owned());
-        args.push("yuv422p10le".to_owned());
+    if encoding.encoder == ProResEncoder::ProresKs {
+        args.push("-vendor".to_owned());
+        args.push(encoding.vendor.clone());
+        args.push("-mbs_per_slice".to_owned());
+        args.push(encoding.mbs_per_slice.to_string());
+
+        if let Some(bits_per_mb) = encoding.bits_per_mb {
+            args.push("-bits_per_mb".to_owned());
+            args.push(bits_per_mb.to_string());
+        }
+        if let Some(quant_mat) = encoding.quant_mat {
+            args.push("-quant_mat".to_owned());
+            args.push(quant_mat.to_ffmpeg_value().to_owned());
+        }
+        if let Some(alpha_bits) = resolved_alpha_bits(encoding) {
+            args.push("-alpha_bits".to_owned());
+            args.push(alpha_bits.to_string());
+        }
     }
 
-    args.push(output_path.to_string_lossy().into_owned());
+    let (color_primaries, color_trc, colorspace) = color_space.ffmpeg_tags();
+    args.push("-color_range".to_owned());
+    args.push(encoding.color_range.to_ffmpeg_value().to_owned());
+    args.push("-color_primaries".to_owned());
+    args.push(color_primaries.to_owned());
+    args.push("-color_trc".to_owned());
+    args.push(color_trc.to_owned());
+    args.push("-colorspace".to_owned());
+    args.push(colorspace.to_owned());
     args
+}
+
+pub fn ffmpeg_container_output_args(output_path: &Path) -> Vec<String> {
+    let ext = output_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if matches!(ext.as_str(), "mov" | "mp4" | "m4v") {
+        vec!["-movflags".to_owned(), "+write_colr".to_owned()]
+    } else {
+        Vec::new()
+    }
+}
+
+fn prores_pix_fmt(profile: ProResProfile) -> &'static str {
+    if profile.supports_alpha() {
+        "yuva444p10le"
+    } else {
+        "yuv422p10le"
+    }
+}
+
+fn resolved_alpha_bits(encoding: &EncodingConfig) -> Option<u8> {
+    if !encoding.prores_profile.supports_alpha() {
+        return None;
+    }
+    Some(encoding.alpha_bits.unwrap_or(16))
 }
 
 fn read_stderr_tail(stderr: &mut Option<std::process::ChildStderr>) -> Result<String> {

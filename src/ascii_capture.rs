@@ -15,6 +15,10 @@ use serde::Serialize;
 use crate::ascii_frame::{AsciiFrame, AsciiFrameMetadata};
 use crate::ascii_sources::{ascii_live_stream_names, ascii_live_stream_url, library_source_names};
 use crate::aspect_preset::{compute_letterbox_layout, AspectPreset, LetterboxLayout, SafeInsetsPx};
+use crate::encoding::{
+    ffmpeg_container_output_args, ffmpeg_prores_output_args, ffmpeg_rawvideo_input_args,
+};
+use crate::schema::{ColorSpace, EncodingConfig, ProResProfile};
 
 pub const DEFAULT_CAPTURE_FPS: u32 = 30;
 pub const DEFAULT_CAPTURE_DURATION_SECONDS: f32 = 5.0;
@@ -288,9 +292,9 @@ pub fn build_ascii_capture_plan(args: &AsciiCaptureArgs) -> Result<AsciiCaptureP
         tmp_dir: args.tmp_dir.clone(),
         parser_mode: "best-effort ANSI parser with sampled latest-frame fallback",
         ffmpeg_encoder: if args.bg_alpha < 1.0 {
-            "ffmpeg -c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le"
+            "ffmpeg -c:v prores_ks -profile:v 4444 -pix_fmt yuva444p10le -alpha_bits 16"
         } else {
-            "ffmpeg -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le"
+            "ffmpeg -c:v prores_ks -profile:v standard -pix_fmt yuv422p10le"
         },
         symbol_remap: args.symbol_remap,
         symbol_ramp,
@@ -347,19 +351,15 @@ pub fn run_ascii_capture(args: &AsciiCaptureArgs) -> Result<AsciiCaptureSummary>
     )?;
     rasterizer.set_bg_alpha(plan.bg_alpha);
 
-    let (profile, pix_fmt) = if plan.bg_alpha < 1.0 {
-        ("4", "yuva444p10le")
-    } else {
-        ("2", "yuv422p10le")
-    };
+    let encoding = capture_encoding(plan.bg_alpha);
 
     let mut encoder = ProResEncoder::spawn(
         &plan.output,
         plan.canvas_width,
         plan.canvas_height,
         plan.fps,
-        profile,
-        pix_fmt,
+        &encoding,
+        ColorSpace::Rec709,
         plan.tmp_dir.as_deref(),
     )?;
 
@@ -1353,38 +1353,21 @@ impl ProResEncoder {
         width: u32,
         height: u32,
         fps: u32,
-        profile: &str,
-        pix_fmt: &str,
+        encoding: &EncodingConfig,
+        color_space: ColorSpace,
         tmp_dir: Option<&Path>,
     ) -> Result<Self> {
-        let _alpha_support = pix_fmt.starts_with("yuva");
         let mut command = Command::new("ffmpeg");
+        let size = format!("{width}x{height}");
+        let fps_text = fps.to_string();
         command
-            .arg("-hide_banner")
-            .arg("-loglevel")
-            .arg("error")
             .arg("-fflags")
             .arg("+bitexact")
-            .arg("-y")
-            .arg("-f")
-            .arg("rawvideo")
-            .arg("-pix_fmt")
-            .arg("rgba")
-            .arg("-s:v")
-            .arg(format!("{}x{}", width, height))
-            .arg("-r")
-            .arg(fps.to_string())
-            .arg("-i")
-            .arg("-")
-            .arg("-an")
-            .arg("-c:v")
-            .arg("prores_ks")
+            .args(ffmpeg_rawvideo_input_args(&size, &fps_text))
             .arg("-flags:v")
             .arg("+bitexact")
-            .arg("-profile:v")
-            .arg(profile)
-            .arg("-pix_fmt")
-            .arg(pix_fmt)
+            .args(ffmpeg_prores_output_args(encoding, color_space))
+            .args(ffmpeg_container_output_args(output_path))
             // Determinism guard: clear inherited metadata and pin volatile fields.
             .arg("-map_metadata")
             .arg("-1")
@@ -1436,6 +1419,23 @@ impl ProResEncoder {
             bail!("ffmpeg failed with status {status}");
         }
         Ok(())
+    }
+}
+
+fn capture_encoding(bg_alpha: f32) -> EncodingConfig {
+    let prores_profile = if bg_alpha < 1.0 {
+        ProResProfile::Prores4444
+    } else {
+        ProResProfile::Standard
+    };
+    EncodingConfig {
+        prores_profile,
+        alpha_bits: if prores_profile.supports_alpha() {
+            Some(16)
+        } else {
+            None
+        },
+        ..EncodingConfig::default()
     }
 }
 

@@ -4,9 +4,13 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 
+use crate::encoding::{
+    ffmpeg_container_output_args, ffmpeg_prores_output_args, ffmpeg_rawvideo_input_args,
+};
 use crate::font_assets::{
     ensure_supported_codepoints, font_path, read_verified_font_bytes, verify_geist_pixel_bundle,
 };
+use crate::schema::{ColorSpace, EncodingConfig, ProResProfile};
 use anyhow::{anyhow, bail, Context, Result};
 use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
 use fontdue::Font;
@@ -1150,22 +1154,9 @@ impl ChatFfmpegWriter {
             .context("chat render frame size overflow")?;
 
         let mut command = Command::new("ffmpeg");
-        command
-            .arg("-hide_banner")
-            .arg("-loglevel")
-            .arg("error")
-            .arg("-y")
-            .arg("-f")
-            .arg("rawvideo")
-            .arg("-pix_fmt")
-            .arg("rgba")
-            .arg("-s:v")
-            .arg(format!("{}x{}", width, height))
-            .arg("-r")
-            .arg(fps.to_string())
-            .arg("-i")
-            .arg("-")
-            .arg("-an");
+        let size = format!("{width}x{height}");
+        let fps_text = fps.to_string();
+        command.args(ffmpeg_rawvideo_input_args(&size, &fps_text));
 
         match output_path
             .extension()
@@ -1175,13 +1166,13 @@ impl ChatFfmpegWriter {
             .as_str()
         {
             "mov" => {
+                let encoding = EncodingConfig {
+                    prores_profile: ProResProfile::Prores4444,
+                    ..EncodingConfig::default()
+                };
                 command
-                    .arg("-c:v")
-                    .arg("prores_ks")
-                    .arg("-profile:v")
-                    .arg("4444")
-                    .arg("-pix_fmt")
-                    .arg("yuva444p10le");
+                    .args(ffmpeg_prores_output_args(&encoding, ColorSpace::Rec709))
+                    .args(ffmpeg_container_output_args(output_path));
             }
             _ => {
                 command
