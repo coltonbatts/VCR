@@ -29,10 +29,18 @@ use vcr::ascii_stage::{
     parse_ascii_stage_size, render_ascii_stage_video, AsciiStageRenderArgs, CameraMode,
 };
 use vcr::aspect_preset::AspectPreset;
+use vcr::asset_catalog::{
+    add_asset_to_pack, load_asset_catalog, normalize_asset_reference, search_asset_catalog,
+    suggest_library_asset_id, suggest_pack_asset_id, AssetCatalogOrigin,
+};
 use vcr::chat::{render_chat_video, ChatRenderArgs};
 use vcr::encoding::{FfmpegMode, FfmpegPipe};
 use vcr::error_codes::{find_coded_error, CodedErrorKind};
 use vcr::font_assets::verify_geist_pixel_bundle;
+use vcr::library::{
+    add_asset, list_items, load_registry, verify_registry, LibraryAddRequest, LibraryItemType,
+    LibraryListFilter, LibraryNormalizeProfile,
+};
 use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions, ParamOverride};
 use vcr::packs::{compile_pack, PackCompileBackend, PackCompileRequest};
 #[cfg(feature = "play")]
@@ -163,12 +171,38 @@ struct Cli {
         help = "Enable/disable ASCII Bayer dither when ascii_post is enabled. Overrides VCR_ASCII_BAYER_DITHER env."
     )]
     ascii_bayer_dither: Option<AsciiBayerDitherArg>,
+    #[arg(
+        long = "allow-raw-path-sources",
+        global = true,
+        default_value_t = false,
+        help = "Allow raw file paths in manifests/trailer (library:<id> is required there by default)."
+    )]
+    allow_raw_path_sources: bool,
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    #[command(about = "Golden-path render to ProRes 4444 .mov (alpha-preserving)")]
+    Render {
+        manifest: PathBuf,
+        #[arg(short = 'o', long = "output")]
+        output: Option<PathBuf>,
+        #[arg(
+            long = "determinism-report",
+            default_value_t = false,
+            help = "Emit a software frame hash report after render (frame 0)."
+        )]
+        determinism_report: bool,
+        #[arg(
+            long = "set",
+            value_name = "NAME=VALUE",
+            action = clap::ArgAction::Append,
+            help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
+        )]
+        set: Vec<String>,
+    },
     #[command(about = "Render a manifest to ProRes .mov video")]
     Build {
         manifest: PathBuf,
@@ -381,6 +415,31 @@ enum Commands {
         #[command(subcommand)]
         command: PackCommands,
     },
+    #[command(about = "Friendly asset add command (library or pack)")]
+    Add {
+        #[arg(help = "Source file or directory to ingest")]
+        path: PathBuf,
+        #[arg(long = "pack", value_name = "PACK_ID", help = "Target pack id")]
+        pack: Option<String>,
+        #[arg(long = "id", value_name = "ASSET_ID", help = "Asset id (kebab-case)")]
+        id: Option<String>,
+        #[arg(
+            long = "profile",
+            value_enum,
+            help = "Optional ingest profile (trailer = normalize video for trailer manifests)"
+        )]
+        profile: Option<AddProfileArg>,
+    },
+    #[command(about = "Unified asset catalog commands (library + packs)")]
+    Assets {
+        #[command(subcommand)]
+        command: Option<AssetsCommands>,
+    },
+    #[command(about = "Curated local asset library commands")]
+    Library {
+        #[command(subcommand)]
+        command: LibraryCommands,
+    },
     #[command(about = "Check system dependencies (FFmpeg, GPU)")]
     Doctor,
     #[command(about = "Generate frame-hash determinism report")]
@@ -418,6 +477,85 @@ enum PackCommands {
         )]
         output: PathBuf,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum LibraryCommands {
+    Add {
+        path: PathBuf,
+        #[arg(long = "id")]
+        id: String,
+        #[arg(long = "type", value_enum)]
+        item_type: Option<LibraryItemTypeArg>,
+        #[arg(long = "normalize", value_enum)]
+        normalize: Option<LibraryNormalizeArg>,
+    },
+    Verify,
+    List {
+        #[arg(long = "tag")]
+        tag: Option<String>,
+        #[arg(long = "type", value_enum)]
+        item_type: Option<LibraryItemTypeArg>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AssetsCommands {
+    #[command(about = "Search assets by id, reference, path, or tags")]
+    Search {
+        #[arg(help = "Search term")]
+        term: String,
+    },
+    #[command(about = "Show full metadata for one asset reference")]
+    Info {
+        #[arg(value_name = "library:<id>|pack:<pack-id>/<asset-id>")]
+        reference: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum LibraryItemTypeArg {
+    Video,
+    Image,
+    Ascii,
+    Frames,
+}
+
+impl From<LibraryItemTypeArg> for LibraryItemType {
+    fn from(value: LibraryItemTypeArg) -> Self {
+        match value {
+            LibraryItemTypeArg::Video => LibraryItemType::Video,
+            LibraryItemTypeArg::Image => LibraryItemType::Image,
+            LibraryItemTypeArg::Ascii => LibraryItemType::Ascii,
+            LibraryItemTypeArg::Frames => LibraryItemType::Frames,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum LibraryNormalizeArg {
+    Trailer,
+}
+
+impl From<LibraryNormalizeArg> for LibraryNormalizeProfile {
+    fn from(value: LibraryNormalizeArg) -> Self {
+        match value {
+            LibraryNormalizeArg::Trailer => LibraryNormalizeProfile::Trailer,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AddProfileArg {
+    Trailer,
+}
+
+impl From<AddProfileArg> for LibraryNormalizeProfile {
+    fn from(value: AddProfileArg) -> Self {
+        match value {
+            AddProfileArg::Trailer => LibraryNormalizeProfile::Trailer,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -658,6 +796,7 @@ fn resolve_ascii_stage_options(
 impl Commands {
     fn name(&self) -> &'static str {
         match self {
+            Self::Render { .. } => "render",
             Self::Build { .. } => "build",
             Self::Check { .. } => "check",
             Self::Lint { .. } => "lint",
@@ -675,6 +814,9 @@ impl Commands {
             Self::Ascii { .. } => "ascii",
             Self::Pack { .. } => "pack",
             Self::Tape { .. } => "tape",
+            Self::Add { .. } => "add",
+            Self::Assets { .. } => "assets",
+            Self::Library { .. } => "library",
             Self::Doctor => "doctor",
             Self::DeterminismReport { .. } => "determinism-report",
         }
@@ -717,10 +859,33 @@ fn main() -> ExitCode {
 
 fn run_cli(cli: Cli) -> Result<()> {
     let quiet = cli.quiet;
+    if cli.allow_raw_path_sources {
+        std::env::set_var("VCR_ALLOW_RAW_PATH_SOURCES", "1");
+    } else {
+        std::env::remove_var("VCR_ALLOW_RAW_PATH_SOURCES");
+    }
     let ascii_overrides = resolve_ascii_overrides(cli.ascii_edge_boost, cli.ascii_bayer_dither);
     let ffmpeg_mode = FfmpegMode::from(cli.ffmpeg);
 
     match cli.command {
+        Commands::Render {
+            manifest,
+            output,
+            determinism_report,
+            set,
+        } => {
+            let output = resolve_output_path(&manifest, output, "mov", None, quiet)?;
+            run_render(
+                &manifest,
+                &output,
+                &set,
+                ascii_overrides,
+                determinism_report,
+                cli.backend,
+                ffmpeg_mode,
+                quiet,
+            )
+        }
         Commands::Build {
             manifest,
             output,
@@ -769,34 +934,56 @@ fn run_cli(cli: Cli) -> Result<()> {
             image_sequence,
             set,
         } => {
-            let resolved_output = if image_sequence {
-                let default_dir = default_preview_sequence_output_dir(&manifest);
-                Some(output.unwrap_or(default_dir))
-            } else {
-                Some(resolve_output_path(
+            let sample_preview = !image_sequence
+                && output
+                    .as_deref()
+                    .map(path_looks_like_directory)
+                    .unwrap_or(false);
+            if sample_preview {
+                let output_dir =
+                    output.unwrap_or_else(|| default_preview_sequence_output_dir(&manifest));
+                run_preview_sample_frames(
                     &manifest,
-                    output,
-                    "mov",
-                    Some("preview"),
+                    &output_dir,
+                    PreviewSampleArgs {
+                        requested_samples: frames,
+                        scale,
+                    },
+                    &set,
+                    ascii_overrides.as_ref(),
+                    cli.backend,
                     quiet,
-                )?)
-            };
-            run_preview(
-                &manifest,
-                resolved_output.as_deref(),
-                PreviewArgs {
-                    start_frame,
-                    frames,
-                    scale,
-                    image_sequence,
-                },
-                &set,
-                ascii_overrides.as_ref(),
-                cli.backend,
-                ffmpeg_mode,
-                quiet,
-            )
-            .map(|_| ())
+                )
+            } else {
+                let resolved_output = if image_sequence {
+                    let default_dir = default_preview_sequence_output_dir(&manifest);
+                    Some(output.unwrap_or(default_dir))
+                } else {
+                    Some(resolve_output_path(
+                        &manifest,
+                        output,
+                        "mov",
+                        Some("preview"),
+                        quiet,
+                    )?)
+                };
+                run_preview(
+                    &manifest,
+                    resolved_output.as_deref(),
+                    PreviewArgs {
+                        start_frame,
+                        frames,
+                        scale,
+                        image_sequence,
+                    },
+                    &set,
+                    ascii_overrides.as_ref(),
+                    cli.backend,
+                    ffmpeg_mode,
+                    quiet,
+                )
+                .map(|_| ())
+            }
         }
         #[cfg(feature = "play")]
         Commands::Play {
@@ -1026,6 +1213,39 @@ fn run_cli(cli: Cli) -> Result<()> {
                 output,
             } => run_pack_compile_cli(&pack, &fields, &aspect, fps, &output, cli.backend),
         },
+        Commands::Add {
+            path,
+            pack,
+            id,
+            profile,
+        } => run_add_asset(
+            &path,
+            pack.as_deref(),
+            id.as_deref(),
+            profile.map(Into::into),
+        ),
+        Commands::Assets { command } => match command {
+            None => run_assets_list(),
+            Some(AssetsCommands::Search { term }) => run_assets_search(&term),
+            Some(AssetsCommands::Info { reference }) => run_assets_info(&reference),
+        },
+        Commands::Library { command } => match command {
+            LibraryCommands::Add {
+                path,
+                id,
+                item_type,
+                normalize,
+            } => run_library_add(
+                &path,
+                &id,
+                item_type.map(Into::into),
+                normalize.map(Into::into),
+            ),
+            LibraryCommands::Verify => run_library_verify(),
+            LibraryCommands::List { tag, item_type } => {
+                run_library_list(tag.as_deref(), item_type.map(Into::into))
+            }
+        },
         Commands::Doctor => run_doctor(),
         Commands::DeterminismReport {
             manifest,
@@ -1061,6 +1281,230 @@ fn run_pack_compile_cli(
     println!("Wrote {}", summary.mov_path.display());
     println!("Wrote {}", summary.frame_hashes_path.display());
     println!("Wrote {}", summary.artifact_manifest_path.display());
+    Ok(())
+}
+
+fn run_add_asset(
+    path: &Path,
+    pack: Option<&str>,
+    id: Option<&str>,
+    profile: Option<LibraryNormalizeProfile>,
+) -> Result<()> {
+    let workspace_root = std::env::current_dir().context("failed to resolve current directory")?;
+    let resolved_id = if let Some(value) = id {
+        value.to_owned()
+    } else if let Some(pack_id) = pack {
+        suggest_pack_asset_id(&workspace_root, pack_id, path)?
+    } else {
+        suggest_library_asset_id(&workspace_root, path)?
+    };
+
+    if id.is_none() {
+        println!("Using suggested id '{}'", resolved_id);
+    }
+
+    if let Some(pack_id) = pack {
+        let summary = add_asset_to_pack(
+            &workspace_root,
+            pack_id,
+            &LibraryAddRequest {
+                source_path: path.to_path_buf(),
+                id: resolved_id,
+                item_type: None,
+                normalize: profile,
+            },
+        )?;
+
+        println!("Added asset '{}'", summary.asset_reference);
+        println!("Type: {}", summary.item.item_type.as_str());
+        println!("Stored: {}", summary.stored_path.display());
+        println!("Pack manifest: {}", summary.pack_manifest_path.display());
+        return Ok(());
+    }
+
+    run_library_add(path, &resolved_id, None, profile)
+}
+
+fn run_assets_list() -> Result<()> {
+    let workspace_root = std::env::current_dir().context("failed to resolve current directory")?;
+    let entries = load_asset_catalog(&workspace_root)?;
+    if entries.is_empty() {
+        println!("<no assets>");
+        return Ok(());
+    }
+
+    for entry in &entries {
+        print_asset_row(entry);
+    }
+    Ok(())
+}
+
+fn run_assets_search(term: &str) -> Result<()> {
+    let workspace_root = std::env::current_dir().context("failed to resolve current directory")?;
+    let entries = load_asset_catalog(&workspace_root)?;
+    let matches = search_asset_catalog(&entries, term);
+    if matches.is_empty() {
+        println!("<no assets matching '{}'>", term);
+        return Ok(());
+    }
+
+    for entry in matches {
+        print_asset_row(entry);
+    }
+    Ok(())
+}
+
+fn run_assets_info(reference: &str) -> Result<()> {
+    let normalized = normalize_asset_reference(reference).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid asset reference '{}': expected library:<id> or pack:<pack-id>/<asset-id>",
+            reference
+        )
+    })?;
+
+    let workspace_root = std::env::current_dir().context("failed to resolve current directory")?;
+    let entries = load_asset_catalog(&workspace_root)?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.reference == normalized)
+        .ok_or_else(|| anyhow::anyhow!("unknown asset reference '{}'", normalized))?;
+
+    println!("reference: {}", entry.reference);
+    println!("id: {}", entry.item.id);
+    println!("origin: {}", asset_origin_label(&entry.origin));
+    println!("type: {}", entry.item.item_type.as_str());
+    println!("path: {}", entry.item.path);
+    println!("sha256: {}", entry.item.sha256);
+    if entry.item.tags.is_empty() {
+        println!("tags: <none>");
+    } else {
+        println!("tags: {}", entry.item.tags.join(", "));
+    }
+    println!("spec.width: {}", opt_u32(entry.item.spec.width));
+    println!("spec.height: {}", opt_u32(entry.item.spec.height));
+    println!("spec.fps: {}", opt_f32(entry.item.spec.fps));
+    println!("spec.frames: {}", opt_u32(entry.item.spec.frames));
+    println!(
+        "spec.duration_seconds: {}",
+        opt_f32(entry.item.spec.duration_seconds)
+    );
+    println!("spec.has_alpha: {}", entry.item.spec.has_alpha);
+    println!(
+        "spec.pixel_format: {}",
+        entry.item.spec.pixel_format.as_deref().unwrap_or("<none>")
+    );
+    Ok(())
+}
+
+fn print_asset_row(entry: &vcr::asset_catalog::AssetCatalogEntry) {
+    let mut extras = Vec::new();
+    if let (Some(width), Some(height)) = (entry.item.spec.width, entry.item.spec.height) {
+        extras.push(format!("{width}x{height}"));
+    }
+    if let Some(fps) = entry.item.spec.fps {
+        extras.push(format!("{fps:.3}fps"));
+    }
+    if let Some(frames) = entry.item.spec.frames {
+        extras.push(format!("{frames}f"));
+    }
+    extras.push(format!("alpha={}", entry.item.spec.has_alpha));
+
+    println!(
+        "{}\ttype={}\torigin={}\tpath={}\t{}",
+        entry.reference,
+        entry.item.item_type.as_str(),
+        asset_origin_label(&entry.origin),
+        entry.item.path,
+        extras.join(", ")
+    );
+}
+
+fn asset_origin_label(origin: &AssetCatalogOrigin) -> String {
+    match origin {
+        AssetCatalogOrigin::Library => "library".to_owned(),
+        AssetCatalogOrigin::Pack { pack_id } => format!("pack:{pack_id}"),
+    }
+}
+
+fn opt_u32(value: Option<u32>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<none>".to_owned())
+}
+
+fn opt_f32(value: Option<f32>) -> String {
+    value
+        .map(|value| format!("{value:.6}"))
+        .unwrap_or_else(|| "<none>".to_owned())
+}
+
+fn run_library_add(
+    path: &Path,
+    id: &str,
+    item_type: Option<LibraryItemType>,
+    normalize: Option<LibraryNormalizeProfile>,
+) -> Result<()> {
+    let workspace_root = std::env::current_dir().context("failed to resolve current directory")?;
+    let summary = add_asset(
+        &workspace_root,
+        &LibraryAddRequest {
+            source_path: path.to_path_buf(),
+            id: id.to_owned(),
+            item_type,
+            normalize,
+        },
+    )?;
+    println!("Added library item '{}'", summary.item.id);
+    println!("Type: {}", summary.item.item_type.as_str());
+    println!("Stored: {}", summary.stored_path.display());
+    println!("Registry: {}", summary.registry_path.display());
+    Ok(())
+}
+
+fn run_library_verify() -> Result<()> {
+    let workspace_root = std::env::current_dir().context("failed to resolve current directory")?;
+    let registry = load_registry(&workspace_root)?;
+    verify_registry(&workspace_root, &registry)?;
+    println!("Library verify OK: {} items", registry.items.len());
+    Ok(())
+}
+
+fn run_library_list(tag: Option<&str>, item_type: Option<LibraryItemType>) -> Result<()> {
+    let workspace_root = std::env::current_dir().context("failed to resolve current directory")?;
+    let registry = load_registry(&workspace_root)?;
+    let filtered = list_items(
+        &registry,
+        &LibraryListFilter {
+            item_type,
+            tag: tag.map(|value| value.to_owned()),
+        },
+    );
+    if filtered.is_empty() {
+        println!("<no library items>");
+        return Ok(());
+    }
+
+    for item in filtered {
+        let mut extras = Vec::new();
+        if let (Some(width), Some(height)) = (item.spec.width, item.spec.height) {
+            extras.push(format!("{width}x{height}"));
+        }
+        if let Some(fps) = item.spec.fps {
+            extras.push(format!("{fps:.3}fps"));
+        }
+        if let Some(frames) = item.spec.frames {
+            extras.push(format!("{frames}f"));
+        }
+        extras.push(format!("alpha={}", item.spec.has_alpha));
+        println!(
+            "{}\ttype={}\tpath={}\t{}",
+            item.id,
+            item.item_type.as_str(),
+            item.path,
+            extras.join(", ")
+        );
+    }
+
     Ok(())
 }
 
@@ -1334,6 +1778,14 @@ fn default_preview_sequence_output_dir(manifest_path: &Path) -> PathBuf {
         .filter(|value| !value.is_empty())
         .unwrap_or("scene");
     PathBuf::from(format!("renders/{}_preview", stem))
+}
+
+fn path_looks_like_directory(path: &Path) -> bool {
+    if path.extension().is_none() {
+        return true;
+    }
+    let value = path.to_string_lossy();
+    value.ends_with('/') || value.ends_with('\\')
 }
 
 fn run_doctor() -> Result<()> {
@@ -2285,7 +2737,7 @@ fn run_check(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result
 fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<()> {
     let manifest = load_manifest_with_overrides(manifest_path, set_values)?;
     let total_frames = manifest.environment.total_frames();
-    let sample_count = total_frames.min(240).max(1);
+    let sample_count = total_frames.min(240).clamp(1, 240);
     let sample_step = (total_frames / sample_count).max(1);
 
     let mut visible = manifest
@@ -2691,6 +3143,36 @@ fn run_build(
     Ok(())
 }
 
+fn run_render(
+    manifest_path: &Path,
+    output_path: &Path,
+    set_values: &[String],
+    ascii_overrides: Option<AsciiRuntimeOverrides>,
+    determinism_report: bool,
+    backend: BackendArg,
+    ffmpeg_mode: FfmpegMode,
+    quiet: bool,
+) -> Result<()> {
+    run_build(
+        manifest_path,
+        output_path,
+        FrameWindowArgs {
+            start_frame: 0,
+            end_frame: None,
+            frames: None,
+        },
+        set_values,
+        ascii_overrides,
+        backend,
+        ffmpeg_mode,
+        quiet,
+    )?;
+    if determinism_report {
+        run_determinism_report(manifest_path, 0, set_values, false)?;
+    }
+    Ok(())
+}
+
 fn run_preview(
     manifest_path: &Path,
     output: Option<&Path>,
@@ -2833,6 +3315,143 @@ fn run_preview(
         },
     );
     Ok(ResolvedInputsSnapshot::from_manifest(&manifest))
+}
+
+fn run_preview_sample_frames(
+    manifest_path: &Path,
+    output_dir: &Path,
+    args: PreviewSampleArgs,
+    set_values: &[String],
+    ascii_overrides: Option<&AsciiRuntimeOverrides>,
+    backend: BackendArg,
+    quiet: bool,
+) -> Result<()> {
+    if !(0.0..=1.0).contains(&args.scale) || args.scale == 0.0 {
+        bail!("preview --scale must be in (0, 1], got {}", args.scale);
+    }
+
+    let parse_start = Instant::now();
+    let manifest = load_manifest_with_overrides(manifest_path, set_values)?;
+    let parse_elapsed = parse_start.elapsed();
+    let total_frames = manifest.environment.total_frames();
+
+    let requested = args.requested_samples.unwrap_or(12);
+    if requested == 0 {
+        bail!("preview --frames must be > 0");
+    }
+
+    let frame_indices = sampled_frame_indices(total_frames, requested);
+    let preview_environment = scaled_environment(&manifest.environment, args.scale);
+
+    fs::create_dir_all(output_dir).with_context(|| {
+        format!(
+            "failed to create preview output directory {}",
+            output_dir.display()
+        )
+    })?;
+
+    let layout_start = Instant::now();
+    let mut scene = RenderSceneData::from_manifest(&manifest);
+    if let Some(overrides) = ascii_overrides {
+        scene = scene.with_ascii_overrides(overrides.clone());
+    }
+    let mut renderer = create_renderer(&preview_environment, &manifest.layers, scene, backend)?;
+    let layout_elapsed = layout_start.elapsed();
+
+    progress_log(
+        quiet,
+        format_args!(
+            "[VCR] Preview samples: {}x{}, {} frames sampled from {} total",
+            preview_environment.resolution.width,
+            preview_environment.resolution.height,
+            frame_indices.len(),
+            total_frames
+        ),
+    );
+    print_active_params(&manifest, quiet);
+    progress_log(
+        quiet,
+        format_args!(
+            "[VCR] Backend: {} ({})",
+            renderer.backend_name(),
+            renderer.backend_reason()
+        ),
+    );
+
+    let mut render_elapsed = Duration::ZERO;
+    let mut encode_elapsed = Duration::ZERO;
+
+    for frame_index in &frame_indices {
+        let render_start = Instant::now();
+        let rgba = renderer.render_frame_rgba(*frame_index)?;
+        render_elapsed += render_start.elapsed();
+
+        let encode_start = Instant::now();
+        let output_path = output_dir.join(format!("sample_{frame_index:06}.png"));
+        save_rgba_png(
+            &output_path,
+            preview_environment.resolution.width,
+            preview_environment.resolution.height,
+            rgba,
+        )?;
+        encode_elapsed += encode_start.elapsed();
+    }
+
+    println!(
+        "Wrote {} sampled preview frames to {}",
+        frame_indices.len(),
+        output_dir.display()
+    );
+
+    let metadata_path = metadata_sidecar_for_directory(output_dir, "preview_samples");
+    let window = FrameWindow {
+        start_frame: *frame_indices.first().unwrap_or(&0),
+        count: frame_indices.len() as u32,
+    };
+    emit_render_metadata(
+        &metadata_path,
+        &manifest,
+        &preview_environment,
+        renderer.backend_name(),
+        renderer.backend_reason(),
+        window,
+    )?;
+    println!("Wrote {}", metadata_path.display());
+
+    print_timing_summary(
+        quiet,
+        RenderTimingSummary {
+            parse: parse_elapsed,
+            layout: layout_elapsed,
+            render: render_elapsed,
+            encode: encode_elapsed,
+        },
+    );
+
+    Ok(())
+}
+
+fn sampled_frame_indices(total_frames: u32, requested: u32) -> Vec<u32> {
+    if total_frames == 0 || requested == 0 {
+        return Vec::new();
+    }
+    if requested == 1 {
+        return vec![0];
+    }
+    if requested >= total_frames {
+        return (0..total_frames).collect();
+    }
+
+    let span = total_frames.saturating_sub(1) as f64;
+    let step = span / (requested.saturating_sub(1) as f64);
+    let mut indices = Vec::with_capacity(requested as usize);
+    for sample in 0..requested {
+        let raw = (step * sample as f64).round();
+        indices.push(raw as u32);
+    }
+    indices.sort_unstable();
+    indices.dedup();
+    indices
 }
 
 fn run_ascii_library(category_filter: Option<&str>, json: bool) -> Result<()> {
@@ -3078,7 +3697,7 @@ fn run_watch(
     let mut last_inputs = match run_preview(
         manifest_path,
         output.as_deref(),
-        preview_args.clone(),
+        preview_args,
         set_values,
         ascii_overrides,
         backend,
@@ -3114,7 +3733,7 @@ fn run_watch(
             match run_preview(
                 manifest_path,
                 output.as_deref(),
-                preview_args.clone(),
+                preview_args,
                 set_values,
                 ascii_overrides,
                 backend,
@@ -3145,7 +3764,16 @@ fn load_manifest_with_overrides(manifest_path: &Path, set_values: &[String]) -> 
                 .with_context(|| format!("invalid --set override '{}'", entry))
         })
         .collect::<Result<Vec<_>>>()?;
-    load_and_validate_manifest_with_options(manifest_path, &ManifestLoadOptions { overrides })
+    let allow_raw_paths = std::env::var("VCR_ALLOW_RAW_PATH_SOURCES")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    load_and_validate_manifest_with_options(
+        manifest_path,
+        &ManifestLoadOptions {
+            overrides,
+            allow_raw_paths,
+        },
+    )
 }
 
 fn should_emit_nonessential_logs(quiet: bool) -> bool {
@@ -3462,6 +4090,12 @@ struct PreviewArgs {
     frames: Option<u32>,
     scale: f32,
     image_sequence: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PreviewSampleArgs {
+    requested_samples: Option<u32>,
+    scale: f32,
 }
 
 #[derive(Debug, Clone, Copy)]

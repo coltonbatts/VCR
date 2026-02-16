@@ -6,6 +6,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::Serialize;
 use serde_yaml::{Mapping, Value};
 
+use crate::asset_catalog::{parse_asset_reference, resolve_manifest_asset_reference};
+use crate::library::ManifestSourceUsage;
 use crate::schema::{
     validate_manifest_manifest_level, ColorRgba, Layer, Manifest, ParamDefinition, ParamType,
     ParamValue, Parameters, Vec2,
@@ -14,6 +16,7 @@ use crate::schema::{
 #[derive(Debug, Clone, Default)]
 pub struct ManifestLoadOptions {
     pub overrides: Vec<ParamOverride>,
+    pub allow_raw_paths: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +61,8 @@ pub fn load_and_validate_manifest_with_options(
     let contents = fs::read_to_string(path)
         .with_context(|| format!("failed to read manifest {}", path.display()))?;
     let mut manifest_value = parse_yaml_value(path, &contents)?;
+    normalize_layer_source_shorthand(&mut manifest_value)?;
+    apply_trailer_encoding_defaults(path, &mut manifest_value)?;
     let param_definitions = parse_param_definitions(&manifest_value)?;
     validate_param_definitions(&param_definitions)?;
 
@@ -77,7 +82,7 @@ pub fn load_and_validate_manifest_with_options(
         &manifest.applied_param_overrides,
     )?;
 
-    validate_manifest(&mut manifest, path)?;
+    validate_manifest(&mut manifest, path, options)?;
     Ok(manifest)
 }
 
@@ -94,6 +99,210 @@ fn parse_yaml_value(path: &Path, contents: &str) -> Result<Value> {
             error
         )
     })
+}
+
+fn key(name: &str) -> Value {
+    Value::String(name.to_owned())
+}
+
+fn normalize_layer_source_shorthand(root: &mut Value) -> Result<()> {
+    let Some(root_map) = root.as_mapping_mut() else {
+        return Ok(());
+    };
+    let Some(layers_value) = root_map.get_mut(key("layers")) else {
+        return Ok(());
+    };
+    let Some(layers) = layers_value.as_sequence_mut() else {
+        return Ok(());
+    };
+
+    for layer_value in layers {
+        let Some(layer) = layer_value.as_mapping_mut() else {
+            continue;
+        };
+        let Some(source_value) = layer.remove(key("source")) else {
+            continue;
+        };
+        let source = parse_source_reference_value(&source_value)?;
+        let layer_id = layer
+            .get(key("id"))
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown>")
+            .to_owned();
+
+        if layer.contains_key(key("source_path")) {
+            let source_path_key = key("source_path");
+            if layer
+                .get(&source_path_key)
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .is_some()
+            {
+                bail!(
+                    "layer '{}' defines both source and source_path; keep only one",
+                    layer_id
+                );
+            }
+            layer.insert(source_path_key, Value::String(source));
+            continue;
+        }
+
+        if layer.contains_key(key("image")) {
+            set_nested_path(layer, "image", "path", &source, &layer_id)?;
+            continue;
+        }
+        if layer.contains_key(key("ascii")) {
+            set_nested_path(layer, "ascii", "path", &source, &layer_id)?;
+            continue;
+        }
+        if layer.contains_key(key("sequence")) {
+            set_nested_path(layer, "sequence", "path", &source, &layer_id)?;
+            continue;
+        }
+
+        for incompatible in ["procedural", "shader", "wgpu_shader", "text"] {
+            if layer.contains_key(key(incompatible)) {
+                bail!(
+                    "layer '{}' uses source shorthand but source block '{}' does not support external assets",
+                    layer_id,
+                    incompatible
+                );
+            }
+        }
+
+        let mut image = Mapping::new();
+        image.insert(key("path"), Value::String(source));
+        layer.insert(key("image"), Value::Mapping(image));
+    }
+
+    Ok(())
+}
+
+fn set_nested_path(
+    layer: &mut Mapping,
+    block_name: &str,
+    field_name: &str,
+    source: &str,
+    layer_id: &str,
+) -> Result<()> {
+    let block_key = key(block_name);
+    let Some(block_value) = layer.get_mut(&block_key) else {
+        bail!("layer '{}' missing '{}' block", layer_id, block_name);
+    };
+    let Some(block) = block_value.as_mapping_mut() else {
+        bail!(
+            "layer '{}' {} block must be a mapping",
+            layer_id,
+            block_name
+        );
+    };
+    let field_key = key(field_name);
+    if block
+        .get(&field_key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .is_some()
+    {
+        bail!(
+            "layer '{}' defines both source and {}.{}; keep only one",
+            layer_id,
+            block_name,
+            field_name
+        );
+    }
+    block.insert(field_key, Value::String(source.to_owned()));
+    Ok(())
+}
+
+fn parse_source_reference_value(source: &Value) -> Result<String> {
+    match source {
+        Value::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                bail!("source cannot be empty");
+            }
+            Ok(trimmed.to_owned())
+        }
+        Value::Mapping(map) => {
+            let kind = map
+                .get(key("kind"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("source.kind must be a string"))?;
+            match kind {
+                "library" => {
+                    let id = map
+                        .get(key("id"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow!("source.kind=library requires source.id"))?;
+                    let id = id.trim();
+                    if id.is_empty() {
+                        bail!("source.id cannot be empty");
+                    }
+                    Ok(format!("library:{id}"))
+                }
+                "pack" => {
+                    let pack_id = map
+                        .get(key("pack"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow!("source.kind=pack requires source.pack"))?;
+                    let asset_id = map
+                        .get(key("id"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow!("source.kind=pack requires source.id"))?;
+                    let pack_id = pack_id.trim();
+                    let asset_id = asset_id.trim();
+                    if pack_id.is_empty() {
+                        bail!("source.pack cannot be empty");
+                    }
+                    if asset_id.is_empty() {
+                        bail!("source.id cannot be empty");
+                    }
+                    Ok(format!("pack:{pack_id}/{asset_id}"))
+                }
+                _ => bail!(
+                    "unsupported source.kind '{}': expected 'library' or 'pack'",
+                    kind
+                ),
+            }
+        }
+        _ => bail!(
+            "source must be a string like 'library:<id>' or 'pack:<pack-id>/<asset-id>' or mapping"
+        ),
+    }
+}
+
+fn apply_trailer_encoding_defaults(manifest_path: &Path, root: &mut Value) -> Result<()> {
+    if !is_trailer_manifest(manifest_path) {
+        return Ok(());
+    }
+    let Some(root_map) = root.as_mapping_mut() else {
+        return Ok(());
+    };
+    let Some(environment_value) = root_map.get_mut(key("environment")) else {
+        return Ok(());
+    };
+    let Some(environment_map) = environment_value.as_mapping_mut() else {
+        return Ok(());
+    };
+
+    let encoding_key = key("encoding");
+    let mut encoding_map = if let Some(existing) = environment_map.remove(&encoding_key) {
+        existing
+            .as_mapping()
+            .cloned()
+            .ok_or_else(|| anyhow!("environment.encoding must be a mapping"))?
+    } else {
+        Mapping::new()
+    };
+
+    encoding_map
+        .entry(key("prores_profile"))
+        .or_insert_with(|| Value::String("prores4444".to_owned()));
+    encoding_map
+        .entry(key("vendor"))
+        .or_insert_with(|| Value::String("apl0".to_owned()));
+    environment_map.insert(encoding_key, Value::Mapping(encoding_map));
+    Ok(())
 }
 
 fn parse_param_definitions(root: &Value) -> Result<BTreeMap<String, ParamDefinition>> {
@@ -671,7 +880,11 @@ fn override_example_for_type(param_type: ParamType) -> &'static str {
     }
 }
 
-fn validate_manifest(manifest: &mut Manifest, manifest_path: &Path) -> Result<()> {
+fn validate_manifest(
+    manifest: &mut Manifest,
+    manifest_path: &Path,
+    options: &ManifestLoadOptions,
+) -> Result<()> {
     manifest.environment.validate()?;
     validate_manifest_manifest_level(manifest)?;
 
@@ -710,20 +923,26 @@ fn validate_manifest(manifest: &mut Manifest, manifest_path: &Path) -> Result<()
 
         match layer {
             Layer::Asset(asset_layer) => {
-                let resolved = resolve_and_validate_asset_path(
+                let resolved = resolve_and_validate_layer_asset_path(
+                    manifest_path,
                     &manifest_dir,
                     &asset_layer.source_path,
                     &asset_layer.common.id,
                     "source_path",
+                    ManifestSourceUsage::Image,
+                    options.allow_raw_paths,
                 )?;
                 asset_layer.source_path = resolved;
             }
             Layer::Image(image_layer) => {
-                let resolved = resolve_and_validate_asset_path(
+                let resolved = resolve_and_validate_layer_asset_path(
+                    manifest_path,
                     &manifest_dir,
                     &image_layer.image.path,
                     &image_layer.common.id,
                     "image.path",
+                    ManifestSourceUsage::Image,
+                    options.allow_raw_paths,
                 )?;
                 image_layer.image.path = resolved;
             }
@@ -751,11 +970,14 @@ fn validate_manifest(manifest: &mut Manifest, manifest_path: &Path) -> Result<()
             Layer::Text(_) => {}
             Layer::Ascii(ascii_layer) => {
                 if let Some(path) = &ascii_layer.ascii.path {
-                    let resolved = resolve_and_validate_asset_path(
+                    let resolved = resolve_and_validate_layer_asset_path(
+                        manifest_path,
                         &manifest_dir,
                         path,
                         &ascii_layer.common.id,
                         "ascii.path",
+                        ManifestSourceUsage::Ascii,
+                        options.allow_raw_paths,
                     )?;
                     ascii_layer.ascii.path = Some(resolved);
                 }
@@ -764,9 +986,33 @@ fn validate_manifest(manifest: &mut Manifest, manifest_path: &Path) -> Result<()
                 })?;
             }
             Layer::Sequence(seq_layer) => {
-                let resolved_dir = if seq_layer.sequence.path.is_relative() {
+                let resolved_dir = if is_asset_reference_path(&seq_layer.sequence.path) {
+                    resolve_and_validate_layer_asset_path(
+                        manifest_path,
+                        &manifest_dir,
+                        &seq_layer.sequence.path,
+                        &seq_layer.common.id,
+                        "sequence.path",
+                        ManifestSourceUsage::Sequence,
+                        options.allow_raw_paths,
+                    )?
+                } else if seq_layer.sequence.path.is_relative() {
+                    if is_trailer_manifest(manifest_path) && !options.allow_raw_paths {
+                        bail!(
+                            "layer '{}' sequence.path must use library:<id> or pack:<pack-id>/<asset-id> in manifests/trailer (raw path '{}' is not allowed). Use --allow-raw-path-sources to override.",
+                            seq_layer.common.id,
+                            seq_layer.sequence.path.display()
+                        );
+                    }
                     manifest_dir.join(&seq_layer.sequence.path)
                 } else {
+                    if is_trailer_manifest(manifest_path) && !options.allow_raw_paths {
+                        bail!(
+                            "layer '{}' sequence.path must use library:<id> or pack:<pack-id>/<asset-id> in manifests/trailer (raw path '{}' is not allowed). Use --allow-raw-path-sources to override.",
+                            seq_layer.common.id,
+                            seq_layer.sequence.path.display()
+                        );
+                    }
                     seq_layer.sequence.path.clone()
                 };
                 if !resolved_dir.is_dir() {
@@ -856,6 +1102,60 @@ fn resolve_and_validate_asset_path(
     Ok(resolved)
 }
 
+fn resolve_and_validate_layer_asset_path(
+    manifest_path: &Path,
+    manifest_dir: &Path,
+    source_path: &Path,
+    layer_id: &str,
+    field_name: &str,
+    usage: ManifestSourceUsage,
+    allow_raw_paths: bool,
+) -> Result<PathBuf> {
+    if let Some(reference) = source_path
+        .to_str()
+        .filter(|value| parse_asset_reference(value).is_some())
+    {
+        return resolve_manifest_asset_reference(manifest_path, reference, usage).with_context(
+            || {
+                format!(
+                    "layer '{}' {} could not resolve asset source '{}'",
+                    layer_id,
+                    field_name,
+                    source_path.display()
+                )
+            },
+        );
+    }
+
+    if is_trailer_manifest(manifest_path) && !allow_raw_paths {
+        bail!(
+            "layer '{}' {} must use library:<id> or pack:<pack-id>/<asset-id> in manifests/trailer (raw path '{}' is not allowed). Use --allow-raw-path-sources to override.",
+            layer_id,
+            field_name,
+            source_path.display()
+        );
+    }
+
+    resolve_and_validate_asset_path(manifest_dir, source_path, layer_id, field_name)
+}
+
+fn is_asset_reference_path(source_path: &Path) -> bool {
+    source_path
+        .to_str()
+        .and_then(parse_asset_reference)
+        .is_some()
+}
+
+fn is_trailer_manifest(manifest_path: &Path) -> bool {
+    let components = manifest_path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    components
+        .windows(2)
+        .any(|pair| pair[0] == "manifests" && pair[1] == "trailer")
+}
+
 fn valid_identifier(identifier: &str) -> bool {
     let mut chars = identifier.chars();
     let Some(first) = chars.next() else {
@@ -902,6 +1202,9 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{load_and_validate_manifest_with_options, ManifestLoadOptions, ParamOverride};
+    use crate::asset_catalog::add_asset_to_pack;
+    use crate::library::{add_asset, LibraryAddRequest, LibraryItemType};
+    use crate::schema::{Layer, ProResProfile};
     use tempfile::tempdir;
 
     #[test]
@@ -943,6 +1246,7 @@ layers:
             &manifest_path,
             &ManifestLoadOptions {
                 overrides: vec![ParamOverride::parse("speed=1.5").expect("override parses")],
+                allow_raw_paths: false,
             },
         )
         .expect("manifest should load");
@@ -982,9 +1286,178 @@ layers:
             &manifest_path,
             &ManifestLoadOptions {
                 overrides: vec![ParamOverride::parse("speed=10").expect("override parses")],
+                allow_raw_paths: false,
             },
         )
         .expect_err("override should fail");
         assert!(error.to_string().contains("above max"));
+    }
+
+    #[test]
+    fn trailer_manifest_supports_library_source_shorthand() {
+        let dir = tempdir().expect("tempdir should create");
+
+        let source = dir.path().join("input.png");
+        let mut image = image::RgbaImage::new(2, 2);
+        image.put_pixel(0, 0, image::Rgba([255, 255, 255, 255]));
+        image.put_pixel(1, 0, image::Rgba([255, 255, 255, 255]));
+        image.put_pixel(0, 1, image::Rgba([255, 255, 255, 255]));
+        image.put_pixel(1, 1, image::Rgba([255, 255, 255, 255]));
+        image.save(&source).expect("image should save");
+
+        add_asset(
+            dir.path(),
+            &LibraryAddRequest {
+                source_path: source,
+                id: "tiny-image".to_owned(),
+                item_type: Some(LibraryItemType::Image),
+                normalize: None,
+            },
+        )
+        .expect("library add should succeed");
+
+        let manifest_dir = dir.path().join("manifests/trailer");
+        std::fs::create_dir_all(&manifest_dir).expect("manifest dir should create");
+        let manifest_path = manifest_dir.join("scene.vcr");
+        std::fs::write(
+            &manifest_path,
+            r#"
+version: 1
+environment:
+  resolution: { width: 64, height: 64 }
+  fps: 24
+  duration: { frames: 2 }
+layers:
+  - id: logo
+    source: { kind: library, id: tiny-image }
+"#,
+        )
+        .expect("manifest should write");
+
+        let manifest = load_and_validate_manifest_with_options(
+            &manifest_path,
+            &ManifestLoadOptions::default(),
+        )
+        .expect("manifest should load");
+
+        assert_eq!(
+            manifest.environment.encoding.prores_profile,
+            ProResProfile::Prores4444
+        );
+        let layer = manifest.layers.first().expect("one layer expected");
+        match layer {
+            Layer::Image(layer) => {
+                assert!(layer
+                    .image
+                    .path
+                    .to_string_lossy()
+                    .contains("library/items/tiny-image/source.png"));
+            }
+            other => panic!("expected image layer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn manifest_supports_pack_source_shorthand() {
+        let dir = tempdir().expect("tempdir should create");
+
+        let source = dir.path().join("logo.png");
+        let mut image = image::RgbaImage::new(2, 2);
+        image.put_pixel(0, 0, image::Rgba([255, 255, 255, 255]));
+        image.put_pixel(1, 0, image::Rgba([255, 255, 255, 255]));
+        image.put_pixel(0, 1, image::Rgba([255, 255, 255, 255]));
+        image.put_pixel(1, 1, image::Rgba([255, 255, 255, 255]));
+        image.save(&source).expect("image should save");
+
+        add_asset_to_pack(
+            dir.path(),
+            "brand-kit",
+            &LibraryAddRequest {
+                source_path: source,
+                id: "tiny-logo".to_owned(),
+                item_type: Some(LibraryItemType::Image),
+                normalize: None,
+            },
+        )
+        .expect("pack add should succeed");
+
+        let manifest_path = dir.path().join("scene.vcr");
+        std::fs::write(
+            &manifest_path,
+            r#"
+version: 1
+environment:
+  resolution: { width: 64, height: 64 }
+  fps: 24
+  duration: { frames: 2 }
+layers:
+  - id: logo
+    source: { kind: pack, pack: brand-kit, id: tiny-logo }
+"#,
+        )
+        .expect("manifest should write");
+
+        let manifest = load_and_validate_manifest_with_options(
+            &manifest_path,
+            &ManifestLoadOptions::default(),
+        )
+        .expect("manifest should load");
+
+        let layer = manifest.layers.first().expect("one layer expected");
+        match layer {
+            Layer::Image(layer) => {
+                assert!(layer
+                    .image
+                    .path
+                    .to_string_lossy()
+                    .contains("packs/brand-kit/items/tiny-logo/source.png"));
+            }
+            other => panic!("expected image layer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trailer_manifest_rejects_raw_paths_without_opt_in() {
+        let dir = tempdir().expect("tempdir should create");
+        let manifest_dir = dir.path().join("manifests/trailer");
+        std::fs::create_dir_all(&manifest_dir).expect("manifest dir should create");
+
+        let local_image = manifest_dir.join("local.png");
+        let mut image = image::RgbaImage::new(1, 1);
+        image.put_pixel(0, 0, image::Rgba([255, 255, 255, 255]));
+        image.save(&local_image).expect("image should save");
+
+        let manifest_path = manifest_dir.join("raw_path.vcr");
+        std::fs::write(
+            &manifest_path,
+            r#"
+version: 1
+environment:
+  resolution: { width: 64, height: 64 }
+  fps: 24
+  duration: { frames: 2 }
+layers:
+  - id: logo
+    image:
+      path: local.png
+"#,
+        )
+        .expect("manifest should write");
+
+        let error = load_and_validate_manifest_with_options(
+            &manifest_path,
+            &ManifestLoadOptions::default(),
+        )
+        .expect_err("raw paths should fail in trailer by default");
+        assert!(error.to_string().contains("must use library:<id>"));
+
+        load_and_validate_manifest_with_options(
+            &manifest_path,
+            &ManifestLoadOptions {
+                overrides: Vec::new(),
+                allow_raw_paths: true,
+            },
+        )
+        .expect("raw paths should load when allow_raw_paths=true");
     }
 }
