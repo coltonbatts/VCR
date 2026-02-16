@@ -1,0 +1,49 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: { frames: 60 }
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+seed: 9999
+params:
+  intensity: 0.8
+  phase: 1.5
+
+layers:
+  - id: grain_base
+    procedural:
+      kind: solid_color
+      color: { r: 0.05, g: 0.05, b: 0.08, a: 1.0 }
+
+  - id: core_glow
+    pos_x: 960
+    pos_y: 540
+    scale: [1.1, 1.1]
+    procedural:
+      kind: gradient
+      start_color: { r: 0.1, g: 0.4, b: 0.9, a: 0.6 }
+      end_color: { r: 0.2, g: 0.1, b: 0.4, a: 0.0 }
+      direction: horizontal
+    anchor: center
+
+  - id: vcr_logo
+    pos_x: 960
+    pos_y: 540
+    scale: [0.9, 0.9]
+    rotation_degrees: "sin(t * 0.05) * 2.0"
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.9 }
+    anchor: center
+
+  - id: border_accent
+    z_index: 10
+    procedural:
+      kind: gradient
+      start_color: { r: 0.0, g: 0.8, b: 1.0, a: 0.4 }
+      end_color: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
+      direction: vertical
+    opacity: "clamp(sin(t * 0.1) * 0.5 + 0.5, 0.0, 1.0)"

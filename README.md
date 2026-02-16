@@ -10,7 +10,15 @@ For people who think code is faster than the Adobe ecosystem.
 
 **Deterministic rendering.** Same manifest, same output. Version control your animations. Ship them like code.
 
-**Terminal-native.** Render in scripts, CI/CD pipelines, or let AI agents generate your animations.
+- **Terminal-native.** Render in scripts, CI/CD pipelines, or let AI agents generate your animations.
+
+## VCR for Agents
+
+VCR is designed to be **Agent-First**. It provides:
+
+- **JSON Error Contract**: Set `VCR_AGENT_MODE=1` to get machine-readable error payloads with suggested fixes.
+- **Deterministic Pipeline**: Agents can reason about frames and pixels without worrying about platform-specific variations.
+- **Structured Manifests**: Declarative YAML makes it easy for LLMs to author and modify complex scenes.
 
 **Built for Silicon Macs** (and anywhere else with Rust). Your M1/M2 can actually do something interesting.
 
@@ -102,10 +110,35 @@ layers:
 Render it:
 
 ```bash
-cargo run --release -- render hello.vcr -o hello.mov
+vcr render hello.vcr -o hello.mov
 ```
 
-That's it. You now have a `hello.mov` file with an animated gradient.
+### Copy-Paste High-End Demo
+
+Want to see something more complex? Copy this to `demo.vcr`:
+
+```yaml
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 24
+  duration: { frames: 48 }
+layers:
+  - id: bg
+    procedural:
+      kind: gradient
+      start_color: { r: 0.1, g: 0.1, b: 0.2, a: 1.0 }
+      end_color: { r: 0.3, g: 0.0, b: 0.1, a: 1.0 }
+      direction: vertical
+  - id: circle
+    pos_x: "1920/2 + sin(t * 0.2) * 200"
+    pos_y: "1080/2"
+    procedural:
+      kind: solid_color
+      color: { r: 0.9, g: 0.8, b: 0.2, a: 0.8 }
+```
+
+Render it with: `vcr render demo.vcr -o demo.mov`
 
 ## Manifest Reference
 
@@ -256,6 +289,7 @@ layers:
 ```
 
 See:
+
 - `docs/ASSETS.md` for quickstart
 - `docs/PACKS.md` for pack format and sharing
 

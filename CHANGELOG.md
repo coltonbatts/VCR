@@ -1,7 +1,12 @@
 # Changelog
 
-## v0.1.2 (2026-02-15)
+## v0.1.2 (2026-02-16)
 
+- **Release Readiness & Documentation**
+  - README: Added **"VCR for Agents"** section highlighting the JSON error contract and deterministic pipeline.
+  - README: Added a high-impact **Copy-Paste High-End Demo** for immediate quickstart.
+  - PROJECT_CUSTODIAN: Updated status to "Release-Ready" for v1 release.
+  - Version bump to `v0.1.2` across `Cargo.toml` and documentation.
 - **Feature-modularized release**
   - Core renderer: 0 optional dependencies
   - Optional: `play` (GUI previewer with hot-reload)
