@@ -14,7 +14,13 @@ fn load_with_sets(path: &Path, sets: &[&str]) -> anyhow::Result<vcr::schema::Man
         .iter()
         .map(|raw| ParamOverride::parse(raw))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    load_and_validate_manifest_with_options(path, &ManifestLoadOptions { overrides })
+    load_and_validate_manifest_with_options(
+        path,
+        &ManifestLoadOptions {
+            overrides,
+            allow_raw_paths: false,
+        },
+    )
 }
 
 #[test]
@@ -322,6 +328,7 @@ layers:
                 ParamOverride::parse("speed=1.0").expect("first override should parse"),
                 ParamOverride::parse("speed=2.0").expect("second override should parse"),
             ],
+            allow_raw_paths: false,
         },
     )
     .expect_err("duplicate overrides should fail");

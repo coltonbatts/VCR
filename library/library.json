@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "trailer-subtitle",
+      "type": "ascii",
+      "path": "library/items/trailer-subtitle/source.txt",
+      "sha256": "bb26b522060f58c5aa71b5da0eadd1734563640489636b7fa159cc1f962055de",
+      "spec": {
+        "width": 24,
+        "height": 1,
+        "has_alpha": false,
+        "pixel_format": "ascii"
+      }
+    },
+    {
+      "id": "trailer-title",
+      "type": "ascii",
+      "path": "library/items/trailer-title/source.txt",
+      "sha256": "a4c942cb0c3d77bfa5b34362f638a6bd177097a631cd2a8555f569231cf08267",
+      "spec": {
+        "width": 3,
+        "height": 1,
+        "has_alpha": false,
+        "pixel_format": "ascii"
+      }
+    },
+    {
+      "id": "white-pixel",
+      "type": "image",
+      "path": "library/items/white-pixel/source.png",
+      "sha256": "3c002400e2ae0d60e97ed32303782c869e6743d617d11a539248e563412c3222",
+      "spec": {
+        "width": 1,
+        "height": 1,
+        "has_alpha": false,
+        "pixel_format": "rgb8"
+      }
+    }
+  ]
+}

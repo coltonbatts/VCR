@@ -1,0 +1,47 @@
+version: 1
+environment:
+  resolution: { width: 1080, height: 1920 }
+  fps: 24
+  duration: { frames: 120 }
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+seed: 0
+
+layers:
+  - id: top_rule
+    z_index: 1
+    anchor: center
+    position: { x: 540, y: 800 }
+    opacity: "step(8, t)"
+    procedural:
+      kind: line
+      start: { x: 0.25, y: 0.5 }
+      end: { x: 0.75, y: 0.5 }
+      thickness: 0.003
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: callout_text
+    z_index: 2
+    anchor: center
+    pos_x: 540
+    pos_y: "1180 - step(12, t) * 220"
+    opacity: "step(12, t)"
+    text:
+      content: "CLI-NATIVE"
+      font_family: "GeistPixel-Line"
+      font_size: 150
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: bottom_rule
+    z_index: 3
+    anchor: center
+    position: { x: 540, y: 1120 }
+    opacity: "step(16, t)"
+    procedural:
+      kind: line
+      start: { x: 0.25, y: 0.5 }
+      end: { x: 0.75, y: 0.5 }
+      thickness: 0.003
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }

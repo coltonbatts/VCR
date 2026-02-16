@@ -4,6 +4,7 @@ version = "0.1.2"
 edition = "2021"
 description = "VCR (Video Component Renderer): headless, local-first motion graphics compiler"
 license = "MIT"
+default-run = "vcr"
 
 [features]
 default = []
@@ -46,5 +47,27 @@ rapier3d = "0.19.0"
 [[bench]]
 name = "render_frame"
 harness = false
+
+[lints.clippy]
+uninlined_format_args = "allow"
+too_many_arguments = "allow"
+large_enum_variant = "allow"
+type_complexity = "allow"
+new_without_default = "allow"
+const_is_empty = "allow"
+unnecessary_map_or = "allow"
+manual_repeat_n = "allow"
+manual_div_ceil = "allow"
+manual_slice_fill = "allow"
+manual_range_contains = "allow"
+manual_next_back = "allow"
+manual_contains = "allow"
+field_reassign_with_default = "allow"
+collapsible_if = "allow"
+useless_format = "allow"
+useless_conversion = "allow"
+unused_enumerate_index = "allow"
+only_used_in_recursion = "allow"
+map_identity = "allow"
 
 # figma-vcr-workflow is the only additional binary (integrations)

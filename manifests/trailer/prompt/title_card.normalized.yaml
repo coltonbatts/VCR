@@ -1,0 +1,85 @@
+standardized_vcr_prompt: |-
+  ROLE
+  You are the VCR render engine. Execute deterministically from explicit parameters and fail fast on invalid or missing critical inputs.
+
+  TASK
+  Render with these explicit parameters:
+  - Resolution: 1080x1920
+  - Render FPS: 24
+  - Output FPS: 24
+  - Duration: 6.000s
+  - Frames: 144
+  - Output Type: video
+  - Output Path: ./renders/out.mov
+  - Container: mov
+  - Codec: prores_4444
+  - Alpha: true
+  - Determinism Seed: 0
+  - No blocking validation errors were found in timing fields.
+
+  INSTRUCTIONS
+  - Determinism is required. Use the fixed seed and avoid time-varying randomness.
+  - If exactly one of duration or frame count is provided, derive the other using fps and integer rounding for frames.
+  - If render fps differs from output fps, apply frame sampling with interpolation disabled unless explicitly overridden.
+  - Validate asset paths, fonts, and output compatibility before rendering.
+  - Do not synthesize unsupported features; surface them as validation issues.
+
+  CONTEXT
+  - Source mode: natural_language
+  - Original input snapshot: Vertical 1080x1920 trailer title card. Text VCR in Geist Pixel only. White text only on transparent alpha background. 24fps. 6 seconds. Character-by-character reveal then hard hold. No color no gradients no textures.
+  - Normalization produced 1 unresolved issue(s).
+
+  OUTPUT FORMAT
+  - Primary artifact path: ./renders/out.mov
+  - Emit run metadata with resolution, fps, duration_seconds, frames, codec, alpha, seed, and frame conversion policy.
+normalized_spec:
+  project: {}
+  intent:
+    prompt: Vertical 1080x1920 trailer title card. Text VCR in Geist Pixel only. White text only on transparent alpha background. 24fps. 6 seconds. Character-by-character reveal then hard hold. No color no gradients no textures.
+  input: {}
+  scene: {}
+  ascii: {}
+  render:
+    resolution:
+      width: 1080
+      height: 1920
+    fps: 24
+    duration_seconds: 6.0
+    frames: 144
+  output:
+    type: video
+    path: ./renders/out.mov
+    container: mov
+    codec: prores_4444
+    alpha: true
+    fps: 24
+    frame_rate_conversion:
+      policy: frame_sampling
+      interpolation: false
+  determinism:
+    enabled: true
+    seed: 0
+  notes: null
+unknowns_and_fixes:
+- issue: Text/ASCII is requested but no explicit font is provided.
+  why_it_matters: Font differences change metrics and layout, reducing output predictability.
+  proposed_fix: |-
+    Add:
+    ascii:
+      font: "GeistPixel-Line"
+assumptions_applied:
+- Defaulted output fps to render fps because `output.fps` was missing.
+- Computed frames as round(duration_seconds*fps) (6.000*24).
+- Defaulted output type to `video` because it was missing.
+- Defaulted output path to `./renders/out.mov` because `output.path` was missing.
+- Defaulted codec to ProRes 4444 because codec was missing and alpha is enabled.
+- Defaulted deterministic seed to 0 because it was missing.
+acceptance_checks:
+- Spec serializes to valid YAML with expected top-level keys.
+- assert render.resolution.width == 1080 && render.resolution.height == 1920
+- assert render.fps == 24
+- assert output.fps == 24
+- assert determinism.seed == 0
+- assert output.path == "./renders/out.mov" && output.codec == "prores_4444"
+- assert frames == round(duration_seconds * fps) (144 == round(6.000 * 24))
+- assert all referenced asset and font paths exist before render execution.

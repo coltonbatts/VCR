@@ -1,0 +1,44 @@
+version: 1
+environment:
+  resolution: { width: 1080, height: 1920 }
+  fps: 24
+  duration: { frames: 144 }
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+seed: 0
+
+layers:
+  - id: char_v
+    z_index: 1
+    anchor: center
+    position: { x: 360, y: 960 }
+    opacity: "step(10, t)"
+    text:
+      content: "V"
+      font_family: "GeistPixel-Line"
+      font_size: 360
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: char_c
+    z_index: 2
+    anchor: center
+    position: { x: 540, y: 960 }
+    opacity: "step(14, t)"
+    text:
+      content: "C"
+      font_family: "GeistPixel-Line"
+      font_size: 360
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: char_r
+    z_index: 3
+    anchor: center
+    position: { x: 720, y: 960 }
+    opacity: "step(18, t)"
+    text:
+      content: "R"
+      font_family: "GeistPixel-Line"
+      font_size: 360
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }

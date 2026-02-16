@@ -7,7 +7,7 @@ fn main() {
         if output.status.success() {
             if let Ok(s) = String::from_utf8(output.stdout) {
                 let hash = s.trim();
-                println!("cargo:rustc-env=VCR_GIT_HASH={}", hash);
+                println!("cargo:rustc-env=VCR_GIT_HASH={hash}");
             }
         }
     }

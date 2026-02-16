@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Result};
 use image::RgbaImage;
 use vcr::manifest::{load_and_validate_manifest_with_options, ManifestLoadOptions};
 use vcr::renderer::Renderer;
-use vcr::timeline::{ascii_overrides_from_flags, AsciiRuntimeOverrides, RenderSceneData};
+use vcr::timeline::{ascii_overrides_from_flags, RenderSceneData};
 
 const DEFAULT_MANIFEST: &str = "manifests/ascii_post_debug.vcr";
 const OUTPUT_DIR: &str = "renders/ascii_explore";
@@ -176,7 +176,7 @@ fn run_explore(manifest_path: &Path) -> Result<()> {
             Some(matches!(variation.edge_boost, BoolVariant::On)),
             Some(matches!(variation.bayer_dither, BoolVariant::On)),
         )
-        .unwrap_or_else(|| AsciiRuntimeOverrides::default());
+        .unwrap_or_default();
 
         let mut scene = RenderSceneData::from_manifest(&manifest);
         scene = scene.with_ascii_overrides(ascii_overrides);

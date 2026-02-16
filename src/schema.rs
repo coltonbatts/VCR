@@ -110,12 +110,12 @@ pub enum ProResProfile {
 impl ProResProfile {
     pub fn to_ffmpeg_profile(self) -> &'static str {
         match self {
-            Self::Proxy => "0",
-            Self::Lt => "1",
-            Self::Standard => "2",
-            Self::Hq => "3",
-            Self::Prores4444 => "4",
-            Self::Prores4444Xq => "5",
+            Self::Proxy => "proxy",
+            Self::Lt => "lt",
+            Self::Standard => "standard",
+            Self::Hq => "hq",
+            Self::Prores4444 => "4444",
+            Self::Prores4444Xq => "4444xq",
         }
     }
 }

@@ -1,0 +1,29 @@
+version: 1
+environment:
+  resolution: { width: 1080, height: 1920 }
+  fps: 24
+  duration: { frames: 144 }
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+seed: 0
+
+layers:
+  - id: subtitle_wipe
+    z_index: 1
+    anchor: center
+    position: { x: 540, y: 960 }
+    ascii:
+      grid: { rows: 1, columns: 24 }
+      cell: { width: 32, height: 58, pixel_aspect_ratio: 1.0 }
+      font_variant: geist_pixel_line
+      foreground: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+      background: { r: 1.0, g: 1.0, b: 1.0, a: 0.0 }
+      inline:
+        - "VIDEO COMPONENT RENDERER"
+      reveal:
+        kind: column_major
+        start_frame: 12
+        frames_per_cell: 1
+        direction: forward

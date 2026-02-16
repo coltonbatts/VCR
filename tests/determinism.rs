@@ -61,6 +61,7 @@ fn render_hash(manifest_path: &Path, frame: u32, overrides: &[&str]) -> u64 {
             manifest_path,
             &ManifestLoadOptions {
                 overrides: parsed_overrides,
+                allow_raw_paths: false,
             },
         )
         .expect("failed to load manifest with overrides")

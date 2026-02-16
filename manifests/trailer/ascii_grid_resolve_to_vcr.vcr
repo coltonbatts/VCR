@@ -1,0 +1,69 @@
+version: 1
+environment:
+  resolution: { width: 1080, height: 1920 }
+  fps: 24
+  duration: { frames: 168 }
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+seed: 0
+
+layers:
+  - id: ascii_grid
+    z_index: 1
+    anchor: center
+    position: { x: 540, y: 960 }
+    opacity: "1.0 - step(132, t)"
+    ascii:
+      grid: { rows: 8, columns: 12 }
+      cell: { width: 44, height: 44, pixel_aspect_ratio: 1.0 }
+      font_variant: geist_pixel_line
+      foreground: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+      background: { r: 1.0, g: 1.0, b: 1.0, a: 0.0 }
+      inline:
+        - "+-+-+-+-+-+-"
+        - "|.|.|.|.|.|."
+        - "+-+-+-+-+-+-"
+        - "|.|.|.|.|.|."
+        - "+-+-+-+-+-+-"
+        - "|.|.|.|.|.|."
+        - "+-+-+-+-+-+-"
+        - "|.|.|.|.|.|."
+
+  - id: ascii_block
+    z_index: 2
+    anchor: center
+    position: { x: 540, y: 960 }
+    opacity: "1.0 - step(132, t)"
+    ascii:
+      grid: { rows: 8, columns: 12 }
+      cell: { width: 44, height: 44, pixel_aspect_ratio: 1.0 }
+      font_variant: geist_pixel_line
+      foreground: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+      background: { r: 1.0, g: 1.0, b: 1.0, a: 0.0 }
+      inline:
+        - "############"
+        - "############"
+        - "############"
+        - "############"
+        - "############"
+        - "############"
+        - "############"
+        - "############"
+      reveal:
+        kind: column_major
+        start_frame: 36
+        frames_per_cell: 1
+        direction: forward
+
+  - id: final_title
+    z_index: 3
+    anchor: center
+    position: { x: 540, y: 960 }
+    opacity: "step(132, t)"
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 300
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
