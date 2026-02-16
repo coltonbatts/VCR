@@ -12,46 +12,10 @@ layers:
       kind: solid_color
       color: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
 
-  - id: fractal_core
+  - id: pure_core
     z_index: 10
-    position: { x: 960, y: 480 }
+    position: { x: 960, y: 540 }
     anchor: center
-    scale: { x: 0.7, y: 0.7 }
+    scale: { x: 1.0, y: 1.0 }
     shader:
       path: "shaders/beyond_the_ceiling.wgsl"
-
-  - id: terminal_text
-    z_index: 30
-    position: { x: 960, y: 880 }
-    anchor: center
-    ascii:
-      grid: { rows: 1, columns: 32 }
-      cell: { width: 24, height: 42 }
-      font_variant: geist_pixel_square
-      foreground: { r: 0.8, g: 0.7, b: 1.0, a: 0.9 }
-      background: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
-      inline:
-        - "THIS WAS PRINTED IN A TERMINAL. "
-      reveal:
-        kind: row_major
-        start_frame: 60
-        frames_per_cell: 2
-
-  - id: cinematic_grain
-    z_index: 100
-    opacity: 0.05
-    procedural:
-      kind: solid_color
-      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
-    pos_x: "sin(t * 1000.0) * 10.0"
-    pos_y: "cos(t * 999.0) * 10.0"
-
-  - id: anamorphic_flare
-    z_index: 110
-    position: { x: 960, y: 480 }
-    anchor: center
-    scale: { x: 8.0, y: 0.015 }
-    procedural:
-      kind: solid_color
-      color: { r: 0.5, g: 0.3, b: 1.0, a: 0.3 }
-    opacity: "sin(t * 0.1) * 0.15 + 0.1"

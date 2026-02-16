@@ -2,9 +2,18 @@
 
 Motion graphics from your terminal. Write YAML, render video. No Adobe, no GUI, no clicking.
 
-![VCR Ascension Refined](assets/vcr_ascension_terminal_loop.gif)
+![VCR Pure Core Hero](assets/vcr_ascension_pure_loop.gif)
 
 **[NEW: Follow the Golden Path Onboarding Guide →](docs/user_onboarding.md)**
+
+---
+
+## Features
+
+- **Terminal-Driven**: No GUI, no clicking. Just YAML and shaders.
+- **Deterministic**: Every render is identical, every time.
+- **Alpha-First**: Native ProRes 4444 support for professional compositing.
+- **[Element Library →](docs/library/neural_cores.md)**: Pro-grade shaders and technical guides.
 
 For people who think code is faster than the Adobe ecosystem.
 
