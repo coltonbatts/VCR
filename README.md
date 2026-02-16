@@ -19,6 +19,7 @@ For people who think code is faster than the Adobe ecosystem.
 ## What You Get
 
 - **YAML scene manifests** (`.vcr` files) that describe animations as data
+- **Library-first assets** via pinned IDs (`library:<id>`) for reproducible renders
 - **Layered compositing** with z-order control
 - **Procedural sources**: solid colors, linear gradients, or bring your own assets
 - **Per-layer animation**: position, scale, rotation, opacity (keyframed or expression-driven)
@@ -101,7 +102,7 @@ layers:
 Render it:
 
 ```bash
-cargo run --release -- build hello.vcr -o hello.mov
+cargo run --release -- render hello.vcr -o hello.mov
 ```
 
 That's it. You now have a `hello.mov` file with an animated gradient.
@@ -187,10 +188,76 @@ Validates the file and prints a summary.
 **Render to video:**
 
 ```bash
-cargo run -- build myanimation.vcr -o output.mov
+cargo run -- render myanimation.vcr -o output.mov
 ```
 
 Outputs a ProRes 4444 file.
+
+## Library-First Trailer Workflow
+
+The trailer workflow is library-first: manifests in `manifests/trailer/` reject raw asset paths by default and require `library:<id>` references.
+
+Add assets:
+
+```bash
+cargo run -- library add ./path/to/clip.mov --id hero-clip --type video --normalize trailer
+cargo run -- library add ./path/to/logo.png --id hero-logo --type image
+```
+
+Verify pinned hashes/specs:
+
+```bash
+cargo run -- library verify
+```
+
+Use in manifests:
+
+```yaml
+layers:
+  - id: logo
+    source: "library:hero-logo"
+```
+
+Render direct to ProRes 4444 MOV:
+
+```bash
+cargo run -- render manifests/trailer/title_card_vcr.vcr -o renders/trailer/title_card.mov --backend software --determinism-report
+```
+
+Create lightweight sampled PNG previews (no huge frame dump):
+
+```bash
+cargo run -- preview manifests/trailer/title_card_vcr.vcr --frames 12 -o renders/preview/title_card/
+```
+
+## Assets & Packs
+
+VCR also supports pack-scoped assets and a unified catalog view:
+
+```bash
+# Friendly add (auto type + id suggestion)
+cargo run -- add ./assets/logo.png
+
+# Add directly into a pack
+cargo run -- add ./assets/lower_third.png --pack social-kit --id lower-third
+
+# Discover all assets (library + packs)
+cargo run -- assets
+cargo run -- assets search lower
+cargo run -- assets info pack:social-kit/lower-third
+```
+
+Use in manifests:
+
+```yaml
+layers:
+  - id: lower-third
+    source: "pack:social-kit/lower-third"
+```
+
+See:
+- `docs/ASSETS.md` for quickstart
+- `docs/PACKS.md` for pack format and sharing
 
 ## Examples
 
