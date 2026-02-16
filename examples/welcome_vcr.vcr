@@ -1,0 +1,55 @@
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 60
+  duration: 5.0
+  color_space: rec709
+
+layers:
+  - id: background
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.02, g: 0.02, b: 0.03, a: 1.0 }
+
+  - id: globe
+    z_index: 10
+    position: { x: 640, y: 320 }
+    anchor: center
+    scale: { x: 0.7, y: 0.7 }
+    shader:
+      path: "shaders/white_globe.wgsl"
+
+  - id: welcome_text
+    z_index: 20
+    position: { x: 640, y: 580 }
+    anchor: center
+    text:
+      content: "WELCOME TO VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      letter_spacing: 16
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    opacity:
+      start_frame: 0
+      end_frame: 60
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+
+  - id: sub_text
+    z_index: 21
+    position: { x: 640, y: 650 }
+    anchor: center
+    text:
+      content: "DETERMINISTIC MOTION ENGINE"
+      font_family: "GeistPixel-Square"
+      font_size: 18
+      letter_spacing: 8
+      color: { r: 0.6, g: 0.6, b: 0.6, a: 1.0 }
+    opacity:
+      start_frame: 30
+      end_frame: 90
+      from: 0.0
+      to: 1.0
+      easing: ease_out
