@@ -1,0 +1,83 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: 8.0
+  color_space: rec709
+
+layers:
+  - id: void_background
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.01, g: 0.01, b: 0.02, a: 1.0 }
+
+  - id: nebula_glow
+    z_index: 5
+    position: { x: 960, y: 540 }
+    anchor: center
+    scale: { x: 2.5, y: 2.5 }
+    shader:
+      path: "shaders/nebula_glow.wgsl"
+
+  - id: fractal_core
+    z_index: 10
+    position: { x: 960, y: 540 }
+    anchor: center
+    scale: { x: 0.8, y: 0.8 }
+    shader:
+      path: "shaders/beyond_the_ceiling.wgsl"
+
+  - id: main_title
+    z_index: 30
+    position: { x: 960, y: 540 }
+    anchor: center
+    text:
+      content: "VCR ASCENSION"
+      font_family: "GeistPixel-Line"
+      font_size: 120
+      letter_spacing: 32
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+    opacity:
+      start_frame: 60
+      end_frame: 180
+      from: 0.0
+      to: 1.0
+      easing: ease_in_out
+
+  - id: status_bar
+    z_index: 40
+    position: { x: 960, y: 950 }
+    anchor: center
+    text:
+      content: "CEILING_STATUS: ASCENDED // ALL_SYSTEMS_GO"
+      font_family: "GeistPixel-Square"
+      font_size: 20
+      letter_spacing: 12
+      color: { r: 0.5, g: 0.3, b: 0.8, a: 0.8 }
+    opacity:
+      start_frame: 120
+      end_frame: 240
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+
+  - id: cinematic_grain
+    z_index: 100
+    opacity: 0.08
+    procedural:
+      kind: solid_color
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    # Using a fast noise-like expression for grain
+    pos_x: "sin(t * 1000.0) * 10.0"
+    pos_y: "cos(t * 999.0) * 10.0"
+
+  - id: anamorphic_flare
+    z_index: 110
+    position: { x: 960, y: 540 }
+    anchor: center
+    scale: { x: 10.0, y: 0.02 }
+    procedural:
+      kind: solid_color
+      color: { r: 0.6, g: 0.4, b: 1.0, a: 0.4 }
+    opacity: "sin(t * 0.1) * 0.2 + 0.2"

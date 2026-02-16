@@ -2,7 +2,7 @@
 
 Motion graphics from your terminal. Write YAML, render video. No Adobe, no GUI, no clicking.
 
-![Welcome to VCR](assets/welcome_vcr_loop.gif)
+![VCR Ascension](assets/vcr_ascension_loop.gif)
 
 **[NEW: Follow the Golden Path Onboarding Guide →](docs/user_onboarding.md)**
 
