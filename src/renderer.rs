@@ -402,10 +402,9 @@ enum GpuLayerSource {
 
 struct LottieGpu {
     composition: Composition,
-    texture: wgpu::Texture,
+    _texture: wgpu::Texture,
     view: wgpu::TextureView,
     last_rendered_frame: Option<u32>,
-    has_rendered: bool,
 }
 
 struct CustomShaderGpu {
@@ -416,7 +415,6 @@ struct CustomShaderGpu {
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
     has_rendered: bool,
-    is_static: bool,
     last_rendered_frame: Option<u32>,
 }
 
@@ -656,8 +654,6 @@ enum SoftwareLayerSource {
 
 struct LottieSoftware {
     composition: Composition,
-    pixmap: Pixmap,
-    last_rendered_frame: Option<u32>,
 }
 
 impl GpuRenderer {
@@ -1145,8 +1141,7 @@ impl GpuRenderer {
                 continue;
             };
 
-            let total_frames =
-                (lottie.composition.frames.end - lottie.composition.frames.start) as f64;
+            let total_frames = lottie.composition.frames.end - lottie.composition.frames.start;
             if total_frames <= 0.0 {
                 continue;
             }
@@ -1761,17 +1756,13 @@ impl SoftwareRenderer {
                         .map_err(|e| anyhow!("failed to parse lottie animation: {:?}", e))?;
                     let w = composition.width as u32;
                     let h = composition.height as u32;
-                    let pixmap = Pixmap::new(w, h).ok_or_else(|| {
+                    Pixmap::new(w, h).ok_or_else(|| {
                         anyhow!(
                             "failed to create pixmap for lottie layer '{}'",
                             lottie_layer.common.id
                         )
                     })?;
-                    SoftwareLayerSource::Lottie(LottieSoftware {
-                        composition,
-                        pixmap,
-                        last_rendered_frame: None,
-                    })
+                    SoftwareLayerSource::Lottie(LottieSoftware { composition })
                 }
             };
 
@@ -2225,10 +2216,9 @@ fn build_lottie_layer(
         anchor: common.anchor,
         source: GpuLayerSource::Lottie(LottieGpu {
             composition,
-            texture,
+            _texture: texture,
             view,
             last_rendered_frame: None,
-            has_rendered: false,
         }),
     })
 }
@@ -3634,7 +3624,6 @@ fn build_shader_layer(
         _texture: texture,
         view,
         has_rendered: false,
-        is_static,
         last_rendered_frame: None,
     };
 

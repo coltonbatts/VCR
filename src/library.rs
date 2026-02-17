@@ -329,10 +329,10 @@ pub fn prepare_asset_for_storage(
     }
 
     if item_dir.exists() {
-        fs::remove_dir_all(&item_dir)
+        fs::remove_dir_all(item_dir)
             .with_context(|| format!("failed to reset existing item dir {}", item_dir.display()))?;
     }
-    fs::create_dir_all(&item_dir)
+    fs::create_dir_all(item_dir)
         .with_context(|| format!("failed to create item dir {}", item_dir.display()))?;
 
     let stored_path = if item_type == LibraryItemType::Frames {

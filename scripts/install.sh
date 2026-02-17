@@ -68,20 +68,45 @@ cargo build --release
 # --- Symlink ---
 
 BINARY_PATH="$INSTALL_DIR/target/release/vcr"
-LOCAL_BIN="/usr/local/bin/vcr"
+PRIMARY_BIN_DIR="/usr/local/bin"
+FALLBACK_BIN_DIR="$HOME/.local/bin"
+SHELL_NAME="$(basename "${SHELL:-}")"
 
 echo -e "${GREEN}Build successful!${RESET}"
 
-if [ -w "/usr/local/bin" ]; then
-  echo -e "Creating symlink at ${BOLD}$LOCAL_BIN${RESET}..."
-  rm -f "$LOCAL_BIN"
-  ln -s "$BINARY_PATH" "$LOCAL_BIN"
+if [ -d "$PRIMARY_BIN_DIR" ] && [ -w "$PRIMARY_BIN_DIR" ]; then
+  LINK_PATH="$PRIMARY_BIN_DIR/vcr"
+  echo -e "Creating symlink at ${BOLD}$LINK_PATH${RESET}..."
+  rm -f "$LINK_PATH"
+  ln -s "$BINARY_PATH" "$LINK_PATH"
   echo -e "${BOLD}${GREEN}VCR is now installed!${RESET}"
-  echo "Try running: vcr --version"
 else
-  echo -e "${YELLOW}Warning: /usr/local/bin is not writable.${RESET}"
-  echo "You can manually add the VCR binary to your PATH:"
-  echo -e "${BOLD}export PATH=\"\$PATH:$INSTALL_DIR/target/release\"${RESET}"
+  echo -e "${YELLOW}Warning: $PRIMARY_BIN_DIR is not writable.${RESET}"
+  echo -e "Using fallback install location: ${BOLD}$FALLBACK_BIN_DIR${RESET}"
+  mkdir -p "$FALLBACK_BIN_DIR"
+  LINK_PATH="$FALLBACK_BIN_DIR/vcr"
+  rm -f "$LINK_PATH"
+  ln -s "$BINARY_PATH" "$LINK_PATH"
+
+  case "$SHELL_NAME" in
+    zsh)
+      SHELL_RC="$HOME/.zshrc"
+      ;;
+    bash)
+      SHELL_RC="$HOME/.bashrc"
+      ;;
+    *)
+      SHELL_RC="$HOME/.profile"
+      ;;
+  esac
+
+  if [[ ":$PATH:" != *":$FALLBACK_BIN_DIR:"* ]]; then
+    echo -e "${YELLOW}$FALLBACK_BIN_DIR is not on your PATH for this shell.${RESET}"
+    echo "Add it with:"
+    echo -e "${BOLD}echo 'export PATH=\"$FALLBACK_BIN_DIR:\$PATH\"' >> \"$SHELL_RC\"${RESET}"
+    echo -e "${BOLD}source \"$SHELL_RC\"${RESET}"
+  fi
 fi
 
+echo "Try running: vcr --version"
 echo -e "\n${BOLD}${CYAN}Happy Rendering!${RESET}"

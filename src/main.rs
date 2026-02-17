@@ -907,6 +907,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 &output,
                 frame_window,
                 &set,
+                None,
                 ascii_overrides,
                 cli.backend,
                 ffmpeg_mode,
@@ -3064,13 +3065,29 @@ fn run_build(
     output_path: &Path,
     args: FrameWindowArgs,
     set_values: &[String],
+    forced_profile: Option<ProResProfile>,
     ascii_overrides: Option<AsciiRuntimeOverrides>,
     backend: BackendArg,
     ffmpeg_mode: FfmpegMode,
     quiet: bool,
 ) -> Result<()> {
     let parse_start = Instant::now();
-    let manifest = load_manifest_with_overrides(manifest_path, set_values)?;
+    let mut manifest = load_manifest_with_overrides(manifest_path, set_values)?;
+    if let Some(profile) = forced_profile {
+        let current = manifest.environment.encoding.prores_profile;
+        let resolved = render_output_profile(current, profile);
+        if resolved != current {
+            progress_log(
+                quiet,
+                format_args!(
+                    "[VCR] Render contract: overriding encoding.prores_profile from '{}' to '{}'",
+                    current.to_ffmpeg_profile(),
+                    resolved.to_ffmpeg_profile()
+                ),
+            );
+            manifest.environment.encoding.prores_profile = resolved;
+        }
+    }
     let parse_elapsed = parse_start.elapsed();
     let total_frames = manifest.environment.total_frames();
     let window = resolve_frame_window(total_frames, args)?;
@@ -3166,6 +3183,7 @@ fn run_render(
             frames: None,
         },
         set_values,
+        Some(ProResProfile::Prores4444),
         ascii_overrides,
         backend,
         ffmpeg_mode,
@@ -3175,6 +3193,14 @@ fn run_render(
         run_determinism_report(manifest_path, 0, set_values, false)?;
     }
     Ok(())
+}
+
+fn render_output_profile(current: ProResProfile, fallback: ProResProfile) -> ProResProfile {
+    if current.supports_alpha() {
+        current
+    } else {
+        fallback
+    }
 }
 
 fn run_preview(
@@ -4429,7 +4455,7 @@ fn print_timing_summary(quiet: bool, timing: RenderTimingSummary) {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_exit_code, pix_fmt_matches_profile, prores_profile_matches,
+        classify_exit_code, pix_fmt_matches_profile, prores_profile_matches, render_output_profile,
         resolve_ascii_stage_options, should_emit_nonessential_logs, AsciiPresetArg, VcrExitCode,
     };
     use anyhow::anyhow;
@@ -4492,5 +4518,17 @@ mod tests {
             ProResProfile::Standard,
             "yuva444p10le"
         ));
+    }
+
+    #[test]
+    fn render_profile_override_preserves_explicit_alpha_profiles() {
+        assert_eq!(
+            render_output_profile(ProResProfile::Hq, ProResProfile::Prores4444),
+            ProResProfile::Prores4444
+        );
+        assert_eq!(
+            render_output_profile(ProResProfile::Prores4444Xq, ProResProfile::Prores4444),
+            ProResProfile::Prores4444Xq
+        );
     }
 }

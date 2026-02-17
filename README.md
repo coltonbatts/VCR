@@ -342,15 +342,17 @@ This copies the files directly into `library/elements/`:
 
 ## Examples
 
-The repo includes test manifests:
+The repo includes runnable manifests:
 
-- **`sanity_check.vcr`** — basic example with GPU rendering
-- **`sanity_check_fallback.vcr`** — triggers CPU fallback when no GPU is present
+- **`manifests/hello.vcr`** — minimal starter scene
+- **`examples/ai_company_hero.vcr`** — shader + text composition example
+- **`examples/white_on_alpha.vcr`** — transparent background render sample
 
 Run them:
 
 ```bash
-cargo run --release -- build sanity_check.vcr -o test.mov
+cargo run --release -- render manifests/hello.vcr -o renders/hello.mov
+cargo run --release -- render examples/white_on_alpha.vcr -o renders/white_on_alpha.mov
 ```
 
 ## Performance Notes
