@@ -1,0 +1,17 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: 6.0
+  encoding:
+    prores_profile: prores4444
+layers:
+  - id: bg
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.04, g: 0.04, b: 0.04, a: 1.0 }
+  - id: element
+    z_index: 1
+    shader:
+      path: "shaders/y2k_v2_lightning.wgsl"

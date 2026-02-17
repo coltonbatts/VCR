@@ -1,0 +1,71 @@
+# y2k-28: Orbit Trail — motion blur ghost trail on rotating element
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: { frames: 360 }
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+layers:
+  # Ghost trail layers — time_offset shifts t, so they show "where it was"
+  - id: trail_4
+    time_offset: -0.12
+    z_index: 0
+    anchor: center
+    position: [960, 540]
+    scale: [0.42, 0.42]
+    rotation_degrees: "t * -0.25"
+    opacity: 0.06
+    image:
+      path: "pack:y2k-bold-modern/y2k-28"
+
+  - id: trail_3
+    time_offset: -0.09
+    z_index: 0
+    anchor: center
+    position: [960, 540]
+    scale: [0.43, 0.43]
+    rotation_degrees: "t * -0.25"
+    opacity: 0.12
+    image:
+      path: "pack:y2k-bold-modern/y2k-28"
+
+  - id: trail_2
+    time_offset: -0.06
+    z_index: 0
+    anchor: center
+    position: [960, 540]
+    scale: [0.44, 0.44]
+    rotation_degrees: "t * -0.25"
+    opacity: 0.2
+    image:
+      path: "pack:y2k-bold-modern/y2k-28"
+
+  - id: trail_1
+    time_offset: -0.03
+    z_index: 0
+    anchor: center
+    position: [960, 540]
+    scale: [0.45, 0.45]
+    rotation_degrees: "t * -0.25"
+    opacity: 0.35
+    image:
+      path: "pack:y2k-bold-modern/y2k-28"
+
+  # Main
+  - id: y2k_28_asset
+    z_index: 1
+    anchor: center
+    position: [960, 540]
+    scale:
+      start_frame: 0
+      end_frame: 40
+      from: [0.0, 0.0]
+      to: [0.46, 0.46]
+      easing: ease_out
+    rotation_degrees: "t * -0.25"
+    opacity: "smoothstep(0, 25, t)"
+    image:
+      path: "pack:y2k-bold-modern/y2k-28"

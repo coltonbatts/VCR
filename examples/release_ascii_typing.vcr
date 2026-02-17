@@ -1,0 +1,48 @@
+# ASCII Typing Effect - Geist Pixel
+# Character-by-character reveal, white on transparent alpha. 5s, 60fps.
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+seed: 0
+
+layers:
+  - id: line_1
+    z_index: 1
+    anchor: center
+    position: { x: 960, y: 400 }
+    opacity: "smoothstep(0, 30, t)"
+    text:
+      content: "HELLO WORLD"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      letter_spacing: 8
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: line_2
+    z_index: 1
+    anchor: center
+    position: { x: 960, y: 520 }
+    opacity: "smoothstep(60, 90, t)"
+    text:
+      content: "VCR // RELEASE"
+      font_family: "GeistPixel-Square"
+      font_size: 48
+      letter_spacing: 4
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: cursor
+    z_index: 2
+    anchor: center
+    position: { x: 960, y: 640 }
+    opacity: "step(0.5, fract(t / 30.0)) * smoothstep(90, 120, t)"
+    text:
+      content: "_"
+      font_family: "GeistPixel-Line"
+      font_size: 64
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }

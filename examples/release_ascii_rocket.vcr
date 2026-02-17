@@ -1,0 +1,112 @@
+# ASCII Rocket Launch - Geist Pixel
+# White on transparent alpha, 5s, 60fps. For release video compositing.
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+seed: 0
+
+layers:
+  - id: rocket_frame_1
+    z_index: 1
+    anchor: center
+    pos_x: 960
+    pos_y: "540 + (t * 2.5)"
+    opacity: "step(0, t) * (1.0 - step(20, t))"
+    text:
+      content: |
+        .....##.....
+        ....#####..
+        ...#######.
+        ..#########
+        ..#########
+        ..###.###..
+        ..###.###..
+      font_family: "GeistPixel-Line"
+      font_size: 28
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: rocket_frame_2
+    z_index: 1
+    anchor: center
+    pos_x: 960
+    pos_y: "540 + (t * 2.5)"
+    opacity: "step(20, t) * (1.0 - step(40, t))"
+    text:
+      content: |
+        .....##.....
+        ....#####..
+        ...#######.
+        ..#########
+        ..#########
+        ..###.###..
+        ..###.###..
+        ...#...#...
+      font_family: "GeistPixel-Line"
+      font_size: 28
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: rocket_frame_3
+    z_index: 1
+    anchor: center
+    pos_x: 960
+    pos_y: "540 + (t * 2.5)"
+    opacity: "step(40, t) * (1.0 - step(60, t))"
+    text:
+      content: |
+        .....##.....
+        ....#####..
+        ...#######.
+        ..#########
+        ..#########
+        ..###.###..
+        ..###.###..
+        ..#.....#..
+      font_family: "GeistPixel-Line"
+      font_size: 28
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: rocket_frame_4
+    z_index: 1
+    anchor: center
+    pos_x: 960
+    pos_y: "540 + (t * 2.5)"
+    opacity: "step(60, t) * (1.0 - step(80, t))"
+    text:
+      content: |
+        .....##.....
+        ....#####..
+        ...#######.
+        ..#########
+        ..#########
+        ..###.###..
+        ..###.###..
+        ...#...#...
+      font_family: "GeistPixel-Line"
+      font_size: 28
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: rocket_frame_5
+    z_index: 1
+    anchor: center
+    pos_x: 960
+    pos_y: "540 + (t * 2.5)"
+    opacity: "step(80, t)"
+    text:
+      content: |
+        .....##.....
+        ....#####..
+        ...#######.
+        ..#########
+        ..#########
+        ..###.###..
+        ..###.###..
+        ....#.#....
+      font_family: "GeistPixel-Line"
+      font_size: 28
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }

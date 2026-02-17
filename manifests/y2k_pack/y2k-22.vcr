@@ -1,0 +1,40 @@
+# y2k-22: Corrupted CD Spin — smooth rotation with VHS glitch jitter
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: { frames: 360 }
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+modulators:
+  glitch_x:
+    expression: "glitch(t * 12.0, 0.35) * 8.0"
+  glitch_y:
+    expression: "glitch(t * 12.0 + 2.0, 0.35) * 6.0"
+  wobble:
+    expression: "glitch(t * 6.0, 0.25) * 1.5"
+
+layers:
+  - id: y2k_22_asset
+    z_index: 1
+    anchor: center
+    position: [960, 540]
+    scale:
+      start_frame: 0
+      end_frame: 30
+      from: [0.0, 0.0]
+      to: [0.44, 0.44]
+      easing: ease_out
+    rotation_degrees: "t * 0.5"
+    opacity: "smoothstep(0, 20, t)"
+    modulators:
+      - source: glitch_x
+        weights: { x: 1.0 }
+      - source: glitch_y
+        weights: { y: 1.0 }
+      - source: wobble
+        weights: { rotation: 1.0 }
+    image:
+      path: "pack:y2k-bold-modern/y2k-22"

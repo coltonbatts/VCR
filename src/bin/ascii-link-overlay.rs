@@ -14,7 +14,10 @@ mod implementation {
     use vcr::ascii_atlas::GeistPixelAtlas;
     use vcr::encoding::FfmpegPipe;
     use vcr::renderer::Renderer;
-    use vcr::schema::{AsciiFontVariant, Duration as ManifestDuration, Environment, Resolution};
+    use vcr::schema::{
+        AsciiFontVariant, Duration as ManifestDuration, EncodingConfig, Environment,
+        ProResProfile, Resolution,
+    };
     use vcr::timeline::RenderSceneData;
 
     #[derive(Debug, Parser)]
@@ -42,7 +45,7 @@ mod implementation {
         cell_height: u32,
         #[arg(long, default_value_t = 0)]
         padding: u32,
-        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
         white_matte: bool,
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         trim_leading_blank: bool,
@@ -173,7 +176,10 @@ mod implementation {
                 frames: output_frames,
             },
             color_space: Default::default(),
-            encoding: Default::default(),
+            encoding: EncodingConfig {
+                prores_profile: ProResProfile::Prores4444,
+                ..EncodingConfig::default()
+            },
         };
 
         let mut renderer = Renderer::new_software(&environment, &[], RenderSceneData::default())?;

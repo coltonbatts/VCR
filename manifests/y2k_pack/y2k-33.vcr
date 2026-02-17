@@ -1,0 +1,44 @@
+# y2k-33: Scan Line Reveal — Y2K CRT scan line sweeps down, element fades in with glitch
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: { frames: 360 }
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+modulators:
+  glitch_x:
+    expression: "glitch(t * 10.0, 0.3) * 6.0"
+
+layers:
+  # Scan line sweep
+  - id: scanline
+    z_index: 10
+    opacity: 0.2
+    pos_y: "fract(t / 120.0) * 1080"
+    procedural:
+      kind: line
+      start: { x: 0, y: 0 }
+      end: { x: 1920, y: 0 }
+      thickness: 4
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.5 }
+
+  # Element — opacity tied to scan reveal (appears as scan passes)
+  - id: y2k_33_asset
+    z_index: 1
+    anchor: center
+    position: [960, 540]
+    scale:
+      start_frame: 0
+      end_frame: 60
+      from: [0.0, 0.0]
+      to: [0.50, 0.50]
+      easing: ease_out
+    opacity: "smoothstep(0, 90, t) * (0.9 + glitch(t * 12.0, 0.12) * 0.1)"
+    modulators:
+      - source: glitch_x
+        weights: { x: 1.0 }
+    image:
+      path: "pack:y2k-bold-modern/y2k-33"

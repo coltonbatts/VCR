@@ -1,0 +1,41 @@
+# y2k-3-01: Slide-in + Glitch — punches in from off-screen with VHS jitter
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: { frames: 360 }
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+modulators:
+  glitch_x:
+    expression: "glitch(t * 15.0, 0.4) * 12.0"
+  glitch_y:
+    expression: "glitch(t * 15.0 + 1.5, 0.2) * 8.0"
+
+layers:
+  - id: y2k_3_01_asset
+    z_index: 1
+    anchor: center
+    pos_x:
+      start_frame: 0
+      end_frame: 45
+      from: -400
+      to: 960
+      easing: ease_out
+    pos_y: 540
+    scale:
+      start_frame: 0
+      end_frame: 45
+      from: [0.3, 0.3]
+      to: [0.45, 0.45]
+      easing: ease_out
+    opacity: "smoothstep(0, 30, t)"
+    modulators:
+      - source: glitch_x
+        weights: { x: 1.0 }
+      - source: glitch_y
+        weights: { y: 1.0 }
+    image:
+      path: "pack:y2k-bold-modern/y2k-3-01"

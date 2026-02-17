@@ -1,0 +1,47 @@
+# ASCII Logo Reveal - Geist Pixel
+# VCR text with column-major ASCII reveal, then hold. White on transparent alpha.
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+seed: 0
+
+layers:
+  - id: logo_ascii
+    z_index: 1
+    anchor: center
+    position: { x: 960, y: 540 }
+    ascii:
+      grid: { rows: 5, columns: 12 }
+      cell: { width: 48, height: 48, pixel_aspect_ratio: 1.0 }
+      font_variant: geist_pixel_line
+      foreground: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+      background: { r: 1.0, g: 1.0, b: 1.0, a: 0.0 }
+      inline:
+        - "  ##    ##  "
+        - " ## ## ## ##"
+        - " ## ## ## ##"
+        - " ## ## ## ##"
+        - "  ##    ##  "
+      reveal:
+        kind: column_major
+        start_frame: 0
+        frames_per_cell: 3
+        direction: forward
+
+  - id: vcr_text
+    z_index: 2
+    anchor: center
+    position: { x: 960, y: 540 }
+    opacity: "step(180, t)"
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Square"
+      font_size: 180
+      letter_spacing: 12
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }

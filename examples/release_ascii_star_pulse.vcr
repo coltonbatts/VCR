@@ -1,0 +1,115 @@
+# ASCII Star Pulse - Geist Pixel
+# Pulsing 8-point star, white on transparent alpha. 5s, 60fps.
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+seed: 0
+
+layers:
+  - id: star_small
+    z_index: 1
+    anchor: center
+    position: { x: 960, y: 540 }
+    scale: { x: 0.9, y: 0.9 }
+    opacity: "step(0, t) * (1.0 - step(30, t))"
+    text:
+      content: |
+        .....*.....
+        ....*.*....
+        ...*...*...
+        ..*.....*..
+        .*.......*.
+        *.........*
+        .*.......*.
+        ..*.....*..
+        ...*...*...
+        ....*.*....
+        .....*.....
+      font_family: "GeistPixel-Line"
+      font_size: 32
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: star_medium
+    z_index: 1
+    anchor: center
+    position: { x: 960, y: 540 }
+    scale: { x: 0.95, y: 0.95 }
+    opacity: "step(30, t) * (1.0 - step(60, t))"
+    text:
+      content: |
+        ......#......
+        .....#.#.....
+        ....#...#....
+        ...#.....#...
+        ..#.......#..
+        .#.........#.
+        #...........#
+        .#.........#.
+        ..#.......#..
+        ...#.....#...
+        ....#...#....
+        .....#.#.....
+        ......#......
+      font_family: "GeistPixel-Line"
+      font_size: 28
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: star_large
+    z_index: 1
+    anchor: center
+    position: { x: 960, y: 540 }
+    scale: { x: 1.0, y: 1.0 }
+    opacity: "step(60, t) * (1.0 - step(90, t))"
+    text:
+      content: |
+        .......#.......
+        ......#.#......
+        .....#...#.....
+        ....#.....#....
+        ...#.......#...
+        ..#.........#..
+        .#...........#.
+        #.............#
+        .#...........#.
+        ..#.........#..
+        ...#.......#...
+        ....#.....#....
+        .....#...#.....
+        ......#.#......
+        .......#.......
+      font_family: "GeistPixel-Line"
+      font_size: 24
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: star_hold
+    z_index: 1
+    anchor: center
+    position: { x: 960, y: 540 }
+    opacity: "0.9 + sin(t * 0.08) * 0.1"
+    text:
+      content: |
+        .......#.......
+        ......#.#......
+        .....#...#.....
+        ....#.....#....
+        ...#.......#...
+        ..#.........#..
+        .#...........#.
+        #.............#
+        .#...........#.
+        ..#.........#..
+        ...#.......#...
+        ....#.....#....
+        .....#...#.....
+        ......#.#......
+        .......#.......
+      font_family: "GeistPixel-Line"
+      font_size: 24
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    start_time: 1.5

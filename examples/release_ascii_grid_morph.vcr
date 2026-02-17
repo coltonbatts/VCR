@@ -1,0 +1,42 @@
+# ASCII Grid Morph - Geist Pixel
+# Geometric grid with row-major reveal, then column wipe. White on transparent alpha.
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+seed: 0
+
+layers:
+  - id: grid_reveal
+    z_index: 1
+    anchor: center
+    position: { x: 960, y: 540 }
+    ascii:
+      grid: { rows: 12, columns: 24 }
+      cell: { width: 32, height: 32, pixel_aspect_ratio: 1.0 }
+      font_variant: geist_pixel_line
+      foreground: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+      background: { r: 1.0, g: 1.0, b: 1.0, a: 0.0 }
+      inline:
+        - "+--+--+--+--+--+--+--+--"
+        - "| | | | | | | | | | | | "
+        - "+--+--+--+--+--+--+--+--"
+        - "| | | | | | | | | | | | "
+        - "+--+--+--+--+--+--+--+--"
+        - "| | | | | | | | | | | | "
+        - "+--+--+--+--+--+--+--+--"
+        - "| | | | | | | | | | | | "
+        - "+--+--+--+--+--+--+--+--"
+        - "| | | | | | | | | | | | "
+        - "+--+--+--+--+--+--+--+--"
+        - "| | | | | | | | | | | | "
+      reveal:
+        kind: row_major
+        start_frame: 0
+        frames_per_cell: 2
+        direction: forward

@@ -27,5 +27,5 @@ fi
 
 for URL in "${URLS[@]}"; do
   echo "Importing $URL"
-  cargo run --bin ascii-link-overlay -- --url "$URL" "${EXTRA_ARGS[@]}"
+  cargo run --features workflow --bin ascii-link-overlay -- --url "$URL" "${EXTRA_ARGS[@]}"
 done

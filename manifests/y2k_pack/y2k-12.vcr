@@ -1,0 +1,35 @@
+# y2k-12: Glitch Manifestation — VHS-style glitch-in, hold with CRT flicker, glitch-out
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: { frames: 360 }
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+modulators:
+  glitch_x:
+    expression: "glitch(t * 8.0, 0.4) * 12.0"
+  glitch_y:
+    expression: "glitch(t * 8.0 + 3.0, 0.4) * 10.0"
+
+layers:
+  - id: y2k_12_asset
+    z_index: 1
+    anchor: center
+    position: [960, 540]
+    scale:
+      start_frame: 0
+      end_frame: 24
+      from: [0.0, 0.0]
+      to: [0.42, 0.42]
+      easing: ease_out
+    opacity: "smoothstep(0, 18, t) * smoothstep(360, 330, t) * (0.92 + glitch(t * 18.0, 0.15) * 0.08)"
+    modulators:
+      - source: glitch_x
+        weights: { x: 1.0 }
+      - source: glitch_y
+        weights: { y: 1.0 }
+    image:
+      path: "pack:y2k-bold-modern/y2k-12"

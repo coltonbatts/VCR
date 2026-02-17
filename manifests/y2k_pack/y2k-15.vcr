@@ -1,0 +1,32 @@
+# y2k-15: Stepped Digital Spin — Clicky rotation like a loading indicator, digital Y2K
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: { frames: 360 }
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+modulators:
+  step_jitter:
+    expression: "glitch(t * 4.0, 0.2) * 2.0"
+
+layers:
+  - id: y2k_15_asset
+    z_index: 1
+    anchor: center
+    position: [960, 540]
+    scale:
+      start_frame: 0
+      end_frame: 36
+      from: [0.0, 0.0]
+      to: [0.44, 0.44]
+      easing: ease_out
+    rotation_degrees: "floor(t / 4.0) * 15.0"
+    opacity: "smoothstep(0, 20, t)"
+    modulators:
+      - source: step_jitter
+        weights: { rotation: 1.0 }
+    image:
+      path: "pack:y2k-bold-modern/y2k-15"

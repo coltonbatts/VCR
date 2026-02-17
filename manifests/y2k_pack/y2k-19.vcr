@@ -1,0 +1,82 @@
+# y2k-19: Organic Liquid Drift — noise-driven motion + ghost trail
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: { frames: 360 }
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+modulators:
+  drift_x:
+    expression: "noise1d(t * 0.08, 1) * 70.0"
+  drift_y:
+    expression: "noise1d(t * 0.06 + 10.0, 2) * 50.0"
+
+layers:
+  # Ghost trail (oldest) — time_offset makes it show "where we were"
+  - id: trail_3
+    time_offset: -0.25
+    z_index: 0
+    anchor: center
+    position: [960, 540]
+    scale: [0.36, 0.36]
+    opacity: 0.1
+    modulators:
+      - source: drift_x
+        weights: { x: 1.0 }
+      - source: drift_y
+        weights: { y: 1.0 }
+    image:
+      path: "pack:y2k-bold-modern/y2k-19"
+
+  - id: trail_2
+    time_offset: -0.15
+    z_index: 0
+    anchor: center
+    position: [960, 540]
+    scale: [0.40, 0.40]
+    opacity: 0.22
+    modulators:
+      - source: drift_x
+        weights: { x: 1.0 }
+      - source: drift_y
+        weights: { y: 1.0 }
+    image:
+      path: "pack:y2k-bold-modern/y2k-19"
+
+  - id: trail_1
+    time_offset: -0.08
+    z_index: 0
+    anchor: center
+    position: [960, 540]
+    scale: [0.43, 0.43]
+    opacity: 0.38
+    modulators:
+      - source: drift_x
+        weights: { x: 1.0 }
+      - source: drift_y
+        weights: { y: 1.0 }
+    image:
+      path: "pack:y2k-bold-modern/y2k-19"
+
+  # Main element
+  - id: y2k_19_asset
+    z_index: 1
+    anchor: center
+    position: [960, 540]
+    scale:
+      start_frame: 0
+      end_frame: 50
+      from: [0.0, 0.0]
+      to: [0.48, 0.48]
+      easing: ease_out
+    opacity: "smoothstep(0, 30, t)"
+    modulators:
+      - source: drift_x
+        weights: { x: 1.0 }
+      - source: drift_y
+        weights: { y: 1.0 }
+    image:
+      path: "pack:y2k-bold-modern/y2k-19"

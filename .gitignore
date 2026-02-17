@@ -18,3 +18,4 @@ node_modules/
 __pycache__/
 
 /assets/sequences/
+/assets/animations/

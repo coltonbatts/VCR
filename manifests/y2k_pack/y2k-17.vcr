@@ -1,0 +1,39 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: { frames: 360 }
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+modulators:
+  drift_x:
+    expression: "sin(t * 0.020 + 2.10)"
+  drift_y:
+    expression: "cos(t * 0.027 + 0.80)"
+  pulse:
+    expression: "sin(t * 0.048 + 1.80)"
+
+layers:
+  - id: y2k_17_asset
+    z_index: 1
+    anchor: center
+    position: [960, 540]
+    scale:
+      start_frame: 0
+      end_frame: 70
+      from: [0.07, 0.07]
+      to: [0.46, 0.46]
+      easing: ease_out
+    rotation_degrees: "-t * 0.15 + sin(t * 0.023) * 3.4"
+    opacity: "smoothstep(0, 36, t)"
+    modulators:
+      - source: drift_x
+        weights: { x: 20.0 }
+      - source: drift_y
+        weights: { y: 28.0 }
+      - source: pulse
+        weights: { scale_x: 0.018, scale_y: 0.024 }
+    image:
+      path: "pack:y2k-bold-modern/y2k-17"

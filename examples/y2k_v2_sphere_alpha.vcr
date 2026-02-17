@@ -1,0 +1,12 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: 6.0
+  encoding:
+    prores_profile: prores4444
+layers:
+  - id: element
+    z_index: 0
+    shader:
+      path: "shaders/y2k_v2_sphere.wgsl"

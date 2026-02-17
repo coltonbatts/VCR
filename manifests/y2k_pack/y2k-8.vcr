@@ -1,0 +1,35 @@
+# y2k-8: Glitch Pop — burst in with env(), glitch on scale for punchy Y2K reveal
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: { frames: 360 }
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+modulators:
+  glitch_scale:
+    expression: "glitch(t * 8.0, 0.4) * 0.04"
+  glitch_pos:
+    expression: "glitch(t * 8.0, 0.35) * 8.0"
+
+layers:
+  - id: y2k_8_asset
+    z_index: 1
+    anchor: center
+    position: [960, 540]
+    scale:
+      start_frame: 0
+      end_frame: 15
+      from: [0.0, 0.0]
+      to: [0.48, 0.48]
+      easing: ease_out
+    opacity: "smoothstep(0, 8, t) * (0.95 + glitch(t * 10.0, 0.1) * 0.05)"
+    modulators:
+      - source: glitch_scale
+        weights: { scale_x: 1.0, scale_y: 1.0 }
+      - source: glitch_pos
+        weights: { x: 1.0, y: 1.0 }
+    image:
+      path: "pack:y2k-bold-modern/y2k-8"

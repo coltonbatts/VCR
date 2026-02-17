@@ -1,0 +1,30 @@
+# =============================================================================
+# Y2K Bold Pack — Column Element
+# =============================================================================
+# Bold modern Y2K aesthetic, VHS RGB channel separation, clean ProRes 4444 alpha
+# Obsidian+chrome column: rise-with-overshoot, cyan scanner sweep, sway (6s)
+# Drag-and-drop ready for any timeline.
+#
+# Render: vcr build examples/y2k_column.vcr -o renders/y2k_column.mov --backend gpu
+# =============================================================================
+
+version: 1
+
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: 6.0
+  encoding:
+    prores_profile: prores4444
+
+layers:
+  - id: alpha_bg
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
+
+  - id: column
+    z_index: 1
+    shader:
+      path: "shaders/y2k_column.wgsl"
