@@ -936,10 +936,12 @@ impl<'de> Deserialize<'de> for Layer {
         }
 
         match (source_path, image, video, procedural, shader, text, ascii) {
-            (Some(source_path), None, None, None, None, None, None) => Ok(Self::Asset(AssetLayer {
-                common,
-                source_path,
-            })),
+            (Some(source_path), None, None, None, None, None, None) => {
+                Ok(Self::Asset(AssetLayer {
+                    common,
+                    source_path,
+                }))
+            }
             (None, Some(image), None, None, None, None, None) => {
                 Ok(Self::Image(ImageLayer { common, image }))
             }

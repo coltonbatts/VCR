@@ -1552,7 +1552,6 @@ impl GpuRenderer {
         Ok(())
     }
 
-
     fn prepare_sequence_layers(&mut self, frame_index: u32) -> Result<()> {
         for layer in &mut self.layers {
             let GpuLayerSource::Sequence { source, _texture } = &layer.source else {
@@ -4466,7 +4465,7 @@ fn build_video_layer(
     let (width, height) = probe_video_resolution(&layer.video.path)?;
 
     let ffmpeg = crate::decoding::FfmpegInput::spawn(&layer.video.path, width, height)?;
-    
+
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(&format!("vcr-video-{}", layer.common.id)),
         size: wgpu::Extent3d {
@@ -4482,7 +4481,7 @@ fn build_video_layer(
         view_formats: &[],
     });
 
-    let bytes_per_row = (width * 4) as u32; 
+    let bytes_per_row = (width * 4) as u32;
     let rows_per_image = height;
 
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -4574,7 +4573,10 @@ fn probe_video_resolution(path: &Path) -> Result<(u32, u32)> {
     let s = String::from_utf8_lossy(&output.stdout);
     let parts: Vec<&str> = s.trim().split('x').collect();
     if parts.len() != 2 {
-        bail!("failed to parse video resolution from ffprobe output: '{}'", s);
+        bail!(
+            "failed to parse video resolution from ffprobe output: '{}'",
+            s
+        );
     }
 
     let w = parts[0].parse()?;
