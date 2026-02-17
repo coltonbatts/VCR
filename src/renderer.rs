@@ -1145,7 +1145,8 @@ impl GpuRenderer {
                 continue;
             };
 
-            let total_frames = (lottie.composition.frames.end - lottie.composition.frames.start) as f64;
+            let total_frames =
+                (lottie.composition.frames.end - lottie.composition.frames.start) as f64;
             if total_frames <= 0.0 {
                 continue;
             }
@@ -1748,15 +1749,16 @@ impl SoftwareRenderer {
                     source: seq_layer.sequence.clone(),
                 },
                 Layer::Lottie(lottie_layer) => {
-                    let json_content = std::fs::read_to_string(&lottie_layer.lottie.path).map_err(|e| {
-                        anyhow!(
-                            "failed to read lottie file {:?}: {:?}",
-                            lottie_layer.lottie.path, e
-                        )
-                    })?;
-                    let composition = Composition::from_str(&json_content).map_err(|e| {
-                        anyhow!("failed to parse lottie animation: {:?}", e)
-                    })?;
+                    let json_content =
+                        std::fs::read_to_string(&lottie_layer.lottie.path).map_err(|e| {
+                            anyhow!(
+                                "failed to read lottie file {:?}: {:?}",
+                                lottie_layer.lottie.path,
+                                e
+                            )
+                        })?;
+                    let composition = Composition::from_str(&json_content)
+                        .map_err(|e| anyhow!("failed to parse lottie animation: {:?}", e))?;
                     let w = composition.width as u32;
                     let h = composition.height as u32;
                     let pixmap = Pixmap::new(w, h).ok_or_else(|| {
@@ -1788,9 +1790,10 @@ impl SoftwareRenderer {
                     let img = load_rgba_image(&frame0_path, &common.id)?;
                     img.dimensions()
                 }
-                SoftwareLayerSource::Lottie(lottie) => {
-                    (lottie.composition.width as u32, lottie.composition.height as u32)
-                }
+                SoftwareLayerSource::Lottie(lottie) => (
+                    lottie.composition.width as u32,
+                    lottie.composition.height as u32,
+                ),
             };
 
             software_layers.push(SoftwareLayer {
@@ -1828,7 +1831,7 @@ impl SoftwareRenderer {
         let mut output = Pixmap::new(self.width, self.height)
             .ok_or_else(|| anyhow!("failed to allocate software output pixmap"))?;
         output.fill(Color::from_rgba8(0, 0, 0, 0));
- 
+
         for layer in &mut self.layers {
             Self::render_software_layer(
                 &mut output,
@@ -2140,7 +2143,7 @@ fn build_lottie_layer(
         .with_context(|| format!("failed to read lottie file {:?}", layer.lottie.path))?;
     let composition = Composition::from_str(&json_content)
         .map_err(|e| anyhow!("failed to parse lottie animation: {:?}", e))?;
-    
+
     let width = composition.width as u32;
     let height = composition.height as u32;
 
@@ -2155,7 +2158,9 @@ fn build_lottie_layer(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
 

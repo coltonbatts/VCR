@@ -872,13 +872,16 @@ fn probe_lottie_spec(path: &Path) -> Result<LibrarySpec> {
     let content = std::fs::read_to_string(path)?;
     let composition = velato::Composition::from_str(&content)
         .map_err(|e| anyhow!("failed to parse lottie for spec: {:?}", e))?;
-    
+
     Ok(LibrarySpec {
         width: Some(composition.width as u32),
         height: Some(composition.height as u32),
         fps: Some(composition.frame_rate as f32),
         frames: Some((composition.frames.end - composition.frames.start) as u32),
-        duration_seconds: Some((composition.frames.end - composition.frames.start) as f32 / composition.frame_rate as f32),
+        duration_seconds: Some(
+            (composition.frames.end - composition.frames.start) as f32
+                / composition.frame_rate as f32,
+        ),
         has_alpha: true,
         pixel_format: None,
     })
