@@ -1,0 +1,20 @@
+version: 1
+
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+layers:
+  - id: tiger_core
+    z_index: 10
+    anchor: center
+    pos_x: "960 + sin(t * 1.2) * 24"
+    pos_y: "540 + sin(t * 0.9) * 18"
+    scale: [0.84, 0.84]
+    opacity: "0.90 + 0.08 * sin(t * 2.0)"
+    lottie:
+      path: ./lottie/tiger_google_fonts.json

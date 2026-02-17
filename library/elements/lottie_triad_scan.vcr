@@ -1,0 +1,40 @@
+version: 1
+
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+layers:
+  - id: triad_left_tiger
+    z_index: 10
+    anchor: center
+    pos_x: "480 + sin(t * 1.1) * 14"
+    pos_y: "540 + sin(t * 0.7) * 10"
+    scale: [0.46, 0.46]
+    opacity: "0.88 + 0.08 * sin(t * 2.0)"
+    lottie:
+      path: ./lottie/tiger_google_fonts.json
+
+  - id: triad_center_orb
+    z_index: 11
+    anchor: center
+    pos_x: "960 + sin(t * 0.8) * 12"
+    pos_y: "540 + sin(t * 0.9) * 10"
+    scale: [0.52, 0.52]
+    opacity: "0.86 + 0.09 * sin(t * 1.6 + 0.6)"
+    lottie:
+      path: ./lottie/dotlottie_renderer_fixture.json
+
+  - id: triad_right_anger
+    z_index: 12
+    anchor: center
+    pos_x: "1440 + sin(t * 0.85) * 14"
+    pos_y: "540 + sin(t * 1.05) * 10"
+    scale: [0.92, 0.92]
+    opacity: "0.88 + 0.08 * sin(t * 1.8 + 1.0)"
+    lottie:
+      path: ./lottie/anger.json

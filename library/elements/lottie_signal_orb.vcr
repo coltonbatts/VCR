@@ -1,0 +1,21 @@
+version: 1
+
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+layers:
+  - id: signal_orb
+    z_index: 10
+    anchor: center
+    pos_x: "960 + sin(t * 0.6) * 14"
+    pos_y: "540 + sin(t * 0.7) * 14"
+    scale: [0.62, 0.62]
+    rotation_degrees: "sin(t * 0.5) * 3.0"
+    opacity: "0.88 + 0.08 * sin(t * 1.4)"
+    lottie:
+      path: ./lottie/dotlottie_renderer_fixture.json

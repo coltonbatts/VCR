@@ -1,0 +1,13 @@
+version: 1
+environment:
+  resolution: { width: 1080, height: 1080 }
+  fps: 30
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+layers:
+  - id: "orb"
+    shader:
+      path: "shaders/tech_orb.wgsl"

@@ -1,0 +1,30 @@
+version: 1
+
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+layers:
+  - id: duo_left_tiger
+    z_index: 10
+    anchor: center
+    pos_x: "640 + sin(t * 0.9) * 18"
+    pos_y: "540 + sin(t * 0.8) * 12"
+    scale: [0.58, 0.58]
+    opacity: "0.90 + 0.08 * sin(t * 1.7)"
+    lottie:
+      path: ./lottie/tiger_google_fonts.json
+
+  - id: duo_right_anger
+    z_index: 11
+    anchor: center
+    pos_x: "1280 + sin(t * 0.75) * 18"
+    pos_y: "540 + sin(t * 0.95) * 12"
+    scale: [1.05, 1.05]
+    opacity: "0.90 + 0.08 * sin(t * 1.5 + 1.2)"
+    lottie:
+      path: ./lottie/anger.json
