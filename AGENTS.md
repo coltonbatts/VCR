@@ -16,13 +16,29 @@ vcr prompt --in ./request.yaml -o ./request.normalized.yaml
 
 Treat `unknowns_and_fixes` as blocking normalization work. Do not silently invent missing values.
 
+## Pack First-Look (For Pack-Based Requests)
+
+When a request references `packs/<pack-id>/...`, generate a visual contact sheet before choosing items:
+
+```bash
+scripts/pack_contact_sheet.sh \
+  --pack packs/y2k-bold-modern \
+  --out renders/y2k_pack/contact_sheet.png \
+  --index-out renders/y2k_pack/contact_sheet.index.tsv
+```
+
+This produces:
+- A labeled PNG contact sheet (ID + dimensions on each tile).
+- A TSV index for fast ID-driven follow-up prompts like "animate `y2k-26` like this".
+
 ## Agent Workflow
 
 1. Run `vcr prompt`.
-2. Resolve or explicitly report entries in `unknowns_and_fixes`.
-3. Author manifest from `normalized_spec` and `standardized_vcr_prompt`.
-4. Validate with `vcr check` and `vcr lint`.
-5. Render with `vcr build`.
+2. If packs are referenced, run `scripts/pack_contact_sheet.sh` and share item IDs/dimensions.
+3. Resolve or explicitly report entries in `unknowns_and_fixes`.
+4. Author manifest from `normalized_spec` and `standardized_vcr_prompt`.
+5. Validate with `vcr check` and `vcr lint`.
+6. Render with `vcr build`.
 
 ## Output Contract from `vcr prompt`
 

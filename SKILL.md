@@ -73,11 +73,21 @@ vcr prompt --in ./request.yaml -o ./request.normalized.yaml
 ### Agent Workflow Contract
 
 1. Run `vcr prompt` on the user's request first.
-2. Inspect `unknowns_and_fixes`:
+2. If the request references `packs/<pack-id>/`, generate a labeled pack contact sheet first:
+
+   ```bash
+   scripts/pack_contact_sheet.sh \
+     --pack packs/y2k-bold-modern \
+     --out renders/y2k_pack/contact_sheet.png \
+     --index-out renders/y2k_pack/contact_sheet.index.tsv
+   ```
+
+   Use the contact sheet + TSV IDs to drive concise follow-up animation prompts (for example, "animate `y2k-26` with a gentle drift").
+3. Inspect `unknowns_and_fixes`:
    - If non-empty, treat as blocking clarification/normalization work.
    - Do not silently invent missing values.
-3. Use `normalized_spec` and `standardized_vcr_prompt` as the source of truth for manifest authoring.
-4. Validate generated manifests with `vcr check`/`vcr lint` before `vcr build`.
+4. Use `normalized_spec` and `standardized_vcr_prompt` as the source of truth for manifest authoring.
+5. Validate generated manifests with `vcr check`/`vcr lint` before `vcr build`.
 
 ### Deterministic Defaults Applied by Prompt Gate
 

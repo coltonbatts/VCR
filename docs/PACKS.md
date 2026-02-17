@@ -68,6 +68,19 @@ vcr assets search social-kit
 vcr assets info pack:social-kit/lower-third
 ```
 
+Generate a labeled contact sheet (recommended before picking item IDs to animate):
+
+```bash
+scripts/pack_contact_sheet.sh \
+  --pack packs/social-kit \
+  --out renders/social-kit/contact_sheet.png \
+  --index-out renders/social-kit/contact_sheet.index.tsv
+```
+
+Output:
+- `contact_sheet.png` with item ID + dimensions on each tile.
+- `contact_sheet.index.tsv` with `id`, `width`, `height`, and source path.
+
 ## Use in Manifests
 
 ```yaml
