@@ -4,6 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::str::FromStr;
 
 use anyhow::{anyhow, bail, Context, Result};
 use image::{GenericImageView, ImageReader};
@@ -21,6 +22,7 @@ pub enum LibraryItemType {
     Image,
     Ascii,
     Frames,
+    Lottie,
 }
 
 impl LibraryItemType {
@@ -30,6 +32,7 @@ impl LibraryItemType {
             Self::Image => "image",
             Self::Ascii => "ascii",
             Self::Frames => "frames",
+            Self::Lottie => "lottie",
         }
     }
 }
@@ -39,6 +42,7 @@ pub enum ManifestSourceUsage {
     Image,
     Ascii,
     Sequence,
+    Lottie,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -505,6 +509,15 @@ pub fn resolve_manifest_library_reference(
                 );
             }
         }
+        ManifestSourceUsage::Lottie => {
+            if !matches!(item.item_type, LibraryItemType::Lottie) {
+                bail!(
+                    "library id '{}' has type '{}' but this layer expects a lottie asset",
+                    item.id,
+                    item.item_type.as_str()
+                );
+            }
+        }
     }
 
     verify_item(&workspace_root, item)?;
@@ -739,6 +752,7 @@ fn detect_item_type(path: &Path) -> Result<LibraryItemType> {
         "png" | "jpg" | "jpeg" | "webp" => LibraryItemType::Image,
         "txt" | "asc" | "ascii" => LibraryItemType::Ascii,
         "mov" | "mp4" | "mkv" | "webm" | "gif" => LibraryItemType::Video,
+        "json" => LibraryItemType::Lottie,
         _ => {
             bail!(
                 "could not infer asset type for '{}': unsupported extension '.{}'; use --type",
@@ -756,6 +770,7 @@ fn default_extension_for_type(item_type: LibraryItemType) -> &'static str {
         LibraryItemType::Image => "png",
         LibraryItemType::Ascii => "txt",
         LibraryItemType::Frames => "",
+        LibraryItemType::Lottie => "json",
     }
 }
 
@@ -849,7 +864,24 @@ fn probe_spec(item_type: LibraryItemType, path: &Path) -> Result<LibrarySpec> {
         LibraryItemType::Ascii => probe_ascii_spec(path),
         LibraryItemType::Video => probe_video_spec(path),
         LibraryItemType::Frames => probe_frames_spec(path),
+        LibraryItemType::Lottie => probe_lottie_spec(path),
     }
+}
+
+fn probe_lottie_spec(path: &Path) -> Result<LibrarySpec> {
+    let content = std::fs::read_to_string(path)?;
+    let composition = velato::Composition::from_str(&content)
+        .map_err(|e| anyhow!("failed to parse lottie for spec: {:?}", e))?;
+    
+    Ok(LibrarySpec {
+        width: Some(composition.width as u32),
+        height: Some(composition.height as u32),
+        fps: Some(composition.frame_rate as f32),
+        frames: Some((composition.frames.end - composition.frames.start) as u32),
+        duration_seconds: Some((composition.frames.end - composition.frames.start) as f32 / composition.frame_rate as f32),
+        has_alpha: true,
+        pixel_format: None,
+    })
 }
 
 fn probe_image_spec(path: &Path) -> Result<LibrarySpec> {

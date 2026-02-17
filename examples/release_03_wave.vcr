@@ -1,0 +1,292 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 5.0
+seed: 13
+
+params:
+  wave_speed:
+    type: float
+    default: 3.0
+    min: 0.5
+    max: 10.0
+
+layers:
+  - id: "bg"
+    procedural:
+      kind: solid_color
+      color: { r: 0.01, g: 0.01, b: 0.02, a: 1.0 }
+
+  # Row 1 of dots (y=200)
+  - id: "d_0_0"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 240, y: 200 }
+      radius: "8 + sin(t * 0.1 + 0.0) * 6"
+      color: { r: 0.0, g: "0.5 + sin(t * 0.1 + 0.0) * 0.4", b: 1.0, a: 0.9 }
+  - id: "d_1_0"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 480, y: 200 }
+      radius: "8 + sin(t * 0.1 + 0.5) * 6"
+      color: { r: 0.0, g: "0.5 + sin(t * 0.1 + 0.5) * 0.4", b: 1.0, a: 0.9 }
+  - id: "d_2_0"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 720, y: 200 }
+      radius: "8 + sin(t * 0.1 + 1.0) * 6"
+      color: { r: 0.0, g: "0.5 + sin(t * 0.1 + 1.0) * 0.4", b: 1.0, a: 0.9 }
+  - id: "d_3_0"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 960, y: 200 }
+      radius: "8 + sin(t * 0.1 + 1.5) * 6"
+      color: { r: 0.0, g: "0.5 + sin(t * 0.1 + 1.5) * 0.4", b: 1.0, a: 0.9 }
+  - id: "d_4_0"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1200, y: 200 }
+      radius: "8 + sin(t * 0.1 + 2.0) * 6"
+      color: { r: 0.0, g: "0.5 + sin(t * 0.1 + 2.0) * 0.4", b: 1.0, a: 0.9 }
+  - id: "d_5_0"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1440, y: 200 }
+      radius: "8 + sin(t * 0.1 + 2.5) * 6"
+      color: { r: 0.0, g: "0.5 + sin(t * 0.1 + 2.5) * 0.4", b: 1.0, a: 0.9 }
+  - id: "d_6_0"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1680, y: 200 }
+      radius: "8 + sin(t * 0.1 + 3.0) * 6"
+      color: { r: 0.0, g: "0.5 + sin(t * 0.1 + 3.0) * 0.4", b: 1.0, a: 0.9 }
+
+  # Row 2 (y=380)
+  - id: "d_0_1"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 240, y: 380 }
+      radius: "8 + sin(t * 0.1 + 0.3) * 6"
+      color: { r: "0.2 + sin(t * 0.1 + 0.3) * 0.2", g: 0.3, b: 1.0, a: 0.9 }
+  - id: "d_1_1"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 480, y: 380 }
+      radius: "8 + sin(t * 0.1 + 0.8) * 6"
+      color: { r: "0.2 + sin(t * 0.1 + 0.8) * 0.2", g: 0.3, b: 1.0, a: 0.9 }
+  - id: "d_2_1"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 720, y: 380 }
+      radius: "8 + sin(t * 0.1 + 1.3) * 6"
+      color: { r: "0.2 + sin(t * 0.1 + 1.3) * 0.2", g: 0.3, b: 1.0, a: 0.9 }
+  - id: "d_3_1"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 960, y: 380 }
+      radius: "8 + sin(t * 0.1 + 1.8) * 6"
+      color: { r: "0.2 + sin(t * 0.1 + 1.8) * 0.2", g: 0.3, b: 1.0, a: 0.9 }
+  - id: "d_4_1"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1200, y: 380 }
+      radius: "8 + sin(t * 0.1 + 2.3) * 6"
+      color: { r: "0.2 + sin(t * 0.1 + 2.3) * 0.2", g: 0.3, b: 1.0, a: 0.9 }
+  - id: "d_5_1"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1440, y: 380 }
+      radius: "8 + sin(t * 0.1 + 2.8) * 6"
+      color: { r: "0.2 + sin(t * 0.1 + 2.8) * 0.2", g: 0.3, b: 1.0, a: 0.9 }
+  - id: "d_6_1"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1680, y: 380 }
+      radius: "8 + sin(t * 0.1 + 3.3) * 6"
+      color: { r: "0.2 + sin(t * 0.1 + 3.3) * 0.2", g: 0.3, b: 1.0, a: 0.9 }
+
+  # Row 3 (y=540)
+  - id: "d_0_2"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 240, y: 540 }
+      radius: "8 + sin(t * 0.1 + 0.6) * 6"
+      color: { r: 0.5, g: 0.0, b: "0.8 + sin(t * 0.1 + 0.6) * 0.2", a: 0.9 }
+  - id: "d_1_2"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 480, y: 540 }
+      radius: "8 + sin(t * 0.1 + 1.1) * 6"
+      color: { r: 0.5, g: 0.0, b: "0.8 + sin(t * 0.1 + 1.1) * 0.2", a: 0.9 }
+  - id: "d_2_2"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 720, y: 540 }
+      radius: "8 + sin(t * 0.1 + 1.6) * 6"
+      color: { r: 0.5, g: 0.0, b: "0.8 + sin(t * 0.1 + 1.6) * 0.2", a: 0.9 }
+  - id: "d_3_2"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 960, y: 540 }
+      radius: "8 + sin(t * 0.1 + 2.1) * 6"
+      color: { r: 0.5, g: 0.0, b: "0.8 + sin(t * 0.1 + 2.1) * 0.2", a: 0.9 }
+  - id: "d_4_2"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1200, y: 540 }
+      radius: "8 + sin(t * 0.1 + 2.6) * 6"
+      color: { r: 0.5, g: 0.0, b: "0.8 + sin(t * 0.1 + 2.6) * 0.2", a: 0.9 }
+  - id: "d_5_2"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1440, y: 540 }
+      radius: "8 + sin(t * 0.1 + 3.1) * 6"
+      color: { r: 0.5, g: 0.0, b: "0.8 + sin(t * 0.1 + 3.1) * 0.2", a: 0.9 }
+  - id: "d_6_2"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1680, y: 540 }
+      radius: "8 + sin(t * 0.1 + 3.6) * 6"
+      color: { r: 0.5, g: 0.0, b: "0.8 + sin(t * 0.1 + 3.6) * 0.2", a: 0.9 }
+
+  # Row 4 (y=700)
+  - id: "d_0_3"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 240, y: 700 }
+      radius: "8 + sin(t * 0.1 + 0.9) * 6"
+      color: { r: 1.0, g: "0.3 + sin(t * 0.1 + 0.9) * 0.2", b: 0.5, a: 0.9 }
+  - id: "d_1_3"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 480, y: 700 }
+      radius: "8 + sin(t * 0.1 + 1.4) * 6"
+      color: { r: 1.0, g: "0.3 + sin(t * 0.1 + 1.4) * 0.2", b: 0.5, a: 0.9 }
+  - id: "d_2_3"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 720, y: 700 }
+      radius: "8 + sin(t * 0.1 + 1.9) * 6"
+      color: { r: 1.0, g: "0.3 + sin(t * 0.1 + 1.9) * 0.2", b: 0.5, a: 0.9 }
+  - id: "d_3_3"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 960, y: 700 }
+      radius: "8 + sin(t * 0.1 + 2.4) * 6"
+      color: { r: 1.0, g: "0.3 + sin(t * 0.1 + 2.4) * 0.2", b: 0.5, a: 0.9 }
+  - id: "d_4_3"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1200, y: 700 }
+      radius: "8 + sin(t * 0.1 + 2.9) * 6"
+      color: { r: 1.0, g: "0.3 + sin(t * 0.1 + 2.9) * 0.2", b: 0.5, a: 0.9 }
+  - id: "d_5_3"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1440, y: 700 }
+      radius: "8 + sin(t * 0.1 + 3.4) * 6"
+      color: { r: 1.0, g: "0.3 + sin(t * 0.1 + 3.4) * 0.2", b: 0.5, a: 0.9 }
+  - id: "d_6_3"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1680, y: 700 }
+      radius: "8 + sin(t * 0.1 + 3.9) * 6"
+      color: { r: 1.0, g: "0.3 + sin(t * 0.1 + 3.9) * 0.2", b: 0.5, a: 0.9 }
+
+  # Row 5 (y=880)
+  - id: "d_0_4"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 240, y: 880 }
+      radius: "8 + sin(t * 0.1 + 1.2) * 6"
+      color: { r: 0.0, g: 1.0, b: "0.5 + sin(t * 0.1 + 1.2) * 0.3", a: 0.9 }
+  - id: "d_1_4"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 480, y: 880 }
+      radius: "8 + sin(t * 0.1 + 1.7) * 6"
+      color: { r: 0.0, g: 1.0, b: "0.5 + sin(t * 0.1 + 1.7) * 0.3", a: 0.9 }
+  - id: "d_2_4"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 720, y: 880 }
+      radius: "8 + sin(t * 0.1 + 2.2) * 6"
+      color: { r: 0.0, g: 1.0, b: "0.5 + sin(t * 0.1 + 2.2) * 0.3", a: 0.9 }
+  - id: "d_3_4"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 960, y: 880 }
+      radius: "8 + sin(t * 0.1 + 2.7) * 6"
+      color: { r: 0.0, g: 1.0, b: "0.5 + sin(t * 0.1 + 2.7) * 0.3", a: 0.9 }
+  - id: "d_4_4"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1200, y: 880 }
+      radius: "8 + sin(t * 0.1 + 3.2) * 6"
+      color: { r: 0.0, g: 1.0, b: "0.5 + sin(t * 0.1 + 3.2) * 0.3", a: 0.9 }
+  - id: "d_5_4"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1440, y: 880 }
+      radius: "8 + sin(t * 0.1 + 3.7) * 6"
+      color: { r: 0.0, g: 1.0, b: "0.5 + sin(t * 0.1 + 3.7) * 0.3", a: 0.9 }
+  - id: "d_6_4"
+    z_index: 1
+    procedural:
+      kind: circle
+      center: { x: 1680, y: 880 }
+      radius: "8 + sin(t * 0.1 + 4.2) * 6"
+      color: { r: 0.0, g: 1.0, b: "0.5 + sin(t * 0.1 + 4.2) * 0.3", a: 0.9 }
+
+  # Title overlay
+  - id: "title"
+    z_index: 10
+    anchor: center
+    position: { x: 960, y: 540 }
+    opacity:
+      start_frame: 60
+      end_frame: 90
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    text:
+      content: "EXPRESSION ENGINE"
+      font_family: "GeistPixel-Square"
+      font_size: 48
+      letter_spacing: 4
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }

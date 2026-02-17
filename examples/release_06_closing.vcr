@@ -1,0 +1,95 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 4.0
+seed: 0
+
+modulators:
+  subtle_drift:
+    expression: "noise1d(t * 0.3) * 2.0"
+
+layers:
+  - id: "bg"
+    procedural:
+      kind: solid_color
+      color: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+
+  # Terminal prompt
+  - id: "dollar"
+    z_index: 3
+    position: { x: 660, y: 480 }
+    opacity:
+      start_frame: 10
+      end_frame: 25
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    text:
+      content: "$"
+      font_family: "GeistPixel-Line"
+      font_size: 36
+      color: { r: 0.0, g: 0.8, b: 0.4, a: 0.8 }
+
+  # Install command
+  - id: "install_cmd"
+    z_index: 3
+    position: { x: 700, y: 480 }
+    opacity: "smoothstep(20.0, 35.0, t)"
+    text:
+      content: "cargo install vcr-engine"
+      font_family: "GeistPixel-Line"
+      font_size: 36
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    modulators:
+      - source: subtle_drift
+        weights:
+          x: 1.0
+          y: 0.0
+
+  # Blinking cursor after command
+  - id: "block_cursor"
+    z_index: 4
+    position: { x: 1240, y: 480 }
+    opacity: "step(0.5, fract(t / 24.0))"
+    start_time: 1.2
+    procedural:
+      kind: rounded_rect
+      center: { x: 0, y: 12 }
+      size: { x: 14, y: 28 }
+      corner_radius: 2
+      color: { r: 0.0, g: 1.0, b: 0.5, a: 0.9 }
+
+  # URL below
+  - id: "url"
+    z_index: 3
+    anchor: center
+    position: { x: 960, y: 560 }
+    opacity: "smoothstep(60.0, 80.0, t)"
+    text:
+      content: "github.com/coltonbatts/vcr"
+      font_family: "GeistPixel-Line"
+      font_size: 20
+      color: { r: 0.4, g: 0.6, b: 0.8, a: 0.6 }
+
+  # Decorative line
+  - id: "divider"
+    z_index: 2
+    opacity: "smoothstep(50.0, 70.0, t)"
+    procedural:
+      kind: line
+      start: { x: 760, y: 530 }
+      end: { x: 1160, y: 530 }
+      thickness: 1
+      color: { r: 0.3, g: 0.3, b: 0.4, a: 0.5 }
+
+  # Scanlines for terminal feel
+  - id: "scanline_1"
+    z_index: 10
+    procedural:
+      kind: line
+      start: { x: 0, y: 0 }
+      end: { x: 1920, y: 0 }
+      thickness: 1
+      color: { r: 0.0, g: 1.0, b: 0.5, a: 0.05 }
+    pos_y: "fract(t / 100.0) * 1080"

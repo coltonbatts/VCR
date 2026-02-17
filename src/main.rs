@@ -519,6 +519,7 @@ enum LibraryItemTypeArg {
     Image,
     Ascii,
     Frames,
+    Lottie,
 }
 
 impl From<LibraryItemTypeArg> for LibraryItemType {
@@ -528,6 +529,7 @@ impl From<LibraryItemTypeArg> for LibraryItemType {
             LibraryItemTypeArg::Image => LibraryItemType::Image,
             LibraryItemTypeArg::Ascii => LibraryItemType::Ascii,
             LibraryItemTypeArg::Frames => LibraryItemType::Frames,
+            LibraryItemTypeArg::Lottie => LibraryItemType::Lottie,
         }
     }
 }

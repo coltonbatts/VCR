@@ -1038,6 +1038,18 @@ fn validate_manifest(
                 }
                 seq_layer.sequence.path = resolved_dir;
             }
+            Layer::Lottie(lottie_layer) => {
+                let resolved = resolve_and_validate_layer_asset_path(
+                    manifest_path,
+                    &manifest_dir,
+                    &lottie_layer.lottie.path,
+                    &lottie_layer.common.id,
+                    "lottie.path",
+                    ManifestSourceUsage::Lottie,
+                    options.allow_raw_paths,
+                )?;
+                lottie_layer.lottie.path = resolved;
+            }
         }
     }
 

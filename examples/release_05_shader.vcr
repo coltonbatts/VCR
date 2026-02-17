@@ -1,0 +1,72 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 5.0
+seed: 77
+
+layers:
+  # Plasma shader background
+  - id: "plasma"
+    z_index: 0
+    shader:
+      fragment: |
+        fn shade(uv: vec2<f32>, u: ShaderUniforms) -> vec4<f32> {
+          let t = u.time * 0.02;
+          let scale = u.custom[0].x;
+          let p = uv * scale;
+          var v = 0.0;
+          v += sin(p.x * 2.0 + t * 1.5);
+          v += sin(p.y * 3.0 + t * 0.7);
+          v += sin((p.x + p.y) * 1.5 + t * 1.1);
+          v += sin(sqrt(p.x * p.x + p.y * p.y) * 4.0 + t * 2.0);
+          v = v * 0.25 + 0.5;
+          let r = sin(v * 3.14159) * 0.5 + 0.1;
+          let g = sin(v * 3.14159 + 2.094) * 0.3 + 0.05;
+          let b = sin(v * 3.14159 + 4.188) * 0.5 + 0.3;
+          return vec4<f32>(r, g, b, 1.0);
+        }
+      uniforms:
+        scale: 6.0
+
+  # "SHADER FLEX" text overlay
+  - id: "title"
+    z_index: 5
+    anchor: center
+    position: { x: 960, y: 500 }
+    opacity:
+      start_frame: 30
+      end_frame: 60
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    text:
+      content: "CUSTOM SHADERS"
+      font_family: "GeistPixel-Square"
+      font_size: 64
+      letter_spacing: 6
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: "subtitle"
+    z_index: 5
+    anchor: center
+    position: { x: 960, y: 580 }
+    opacity:
+      start_frame: 45
+      end_frame: 75
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    text:
+      content: "INLINE WGSL IN YOUR MANIFEST"
+      font_family: "GeistPixel-Line"
+      font_size: 24
+      color: { r: 0.8, g: 0.9, b: 1.0, a: 0.8 }
+
+post:
+  - shader: sobel
+    strength: 0.3
+  - shader: levels
+    gamma: 1.2
+    lift: 0.02
+    gain: 0.95

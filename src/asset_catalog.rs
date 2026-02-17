@@ -275,6 +275,15 @@ pub fn resolve_manifest_asset_reference(
                 );
             }
         }
+        ManifestSourceUsage::Lottie => {
+            if !matches!(entry.item.item_type, LibraryItemType::Lottie) {
+                bail!(
+                    "asset reference '{}' has type '{}' but this layer expects a lottie asset",
+                    entry.reference,
+                    entry.item.item_type.as_str()
+                );
+            }
+        }
     }
 
     verify_item(&workspace_root, &entry.item)?;

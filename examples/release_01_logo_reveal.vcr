@@ -1,0 +1,145 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 4.0
+seed: 7
+
+modulators:
+  glitch_mod:
+    expression: "glitch(t, 0.3) * 4.0"
+
+groups:
+  - id: "logo_group"
+    position: { x: 960, y: 540 }
+    opacity:
+      start_frame: 15
+      end_frame: 45
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+
+layers:
+  # Black background
+  - id: "bg"
+    procedural:
+      kind: solid_color
+      color: { r: 0.02, g: 0.02, b: 0.03, a: 1.0 }
+
+  # Scan line sweep (reveals the scene)
+  - id: "scanline"
+    z_index: 10
+    procedural:
+      kind: line
+      start: { x: 0, y: 0 }
+      end: { x: 1920, y: 0 }
+      thickness: 3
+      color: { r: 0.0, g: 1.0, b: 0.6, a: 0.4 }
+    pos_y: "fract(t / 90.0) * 1080"
+
+  # Outer ring - appears first
+  - id: "ring_outer"
+    group: "logo_group"
+    z_index: 2
+    anchor: center
+    opacity:
+      start_frame: 10
+      end_frame: 35
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    rotation_degrees: "t * 0.8"
+    procedural:
+      kind: ring
+      center: { x: 0, y: 0 }
+      outer_radius: "180 + sin(t * 0.08) * 10"
+      inner_radius: "160 + sin(t * 0.08) * 10"
+      color:
+        r: 0.0
+        g: "0.7 + sin(t * 0.1) * 0.3"
+        b: 1.0
+        a: 0.7
+
+  # Inner hexagon
+  - id: "hex"
+    group: "logo_group"
+    z_index: 3
+    anchor: center
+    opacity:
+      start_frame: 20
+      end_frame: 50
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    rotation_degrees: "t * -0.4"
+    procedural:
+      kind: polygon
+      center: { x: 0, y: 0 }
+      radius: 110
+      sides: 6
+      color: { r: 0.0, g: 0.5, b: 0.8, a: 0.3 }
+
+  # VCR text
+  - id: "vcr_text"
+    group: "logo_group"
+    z_index: 5
+    anchor: center
+    position: { x: 0, y: -10 }
+    opacity:
+      start_frame: 30
+      end_frame: 60
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    text:
+      content: "VCR"
+      font_family: "GeistPixel-Square"
+      font_size: 96
+      color:
+        r: 1.0
+        g: 1.0
+        b: 1.0
+        a: 1.0
+    modulators:
+      - source: glitch_mod
+        weights:
+          x: 1.0
+          y: 0.0
+
+  # Subtitle
+  - id: "subtitle"
+    group: "logo_group"
+    z_index: 5
+    anchor: center
+    position: { x: 0, y: 60 }
+    opacity:
+      start_frame: 50
+      end_frame: 75
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    text:
+      content: "VIDEO COMPONENT RENDERER"
+      font_family: "GeistPixel-Line"
+      font_size: 24
+      letter_spacing: 4
+      color: { r: 0.5, g: 0.8, b: 1.0, a: 0.8 }
+
+  # Accent line under subtitle
+  - id: "accent_line"
+    group: "logo_group"
+    z_index: 4
+    anchor: center
+    position: { x: 0, y: 85 }
+    opacity:
+      start_frame: 55
+      end_frame: 80
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    procedural:
+      kind: line
+      start: { x: -200, y: 0 }
+      end: { x: 200, y: 0 }
+      thickness: 2
+      color: { r: 0.0, g: 0.8, b: 1.0, a: 0.6 }

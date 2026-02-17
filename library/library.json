@@ -2,6 +2,20 @@
   "version": 1,
   "items": [
     {
+      "id": "lottie-test",
+      "type": "lottie",
+      "path": "library/items/lottie-test/source.json",
+      "sha256": "1caa24777e1be56c203ce8919ecc471c9bf96f99675fd5781d011af28ab7e84f",
+      "spec": {
+        "width": 500,
+        "height": 500,
+        "fps": 30.0,
+        "frames": 60,
+        "duration_seconds": 2.0,
+        "has_alpha": true
+      }
+    },
+    {
       "id": "trailer-subtitle",
       "type": "ascii",
       "path": "library/items/trailer-subtitle/source.txt",

@@ -817,6 +817,7 @@ pub enum Layer {
     Text(TextLayer),
     Ascii(AsciiLayer),
     Sequence(SequenceLayer),
+    Lottie(LottieLayer),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -840,6 +841,8 @@ struct LayerWire {
     ascii: Option<AsciiSource>,
     #[serde(default)]
     sequence: Option<SequenceSource>,
+    #[serde(default)]
+    lottie: Option<LottieSource>,
 }
 
 impl<'de> Deserialize<'de> for Layer {
@@ -879,17 +882,20 @@ impl<'de> Deserialize<'de> for Layer {
         if wire.sequence.is_some() {
             present_sources.push("sequence");
         }
+        if wire.lottie.is_some() {
+            present_sources.push("lottie");
+        }
 
         if present_sources.is_empty() {
             return Err(DeError::custom(format!(
-                "layer '{layer_id}' must define exactly one source block: `source_path` (legacy image path), `image`, `procedural`, `shader`, {} `text`, `ascii`, or `sequence`",
+                "layer '{layer_id}' must define exactly one source block: `source_path` (legacy image path), `image`, `procedural`, `shader`, {} `text`, `ascii`, `sequence`, or `lottie`",
                 layer_wgpu_source_label()
             )));
         }
 
         if present_sources.len() > 1 {
             return Err(DeError::custom(format!(
-                "layer '{layer_id}' defines multiple source blocks ({}) but exactly one is required: `source_path` (legacy image path), `image`, `procedural`, `shader`, {} `text`, `ascii`, or `sequence`",
+                "layer '{layer_id}' defines multiple source blocks ({}) but exactly one is required: `source_path` (legacy image path), `image`, `procedural`, `shader`, {} `text`, `ascii`, `sequence`, or `lottie`",
                 present_sources.join(", "),
                 layer_wgpu_source_label()
             )));
@@ -905,11 +911,15 @@ impl<'de> Deserialize<'de> for Layer {
             text,
             ascii,
             sequence,
+            lottie,
         } = wire;
 
         // Sequence is checked first (before the 6-tuple) to avoid a 7-tuple match.
         if let Some(sequence) = sequence {
             return Ok(Self::Sequence(SequenceLayer { common, sequence }));
+        }
+        if let Some(lottie) = lottie {
+            return Ok(Self::Lottie(LottieLayer { common, lottie }));
         }
         if let Some(wgpu_shader) = wgpu_shader {
             return Ok(Self::WgpuShader(WgpuShaderLayer {
@@ -964,6 +974,7 @@ impl Layer {
             Self::Text(layer) => &layer.common,
             Self::Ascii(layer) => &layer.common,
             Self::Sequence(layer) => &layer.common,
+            Self::Lottie(layer) => &layer.common,
         }
     }
 
@@ -984,6 +995,7 @@ impl Layer {
             Self::Text(layer) => layer.validate(),
             Self::Ascii(layer) => layer.validate(),
             Self::Sequence(layer) => layer.validate(),
+            Self::Lottie(layer) => layer.validate(),
         }
     }
 }
@@ -1315,6 +1327,29 @@ pub struct AssetLayer {
     #[serde(flatten)]
     pub common: LayerCommon,
     pub source_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LottieLayer {
+    #[serde(flatten)]
+    pub common: LayerCommon,
+    pub lottie: LottieSource,
+}
+
+impl LottieLayer {
+    fn validate(&self) -> Result<()> {
+        if self.lottie.path.as_os_str().is_empty() {
+            bail!("layer '{}': lottie.path cannot be empty", self.common.id);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LottieSource {
+    pub path: PathBuf,
 }
 
 impl AssetLayer {

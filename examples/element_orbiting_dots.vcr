@@ -1,0 +1,17 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 24
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+layers:
+  - id: alpha_bg
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
+  - id: dots
+    z_index: 1
+    shader:
+      path: "shaders/orbiting_dots_v2.wgsl"

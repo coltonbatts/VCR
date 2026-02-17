@@ -1,9 +1,14 @@
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+use velato::Composition;
+use vello::kurbo::Affine;
+use vello::peniko::Color as VelloColor;
+use vello::{AaConfig, RenderParams, Renderer as VelloRenderer, Scene};
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -367,11 +372,12 @@ impl GpuLayer {
         match &self.source {
             GpuLayerSource::Asset { .. } => true,
             GpuLayerSource::Procedural(gpu) => gpu.has_rendered,
-            GpuLayerSource::Shader(gpu) => gpu.has_rendered && gpu.is_static,
-            GpuLayerSource::WgpuShader(_) => false,
+            GpuLayerSource::Shader(gpu) => gpu.has_rendered,
+            GpuLayerSource::WgpuShader(gpu) => gpu.has_rendered,
             GpuLayerSource::Text { .. } => true,
-            GpuLayerSource::Ascii(gpu) => gpu.has_rendered && gpu.is_static,
-            GpuLayerSource::Sequence { .. } => false, // reloads each frame
+            GpuLayerSource::Ascii(gpu) => gpu.has_rendered,
+            GpuLayerSource::Sequence { .. } => true,
+            GpuLayerSource::Lottie(gpu) => gpu.last_rendered_frame.is_some(),
         }
     }
 }
@@ -391,6 +397,15 @@ enum GpuLayerSource {
         source: crate::schema::SequenceSource,
         _texture: wgpu::Texture,
     },
+    Lottie(LottieGpu),
+}
+
+struct LottieGpu {
+    composition: Composition,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    last_rendered_frame: Option<u32>,
+    has_rendered: bool,
 }
 
 struct CustomShaderGpu {
@@ -413,6 +428,7 @@ struct WgpuShaderGpu {
     view: wgpu::TextureView,
     time_mode: WgpuShaderTimeMode,
     last_rendered_frame: Option<u32>,
+    has_rendered: bool,
 }
 
 struct ProceduralGpu {
@@ -456,6 +472,8 @@ struct GpuRenderer {
     layers: Vec<GpuLayer>,
     post_stack: PostStack,
     ascii_pipeline: Option<AsciiPipeline>,
+    vello_renderer: Option<VelloRenderer>,
+    velato_renderer: velato::Renderer,
 }
 
 struct PendingReadback {
@@ -633,6 +651,13 @@ enum SoftwareLayerSource {
     Sequence {
         source: crate::schema::SequenceSource,
     },
+    Lottie(LottieSoftware),
+}
+
+struct LottieSoftware {
+    composition: Composition,
+    pixmap: Pixmap,
+    last_rendered_frame: Option<u32>,
 }
 
 impl GpuRenderer {
@@ -958,6 +983,20 @@ impl GpuRenderer {
                     scene.seed,
                     environment.fps,
                 )?,
+                Layer::Lottie(lottie_layer) => build_lottie_layer(
+                    &device,
+                    &queue,
+                    width,
+                    height,
+                    lottie_layer,
+                    group_chain,
+                    &blend_bind_group_layout,
+                    &sampler,
+                    &scene.params,
+                    &scene.modulators,
+                    scene.seed,
+                    environment.fps,
+                )?,
             };
             gpu_layers.push(gpu_layer);
         }
@@ -1016,6 +1055,8 @@ impl GpuRenderer {
             layers: gpu_layers,
             post_stack,
             ascii_pipeline,
+            vello_renderer: None,
+            velato_renderer: velato::Renderer::new(),
         })
     }
 
@@ -1032,6 +1073,7 @@ impl GpuRenderer {
 
         self.prepare_procedural_layers(frame_index, &mut encoder)?;
         self.prepare_sequence_layers(frame_index)?;
+        self.prepare_lottie_layers(frame_index)?;
         self.render_layers_to_view(frame_index, &output_view, &mut encoder)?;
 
         // Apply post-processing stack (if any effects are configured)
@@ -1097,6 +1139,68 @@ impl GpuRenderer {
         Ok(())
     }
 
+    fn prepare_lottie_layers(&mut self, frame_index: u32) -> Result<()> {
+        for layer in &mut self.layers {
+            let GpuLayerSource::Lottie(lottie) = &mut layer.source else {
+                continue;
+            };
+
+            let total_frames = (lottie.composition.frames.end - lottie.composition.frames.start) as f64;
+            if total_frames <= 0.0 {
+                continue;
+            }
+
+            let lottie_frame = frame_index as f64 % total_frames;
+
+            if lottie.last_rendered_frame == Some(frame_index) {
+                continue;
+            }
+
+            let mut scene = Scene::new();
+            self.velato_renderer.append(
+                &lottie.composition,
+                lottie_frame,
+                Affine::IDENTITY,
+                1.0,
+                &mut scene,
+            );
+
+            if self.vello_renderer.is_none() {
+                self.vello_renderer = Some(
+                    VelloRenderer::new(
+                        &self.device,
+                        vello::RendererOptions {
+                            surface_format: None,
+                            use_cpu: false,
+                            antialiasing_support: vello::AaSupport::all(),
+                            num_init_threads: NonZeroUsize::new(1),
+                        },
+                    )
+                    .map_err(|e| anyhow!("failed to create vello renderer: {:?}", e))?,
+                );
+            }
+
+            let renderer = self.vello_renderer.as_mut().unwrap();
+            renderer
+                .render_to_texture(
+                    &self.device,
+                    &self.queue,
+                    &scene,
+                    &lottie.view,
+                    &RenderParams {
+                        base_color: VelloColor::TRANSPARENT,
+                        width: layer.width,
+                        height: layer.height,
+                        antialiasing_method: AaConfig::Msaa16,
+                    },
+                )
+                .map_err(|e| anyhow!("vello render failed: {:?}", e))?;
+
+            lottie.last_rendered_frame = Some(frame_index);
+        }
+        Ok(())
+    }
+
     pub fn render_frame_to_view(
         &mut self,
         frame_index: u32,
@@ -1109,6 +1213,7 @@ impl GpuRenderer {
             });
 
         self.prepare_procedural_layers(frame_index, &mut encoder)?;
+        self.prepare_lottie_layers(frame_index)?;
         self.render_layers_to_view(frame_index, target_view, &mut encoder)?;
 
         // Apply post-processing for live preview path.
@@ -1642,6 +1747,30 @@ impl SoftwareRenderer {
                 Layer::Sequence(seq_layer) => SoftwareLayerSource::Sequence {
                     source: seq_layer.sequence.clone(),
                 },
+                Layer::Lottie(lottie_layer) => {
+                    let json_content = std::fs::read_to_string(&lottie_layer.lottie.path).map_err(|e| {
+                        anyhow!(
+                            "failed to read lottie file {:?}: {:?}",
+                            lottie_layer.lottie.path, e
+                        )
+                    })?;
+                    let composition = Composition::from_str(&json_content).map_err(|e| {
+                        anyhow!("failed to parse lottie animation: {:?}", e)
+                    })?;
+                    let w = composition.width as u32;
+                    let h = composition.height as u32;
+                    let pixmap = Pixmap::new(w, h).ok_or_else(|| {
+                        anyhow!(
+                            "failed to create pixmap for lottie layer '{}'",
+                            lottie_layer.common.id
+                        )
+                    })?;
+                    SoftwareLayerSource::Lottie(LottieSoftware {
+                        composition,
+                        pixmap,
+                        last_rendered_frame: None,
+                    })
+                }
             };
 
             let (layer_width, layer_height) = match &source {
@@ -1658,6 +1787,9 @@ impl SoftwareRenderer {
                     let frame0_path = source.frame_path(0);
                     let img = load_rgba_image(&frame0_path, &common.id)?;
                     img.dimensions()
+                }
+                SoftwareLayerSource::Lottie(lottie) => {
+                    (lottie.composition.width as u32, lottie.composition.height as u32)
                 }
             };
 
@@ -1696,9 +1828,19 @@ impl SoftwareRenderer {
         let mut output = Pixmap::new(self.width, self.height)
             .ok_or_else(|| anyhow!("failed to allocate software output pixmap"))?;
         output.fill(Color::from_rgba8(0, 0, 0, 0));
-
-        for layer in &self.layers {
-            self.render_layer(&mut output, layer, frame_index)?;
+ 
+        for layer in &mut self.layers {
+            Self::render_software_layer(
+                &mut output,
+                layer,
+                frame_index,
+                self.fps,
+                &self.params,
+                self.seed,
+                &self.modulators,
+                self.width,
+                self.height,
+            )?;
         }
 
         let mut frame = output.data().to_vec();
@@ -1706,11 +1848,16 @@ impl SoftwareRenderer {
         Ok(frame)
     }
 
-    fn render_layer(
-        &self,
+    fn render_software_layer(
         output: &mut Pixmap,
-        layer: &SoftwareLayer,
+        layer: &mut SoftwareLayer,
         frame_index: u32,
+        fps: u32,
+        params: &Parameters,
+        seed: u64,
+        modulators: &ModulatorMap,
+        width: u32,
+        height: u32,
     ) -> Result<()> {
         let Some(state) = evaluate_layer_state(
             &layer.id,
@@ -1724,10 +1871,10 @@ impl SoftwareRenderer {
             &layer.modulators,
             &layer.group_chain,
             frame_index,
-            self.fps,
-            &self.params,
-            self.seed,
-            &self.modulators,
+            fps,
+            params,
+            seed,
+            modulators,
         )?
         else {
             return Ok(());
@@ -1750,9 +1897,8 @@ impl SoftwareRenderer {
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
             }
             SoftwareLayerSource::Procedural(source) => {
-                let context = ExpressionContext::new(frame_index as f32, &self.params, self.seed);
-                let procedural =
-                    render_procedural_pixmap(source, self.width, self.height, &context)?;
+                let context = ExpressionContext::new(frame_index as f32, params, seed);
+                let procedural = render_procedural_pixmap(source, width, height, &context)?;
                 draw_layer_pixmap(output, procedural.as_ref(), opacity, transform);
             }
             SoftwareLayerSource::Shader => {
@@ -1772,6 +1918,11 @@ impl SoftwareRenderer {
                 let frame_path = source.frame_path(frame_index);
                 let pixmap = load_layer_pixmap(&frame_path, &layer.id)?;
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
+            }
+            SoftwareLayerSource::Lottie(_lottie) => {
+                // TODO: Implement software rendering for Lottie via velato RenderSink or vello-cpu
+                // For now, render as transparent (handled by lack of draw call)
+                eprintln!("[warn] Lottie software rendering not yet implemented; layer rendered as transparent");
             }
         }
 
@@ -1926,7 +2077,7 @@ fn build_sequence_layer(
         modulators,
     )?;
 
-    let draw_resources = build_layer_draw_resources(
+    let draw = build_layer_draw_resources(
         device,
         queue,
         frame_width,
@@ -1956,18 +2107,124 @@ fn build_sequence_layer(
         opacity: common.opacity.clone(),
         timing: common.timing_controls(),
         modulators: common.modulators.clone(),
-        all_properties_static: false, // Sequence reloads per frame
         group_chain,
+        all_properties_static: common.has_static_properties(),
+        uniform_buffer: draw.uniform_buffer,
+        blend_bind_group: draw.blend_bind_group,
+        vertex_buffer: draw.vertex_buffer,
+        last_vertices: Some(draw.initial_vertices),
+        last_opacity: Some(state.opacity),
         anchor: common.anchor,
-        uniform_buffer: draw_resources.uniform_buffer,
-        blend_bind_group: draw_resources.blend_bind_group,
-        vertex_buffer: draw_resources.vertex_buffer,
-        last_vertices: Some(draw_resources.initial_vertices),
-        last_opacity: Some(draw_resources.initial_opacity),
         source: GpuLayerSource::Sequence {
             source: layer.sequence.clone(),
             _texture: texture,
         },
+    })
+}
+
+fn build_lottie_layer(
+    device: &wgpu::Device,
+    _queue: &wgpu::Queue,
+    frame_width: u32,
+    frame_height: u32,
+    layer: &crate::schema::LottieLayer,
+    group_chain: Vec<Group>,
+    blend_bind_group_layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    params: &Parameters,
+    modulators: &ModulatorMap,
+    seed: u64,
+    fps: u32,
+) -> Result<GpuLayer> {
+    let json_content = std::fs::read_to_string(&layer.lottie.path)
+        .with_context(|| format!("failed to read lottie file {:?}", layer.lottie.path))?;
+    let composition = Composition::from_str(&json_content)
+        .map_err(|e| anyhow!("failed to parse lottie animation: {:?}", e))?;
+    
+    let width = composition.width as u32;
+    let height = composition.height as u32;
+
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(&format!("vcr-lottie-texture-{}", layer.common.id)),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let common = &layer.common;
+
+    let state = evaluate_layer_state_or_hidden(
+        &common.id,
+        &common.position,
+        common.pos_x.as_ref(),
+        common.pos_y.as_ref(),
+        &common.scale,
+        &common.rotation_degrees,
+        &common.opacity,
+        common.timing_controls(),
+        &common.modulators,
+        &group_chain,
+        0,
+        fps,
+        params,
+        seed,
+        modulators,
+    )?;
+
+    let draw = build_layer_draw_resources(
+        device,
+        _queue,
+        frame_width,
+        frame_height,
+        common,
+        state.position,
+        state.scale,
+        state.rotation_degrees,
+        state.opacity,
+        width,
+        height,
+        &view,
+        blend_bind_group_layout,
+        sampler,
+    )?;
+
+    Ok(GpuLayer {
+        id: common.id.clone(),
+        z_index: common.z_index,
+        width,
+        height,
+        position: common.position.clone(),
+        position_x: common.pos_x.clone(),
+        position_y: common.pos_y.clone(),
+        scale: common.scale.clone(),
+        rotation_degrees: common.rotation_degrees.clone(),
+        opacity: common.opacity.clone(),
+        timing: common.timing_controls(),
+        modulators: common.modulators.clone(),
+        group_chain,
+        all_properties_static: common.has_static_properties(),
+        uniform_buffer: draw.uniform_buffer,
+        blend_bind_group: draw.blend_bind_group,
+        vertex_buffer: draw.vertex_buffer,
+        last_vertices: Some(draw.initial_vertices),
+        last_opacity: Some(state.opacity),
+        anchor: common.anchor,
+        source: GpuLayerSource::Lottie(LottieGpu {
+            composition,
+            texture,
+            view,
+            last_rendered_frame: None,
+            has_rendered: false,
+        }),
     })
 }
 
@@ -3563,6 +3820,7 @@ fn build_wgpu_shader_layer(
         view,
         time_mode: layer.wgpu_shader.time_mode,
         last_rendered_frame: None,
+        has_rendered: false,
     };
 
     Ok(GpuLayer {

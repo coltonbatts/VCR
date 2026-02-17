@@ -1,0 +1,151 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 5.0
+seed: 42
+
+layers:
+  # Dark background
+  - id: "bg"
+    procedural:
+      kind: gradient
+      start_color: { r: 0.03, g: 0.03, b: 0.06, a: 1.0 }
+      end_color: { r: 0.06, g: 0.03, b: 0.08, a: 1.0 }
+      direction: vertical
+
+  # Circle - appears first, top-left quadrant
+  - id: "circle_shape"
+    z_index: 1
+    opacity:
+      start_frame: 0
+      end_frame: 20
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    procedural:
+      kind: circle
+      center: { x: 480, y: 380 }
+      radius: "80 + sin(t * 0.15) * 15"
+      color:
+        r: 1.0
+        g: 0.3
+        b: 0.5
+        a: 0.9
+
+  # Triangle - second, top-right
+  - id: "triangle_shape"
+    z_index: 1
+    opacity:
+      start_frame: 15
+      end_frame: 35
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    procedural:
+      kind: triangle
+      p0: { x: 1440, y: 300 }
+      p1: { x: 1340, y: 480 }
+      p2: { x: 1540, y: 480 }
+      color:
+        r: 0.3
+        g: 1.0
+        b: 0.5
+        a: 0.9
+
+  # Rounded rect - third, bottom-left
+  - id: "rect_shape"
+    z_index: 1
+    opacity:
+      start_frame: 30
+      end_frame: 50
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    procedural:
+      kind: rounded_rect
+      center: { x: 480, y: 700 }
+      size: { x: 200, y: 150 }
+      corner_radius: 16
+      color:
+        r: 0.3
+        g: 0.5
+        b: 1.0
+        a: 0.9
+
+  # Ring - fourth, bottom-right
+  - id: "ring_shape"
+    z_index: 1
+    opacity:
+      start_frame: 45
+      end_frame: 65
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    procedural:
+      kind: ring
+      center: { x: 1440, y: 700 }
+      outer_radius: "100 + sin(t * 0.1) * 10"
+      inner_radius: "70 + sin(t * 0.1) * 10"
+      color:
+        r: 1.0
+        g: 0.8
+        b: 0.2
+        a: 0.9
+
+  # Polygon - center, last to appear
+  - id: "polygon_shape"
+    z_index: 2
+    anchor: center
+    position: { x: 960, y: 540 }
+    rotation_degrees: "t * 1.5"
+    opacity:
+      start_frame: 60
+      end_frame: 80
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    procedural:
+      kind: polygon
+      center: { x: 0, y: 0 }
+      radius: "60 + sin(t * 0.2) * 10"
+      sides: 5
+      color:
+        r: 0.8
+        g: 0.3
+        b: 1.0
+        a: 0.9
+
+  # Line connecting shapes
+  - id: "line_shape"
+    z_index: 1
+    opacity:
+      start_frame: 70
+      end_frame: 90
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    procedural:
+      kind: line
+      start: { x: 480, y: 380 }
+      end: { x: 1440, y: 700 }
+      thickness: 2
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.2 }
+
+  # Title
+  - id: "title"
+    z_index: 5
+    anchor: center
+    position: { x: 960, y: 100 }
+    opacity:
+      start_frame: 80
+      end_frame: 100
+      from: 0.0
+      to: 1.0
+      easing: ease_out
+    text:
+      content: "PROCEDURAL PRIMITIVES"
+      font_family: "GeistPixel-Line"
+      font_size: 36
+      letter_spacing: 3
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.9 }
