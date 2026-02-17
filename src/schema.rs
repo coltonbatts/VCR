@@ -811,6 +811,7 @@ impl LayerCommon {
 pub enum Layer {
     Asset(AssetLayer),
     Image(ImageLayer),
+    Video(VideoLayer),
     Procedural(ProceduralLayer),
     Shader(ShaderLayer),
     WgpuShader(WgpuShaderLayer),
@@ -829,6 +830,8 @@ struct LayerWire {
     source_path: Option<PathBuf>,
     #[serde(default)]
     image: Option<ImageSource>,
+    #[serde(default)]
+    video: Option<VideoSource>,
     #[serde(default)]
     procedural: Option<ProceduralSource>,
     #[serde(default)]
@@ -863,6 +866,9 @@ impl<'de> Deserialize<'de> for Layer {
         }
         if wire.image.is_some() {
             present_sources.push("image");
+        }
+        if wire.video.is_some() {
+            present_sources.push("video");
         }
         if wire.procedural.is_some() {
             present_sources.push("procedural");
@@ -905,6 +911,7 @@ impl<'de> Deserialize<'de> for Layer {
             common,
             source_path,
             image,
+            video,
             procedural,
             shader,
             wgpu_shader,
@@ -928,24 +935,27 @@ impl<'de> Deserialize<'de> for Layer {
             }));
         }
 
-        match (source_path, image, procedural, shader, text, ascii) {
-            (Some(source_path), None, None, None, None, None) => Ok(Self::Asset(AssetLayer {
+        match (source_path, image, video, procedural, shader, text, ascii) {
+            (Some(source_path), None, None, None, None, None, None) => Ok(Self::Asset(AssetLayer {
                 common,
                 source_path,
             })),
-            (None, Some(image), None, None, None, None) => {
+            (None, Some(image), None, None, None, None, None) => {
                 Ok(Self::Image(ImageLayer { common, image }))
             }
-            (None, None, Some(procedural), None, None, None) => {
+            (None, None, Some(video), None, None, None, None) => {
+                Ok(Self::Video(VideoLayer { common, video }))
+            }
+            (None, None, None, Some(procedural), None, None, None) => {
                 Ok(Self::Procedural(ProceduralLayer { common, procedural }))
             }
-            (None, None, None, Some(shader), None, None) => {
+            (None, None, None, None, Some(shader), None, None) => {
                 Ok(Self::Shader(ShaderLayer { common, shader }))
             }
-            (None, None, None, None, Some(text), None) => {
+            (None, None, None, None, None, Some(text), None) => {
                 Ok(Self::Text(TextLayer { common, text }))
             }
-            (None, None, None, None, None, Some(ascii)) => {
+            (None, None, None, None, None, None, Some(ascii)) => {
                 Ok(Self::Ascii(AsciiLayer { common, ascii }))
             }
             _ => Err(DeError::custom(
@@ -968,6 +978,7 @@ impl Layer {
         match self {
             Self::Asset(layer) => &layer.common,
             Self::Image(layer) => &layer.common,
+            Self::Video(layer) => &layer.common,
             Self::Procedural(layer) => &layer.common,
             Self::Shader(layer) => &layer.common,
             Self::WgpuShader(layer) => &layer.common,
@@ -989,6 +1000,7 @@ impl Layer {
         match self {
             Self::Asset(layer) => layer.validate(),
             Self::Image(layer) => layer.validate(),
+            Self::Video(layer) => layer.validate(),
             Self::Procedural(layer) => layer.validate(params, seed),
             Self::Shader(layer) => layer.validate(params, seed),
             Self::WgpuShader(layer) => layer.validate(),
@@ -1381,6 +1393,29 @@ impl ImageLayer {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImageSource {
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VideoLayer {
+    #[serde(flatten)]
+    pub common: LayerCommon,
+    pub video: VideoSource,
+}
+
+impl VideoLayer {
+    fn validate(&self) -> Result<()> {
+        if self.video.path.as_os_str().is_empty() {
+            bail!("layer '{}' video.path cannot be empty", self.common.id);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VideoSource {
     pub path: PathBuf,
 }
 

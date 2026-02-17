@@ -1,0 +1,41 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 5
+
+params:
+  emoji_scale:
+    type: float
+    default: 0.5
+  crt_scanline_intensity:
+    type: float
+    default: 0.2
+
+layers:
+  - id: background
+    z_index: 0
+    shader:
+      path: "shaders/retro_enhancement.wgsl"
+
+  - id: retro_emoji_1
+    z_index: 10
+    position: [600, 540]
+    scale: [ "${emoji_scale}", "${emoji_scale}" ]
+    video:
+      path: "library:retro-emoji-01"
+
+  - id: retro_emoji_12
+    z_index: 11
+    position: [960, 540]
+    scale: [ "${emoji_scale}", "${emoji_scale}" ]
+    video:
+      path: "library:retro-emoji-12"
+
+  - id: retro_emoji_24
+    z_index: 12
+    position: [1320, 540]
+    scale: [ "${emoji_scale}", "${emoji_scale}" ]
+    video:
+      path: "library:retro-emoji-24"
+

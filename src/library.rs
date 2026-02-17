@@ -43,6 +43,7 @@ pub enum ManifestSourceUsage {
     Ascii,
     Sequence,
     Lottie,
+    Video,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -513,6 +514,15 @@ pub fn resolve_manifest_library_reference(
             if !matches!(item.item_type, LibraryItemType::Lottie) {
                 bail!(
                     "library id '{}' has type '{}' but this layer expects a lottie asset",
+                    item.id,
+                    item.item_type.as_str()
+                );
+            }
+        }
+        ManifestSourceUsage::Video => {
+            if !matches!(item.item_type, LibraryItemType::Video) {
+                bail!(
+                    "library id '{}' has type '{}' but this layer expects a video asset",
                     item.id,
                     item.item_type.as_str()
                 );

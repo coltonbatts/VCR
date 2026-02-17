@@ -1,0 +1,107 @@
+standardized_vcr_prompt: |-
+  ROLE
+  You are the VCR render engine. Execute deterministically from explicit parameters and fail fast on invalid or missing critical inputs.
+
+  TASK
+  Render with these explicit parameters:
+  - Resolution: 1080x1080
+  - Render FPS: 60
+  - Output FPS: 60
+  - Duration: 5.000s
+  - Frames: 300
+  - Output Type: video
+  - Output Path: ./renders/dreamcore_set/template.mov
+  - Container: mov
+  - Codec: prores_4444
+  - Alpha: true
+  - Determinism Seed: 0
+  - No blocking validation errors were found in timing fields.
+
+  INSTRUCTIONS
+  - Determinism is required. Use the fixed seed and avoid time-varying randomness.
+  - If exactly one of duration or frame count is provided, derive the other using fps and integer rounding for frames.
+  - If render fps differs from output fps, apply frame sampling with interpolation disabled unless explicitly overridden.
+  - Validate asset paths, fonts, and output compatibility before rendering.
+  - Do not synthesize unsupported features; surface them as validation issues.
+
+  CONTEXT
+  - Source mode: yaml
+  - Original input snapshot: project:   name: dreamcore_y2k_pack intent:   prompt: Procedural motion graphics pack with ten motifs and deterministic output. scene:   motifs:     - iridescent_chrome_heart     - cloud_gate     - floating_error_window     - wireframe_star     - dolphin_prism     - dither_sun     - tech_ring     - cdrom_rainbow     - falling_data_water     - butterfly_pulse   style_directives:     bloom: 0.22     chromatic_aberration_px: 1.4     grain_strength: 0.08     glow_strength: 0.35     prismatic_shift: 0.3 render:   resolution:     width: 1080     height: 1080   fps: 60   duration_seconds: 5.0   color_pipeline:     working_space: srgb     transfer: gamma2.2 output:   type: video   path: ./renders/dreamcore_set/template.mov   container: mov   codec: prores_4444   alpha: true   fps: 60   frame_rate_conversion:     policy: frame_sampling     interpolation: false determinism:   enabled: true   seed: 0 notes: One manifest per motif with dedicated shader and ProRes 4444 alpha output.
+  - Normalization produced 2 unresolved issue(s).
+
+  OUTPUT FORMAT
+  - Primary artifact path: ./renders/dreamcore_set/template.mov
+  - Emit run metadata with resolution, fps, duration_seconds, frames, codec, alpha, seed, and frame conversion policy.
+normalized_spec:
+  project:
+    name: dreamcore_y2k_pack
+  intent:
+    prompt: Procedural motion graphics pack with ten motifs and deterministic output.
+  input: {}
+  scene:
+    motifs:
+    - iridescent_chrome_heart
+    - cloud_gate
+    - floating_error_window
+    - wireframe_star
+    - dolphin_prism
+    - dither_sun
+    - tech_ring
+    - cdrom_rainbow
+    - falling_data_water
+    - butterfly_pulse
+    style_directives:
+      bloom: 0.22
+      chromatic_aberration_px: 1.4
+      grain_strength: 0.08
+      glow_strength: 0.35
+      prismatic_shift: 0.3
+  ascii: {}
+  render:
+    resolution:
+      width: 1080
+      height: 1080
+    fps: 60
+    duration_seconds: 5.0
+    frames: 300
+  output:
+    type: video
+    path: ./renders/dreamcore_set/template.mov
+    container: mov
+    codec: prores_4444
+    alpha: true
+    fps: 60
+    frame_rate_conversion:
+      policy: frame_sampling
+      interpolation: false
+  determinism:
+    enabled: true
+    seed: 0
+  notes: One manifest per motif with dedicated shader and ProRes 4444 alpha output.
+unknowns_and_fixes:
+- issue: 'Ambiguous style terms without deterministic parameter mapping: dreamcore.'
+  why_it_matters: Casual style words are subjective and can produce inconsistent outputs.
+  proposed_fix: |-
+    Add explicit style directives in YAML, for example:
+    scene:
+      style_directives:
+        bloom: 0.2
+        chromatic_aberration_px: 1.5
+        grain_strength: 0.1
+- issue: Text/ASCII is requested but no explicit font is provided.
+  why_it_matters: Font differences change metrics and layout, reducing output predictability.
+  proposed_fix: |-
+    Add:
+    ascii:
+      font: "GeistPixel-Line"
+assumptions_applied:
+- Computed frames as round(duration_seconds*fps) (5.000*60).
+acceptance_checks:
+- Spec serializes to valid YAML with expected top-level keys.
+- assert render.resolution.width == 1080 && render.resolution.height == 1080
+- assert render.fps == 60
+- assert output.fps == 60
+- assert determinism.seed == 0
+- assert output.path == "./renders/dreamcore_set/template.mov" && output.codec == "prores_4444"
+- assert frames == round(duration_seconds * fps) (300 == round(5.000 * 60))
+- assert all referenced asset and font paths exist before render execution.

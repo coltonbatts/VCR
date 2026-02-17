@@ -1,0 +1,414 @@
+{
+  "version": 1,
+  "pack_id": "y2k-bold-modern",
+  "items": [
+    {
+      "id": "y2k-1",
+      "type": "image",
+      "path": "items/y2k-1/source.png",
+      "sha256": "ce0f6edbddaeb0692384e66498a448ddd50b34d9265e2bc0ab5e58060162137b",
+      "spec": {
+        "width": 1611,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-10",
+      "type": "image",
+      "path": "items/y2k-10/source.png",
+      "sha256": "804a36133c0680bad3af8950956a0455255882d58b21c129f2fc9206647a1a84",
+      "spec": {
+        "width": 1509,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-11",
+      "type": "image",
+      "path": "items/y2k-11/source.png",
+      "sha256": "7bf226bd23b3d4af3cba846ca7c5383b2e5780a6c3c00401f3b68e5927238245",
+      "spec": {
+        "width": 2084,
+        "height": 827,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-12",
+      "type": "image",
+      "path": "items/y2k-12/source.png",
+      "sha256": "488dda5212e1481dbfa228de3a4a66b3d06efe7a4dbb300fd10e4e9725f92aef",
+      "spec": {
+        "width": 2084,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-13",
+      "type": "image",
+      "path": "items/y2k-13/source.png",
+      "sha256": "8de5d7573234f7fbe1edc44fcfa0d5924f1578753fb421d925c371f886a27474",
+      "spec": {
+        "width": 2084,
+        "height": 1429,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-14",
+      "type": "image",
+      "path": "items/y2k-14/source.png",
+      "sha256": "09a3f2b8b0873cb60b83f7cdf655348d60bbe236f45f91daff7c86b31657029d",
+      "spec": {
+        "width": 2057,
+        "height": 2057,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-15",
+      "type": "image",
+      "path": "items/y2k-15/source.png",
+      "sha256": "17d37a6d7dc91fba89cc008228b3bb21f63f38c5d1e6d270dcbb0e9a21b0c919",
+      "spec": {
+        "width": 2084,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-16",
+      "type": "image",
+      "path": "items/y2k-16/source.png",
+      "sha256": "b701dd61867777c3288fb11a95471bd00307c96c738d45d4cbcea75512c658ff",
+      "spec": {
+        "width": 2084,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-17",
+      "type": "image",
+      "path": "items/y2k-17/source.png",
+      "sha256": "91593b6b86a4e7bda2261e8d6df5b00e2450c7ef8c72d7378cd1d51f64347a92",
+      "spec": {
+        "width": 1803,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-18",
+      "type": "image",
+      "path": "items/y2k-18/source.png",
+      "sha256": "280233825b741736dc8423d52d6dbd7b7d5f3056884dd508e70081c0761c5bae",
+      "spec": {
+        "width": 2087,
+        "height": 957,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-19",
+      "type": "image",
+      "path": "items/y2k-19/source.png",
+      "sha256": "0fb33a38c04a19d6527ac3f459bfe30c98929f95e82c93687ee6ac63e4c4380f",
+      "spec": {
+        "width": 1538,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-2-01",
+      "type": "image",
+      "path": "items/y2k-2-01/source.png",
+      "sha256": "b15b5e13f034c6a68540cffba76efa45d6caa56837c215a1cba6088c1adb7ce5",
+      "spec": {
+        "width": 2084,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-20",
+      "type": "image",
+      "path": "items/y2k-20/source.png",
+      "sha256": "07357fab4a2898c719dcd3b71e58f846d9951b11b249d32cdf748f93522d0585",
+      "spec": {
+        "width": 2084,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-21",
+      "type": "image",
+      "path": "items/y2k-21/source.png",
+      "sha256": "1dcd82122532f3b4cd9e18a7b7b5e54d0ccbc9e7fbb41a50485f106525a62fe1",
+      "spec": {
+        "width": 2084,
+        "height": 660,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-22",
+      "type": "image",
+      "path": "items/y2k-22/source.png",
+      "sha256": "3b3cf108d060667636d35ff36b129c275c3070f1edb65eb75f8df4c33d75db7a",
+      "spec": {
+        "width": 2084,
+        "height": 2086,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-23",
+      "type": "image",
+      "path": "items/y2k-23/source.png",
+      "sha256": "12103179775b592d2076341e75d8422beec2cae7931c90d3aae1d22fcaea9635",
+      "spec": {
+        "width": 1506,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-24",
+      "type": "image",
+      "path": "items/y2k-24/source.png",
+      "sha256": "9c88833237afa10837d82801a17092c998080d79c8f835646a985706064efe65",
+      "spec": {
+        "width": 2088,
+        "height": 737,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-25",
+      "type": "image",
+      "path": "items/y2k-25/source.png",
+      "sha256": "a7281b5fa78065220fbb40bb26b057c74cc3bf1549bb9da20c5a20428692e89a",
+      "spec": {
+        "width": 2064,
+        "height": 1489,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-26",
+      "type": "image",
+      "path": "items/y2k-26/source.png",
+      "sha256": "9ea3d61aaf18c2df71ed73c2e64af4a1fcb6d05c51b892870820f17f78f369e0",
+      "spec": {
+        "width": 2084,
+        "height": 1876,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-27",
+      "type": "image",
+      "path": "items/y2k-27/source.png",
+      "sha256": "f76775568d53389875cd817c3a95e3cbcd770417c6963fd1e138a8de96c65841",
+      "spec": {
+        "width": 2084,
+        "height": 1438,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-28",
+      "type": "image",
+      "path": "items/y2k-28/source.png",
+      "sha256": "7d5b575250f3ea5277bf9ed24ea705e1b452579eb59cfea1fc46f582f989337d",
+      "spec": {
+        "width": 2084,
+        "height": 1936,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-29",
+      "type": "image",
+      "path": "items/y2k-29/source.png",
+      "sha256": "51ae40003994df7050f6465d843af2ae59b8a33502796641ae953b666df9da8a",
+      "spec": {
+        "width": 2084,
+        "height": 1432,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-3-01",
+      "type": "image",
+      "path": "items/y2k-3-01/source.png",
+      "sha256": "6f5ce77f5a63c0487764db345b621ecc5b0a2aa663ad0c38078e5e69d20705b3",
+      "spec": {
+        "width": 2084,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-30",
+      "type": "image",
+      "path": "items/y2k-30/source.png",
+      "sha256": "863215a399cfa3bd48a31ce78bfc1e61fa677a09232be3cbda3f30af9492e372",
+      "spec": {
+        "width": 2054,
+        "height": 2077,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-31",
+      "type": "image",
+      "path": "items/y2k-31/source.png",
+      "sha256": "9ccbeb1f53c17c10016bef4035a63722064fd2c45f1718036ed4613a8ee3a416",
+      "spec": {
+        "width": 2088,
+        "height": 949,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-32",
+      "type": "image",
+      "path": "items/y2k-32/source.png",
+      "sha256": "8888ebf9ac0f804bad63570a6c10d78db1659baee83dddac64e95bf8c5c097b6",
+      "spec": {
+        "width": 2099,
+        "height": 1043,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-33",
+      "type": "image",
+      "path": "items/y2k-33/source.png",
+      "sha256": "91ac2e9fb009ec379beeb999b76be18e9c0f4f5afa02374a21ceefdcd623c54f",
+      "spec": {
+        "width": 2099,
+        "height": 2083,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-34",
+      "type": "image",
+      "path": "items/y2k-34/source.png",
+      "sha256": "f5af95b04a93e93894814bbce6774dbb5b7ad7222b2276b0fadd562b9dd930e5",
+      "spec": {
+        "width": 1126,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-4-01",
+      "type": "image",
+      "path": "items/y2k-4-01/source.png",
+      "sha256": "ecd2e81501064ee1b29a75496a5a448dde0d17a2dad7392cab4260658181a180",
+      "spec": {
+        "width": 2084,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-5-01",
+      "type": "image",
+      "path": "items/y2k-5-01/source.png",
+      "sha256": "3bfcdc620eb262d20de41188e18db3a64cd1127b572eb44882dd008afde6f86b",
+      "spec": {
+        "width": 2084,
+        "height": 2084,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-6",
+      "type": "image",
+      "path": "items/y2k-6/source.png",
+      "sha256": "28430a89ee48eba742bb484ef7048fe40a01b7b474531b54c39707fa2ef9e6cb",
+      "spec": {
+        "width": 2084,
+        "height": 1097,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-7",
+      "type": "image",
+      "path": "items/y2k-7/source.png",
+      "sha256": "ffc9113e54c6e2df35ad68aaedbcbbfa37eb2d0c11dcba8326b021894e55fe21",
+      "spec": {
+        "width": 2084,
+        "height": 715,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-8",
+      "type": "image",
+      "path": "items/y2k-8/source.png",
+      "sha256": "31bbe02fd23cbb89c84cba0943cdc91f2e7fb797085068d7f048b85b4de7bb77",
+      "spec": {
+        "width": 2066,
+        "height": 2065,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    },
+    {
+      "id": "y2k-9",
+      "type": "image",
+      "path": "items/y2k-9/source.png",
+      "sha256": "14745b9ad0655036dbdc7afe2fa320297e67d742101a1c121c80f0fd98d7c26b",
+      "spec": {
+        "width": 2084,
+        "height": 2074,
+        "has_alpha": true,
+        "pixel_format": "rgba8"
+      }
+    }
+  ]
+}

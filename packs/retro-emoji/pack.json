@@ -1,0 +1,390 @@
+{
+  "version": 1,
+  "pack_id": "retro-emoji",
+  "items": [
+    {
+      "id": "emoji-01",
+      "type": "video",
+      "path": "items/emoji-01/Retro Emoji 01.mov",
+      "sha256": "e91ea76c6d2cac1449a246f81c7e19f9513be91697f0df24a6e4ea504025d6cd",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-02",
+      "type": "video",
+      "path": "items/emoji-02/Retro Emoji 02.mov",
+      "sha256": "9ddf737b7b85487cfe36723fa4998354b4f44ecb2a4920104c353c477f7f32f9",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-03",
+      "type": "video",
+      "path": "items/emoji-03/Retro Emoji 03.mov",
+      "sha256": "934317e357b55199ae2ea8727ee10a85cebdb7a19c6b679090baee488071ccb5",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-04",
+      "type": "video",
+      "path": "items/emoji-04/Retro Emoji 04.mov",
+      "sha256": "9b1dcc6479fd69b0d9d7cb9971de711d084697840b62f4dabcc0d760a6da6b80",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-05",
+      "type": "video",
+      "path": "items/emoji-05/Retro Emoji 05.mov",
+      "sha256": "04de2b5fd1fadd132c98c028f901ada82d61212c5730f02843e0ea80f7272b6f",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-06",
+      "type": "video",
+      "path": "items/emoji-06/Retro Emoji 06.mov",
+      "sha256": "7e0935d9d792da828daac6dbb59739c39d030d606ad0b0508b12569ea24a3721",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-07",
+      "type": "video",
+      "path": "items/emoji-07/Retro Emoji 07.mov",
+      "sha256": "c007cb6ce3460dbeea424cc22acb370dfd09c07b2f3f830b36c03a8ff78126ba",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-08",
+      "type": "video",
+      "path": "items/emoji-08/Retro Emoji 08.mov",
+      "sha256": "3c869305dadc676ac3d12efbfc102a32be809628c4a6ccf2b30dbe4eb42f2c84",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-09",
+      "type": "video",
+      "path": "items/emoji-09/Retro Emoji 09.mov",
+      "sha256": "b42929e0d49395d1af288355566de0a71783aabdc0cd03731c6580042003344f",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-10",
+      "type": "video",
+      "path": "items/emoji-10/Retro Emoji 10.mov",
+      "sha256": "79341ec65983fd783b38349b64239da8aa5c5c3f8ca99e980fe216077c7ce349",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-11",
+      "type": "video",
+      "path": "items/emoji-11/Retro Emoji 11.mov",
+      "sha256": "70f0a2f431bd0718f791ea77386c2cfca9ebb1a0c02a8c68f265d62cb8ff6941",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-12",
+      "type": "video",
+      "path": "items/emoji-12/Retro Emoji 12.mov",
+      "sha256": "8baa769784ac385d469683d9ab7f2f70993ecb71b793994811be85d059f4e606",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-13",
+      "type": "video",
+      "path": "items/emoji-13/Retro Emoji 13.mov",
+      "sha256": "d2b27ecbe6fbb3866c93261aa723a8b201676ac0c95306869d0dff49b63f8379",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-14",
+      "type": "video",
+      "path": "items/emoji-14/Retro Emoji 14.mov",
+      "sha256": "5a51b63a6474d88d1beacb012040cfa9bad93992a5894d23d660a0848ff08316",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-15",
+      "type": "video",
+      "path": "items/emoji-15/Retro Emoji 15.mov",
+      "sha256": "c977a4a3baf81b50a23661aad5b5a9db69da618e82f943f1be97cf0df4b636d3",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-16",
+      "type": "video",
+      "path": "items/emoji-16/Retro Emoji 16.mov",
+      "sha256": "42d7651e634b0171e8b8f943c0770c283bdd3e06a0a74c1f1bbe2a06ae05d47e",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-17",
+      "type": "video",
+      "path": "items/emoji-17/Retro Emoji 17.mov",
+      "sha256": "e4372c2c4251ce7451ec90939949f90b0b1624384bdc728cb1b5abd43d373ff7",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-18",
+      "type": "video",
+      "path": "items/emoji-18/Retro Emoji 18.mov",
+      "sha256": "5df890b216ccd73fd94d800b9d15b8f91f659fab4df76b290f7fc5c43a7577a6",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-19",
+      "type": "video",
+      "path": "items/emoji-19/Retro Emoji 19.mov",
+      "sha256": "e50450fe53d818dc0cbf901e147287cfcd548a9da34fce9cbd2b15e62ff3e7dd",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-20",
+      "type": "video",
+      "path": "items/emoji-20/Retro Emoji 20.mov",
+      "sha256": "4bcbebb65d80b6f1ec16a1c95db0ec1cde0bcdd33a7520a45bbf6e6269576478",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-21",
+      "type": "video",
+      "path": "items/emoji-21/Retro Emoji 21.mov",
+      "sha256": "cca4cad3e5831cda5f047a39de217a12440b7b2b6c65734a5abacd389f1d938b",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-22",
+      "type": "video",
+      "path": "items/emoji-22/Retro Emoji 22.mov",
+      "sha256": "8e7e8f7826d6a98c11797d74e6e7e68e26df9e71725787e62acd3a0de3c1d026",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-23",
+      "type": "video",
+      "path": "items/emoji-23/Retro Emoji 23.mov",
+      "sha256": "bebfc1724a68cf6a324933ac81960cf1cd0e641e45e46adab845f66f50d9d31a",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-24",
+      "type": "video",
+      "path": "items/emoji-24/Retro Emoji 24.mov",
+      "sha256": "59e7adf8fa4bbcfe944b2f61872e45922a2eb37b3a0ab7d24f44c48a3bce3d44",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-25",
+      "type": "video",
+      "path": "items/emoji-25/Retro Emoji 25.mov",
+      "sha256": "fffb8530f8352190e113451a4baae976079a4676f68d95a0ad10f771d270b53c",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-26",
+      "type": "video",
+      "path": "items/emoji-26/Retro Emoji 26.mov",
+      "sha256": "20c141b7f1a5c955706852f97fb5149365caa16fc81fdde98713944ce9ae599e",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-27",
+      "type": "video",
+      "path": "items/emoji-27/Retro Emoji 27.mov",
+      "sha256": "12985fd063255982070e5351b5980b04cd30732dfc6e1f43b3a6a962ba90bdb4",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-28",
+      "type": "video",
+      "path": "items/emoji-28/Retro Emoji 28.mov",
+      "sha256": "af6c1338a5ff56d9f50839e7917c9255ca93b4423bcc54ab79572c67aa830b5b",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-29",
+      "type": "video",
+      "path": "items/emoji-29/Retro Emoji 29.mov",
+      "sha256": "780fcfdf8f2b24064b1e014e79b41a08491c2da85b56787a966e8283fc21cf10",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-30",
+      "type": "video",
+      "path": "items/emoji-30/Retro Emoji 30.mov",
+      "sha256": "3a95332202a3b573b13b1cf7fd9a4358325fbbd08bfcbcf14da20c1fd49e981a",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-31",
+      "type": "video",
+      "path": "items/emoji-31/Retro Emoji 31.mov",
+      "sha256": "cfeb0d9a56959de6dcd63a1ac9e0f3aa90cfd9c504d1afdd2042e47e11c05d68",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    },
+    {
+      "id": "emoji-32",
+      "type": "video",
+      "path": "items/emoji-32/Retro Emoji 32.mov",
+      "sha256": "11f3d044468bb20b6742506edf3d25037ea587f99777a9ac2d808fc8199b02e1",
+      "spec": {
+        "width": 1400,
+        "height": 1200,
+        "has_alpha": true,
+        "pixel_format": "argb"
+      }
+    }
+  ]
+}

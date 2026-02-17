@@ -377,6 +377,7 @@ impl GpuLayer {
             GpuLayerSource::Text { .. } => true,
             GpuLayerSource::Ascii(gpu) => gpu.has_rendered,
             GpuLayerSource::Sequence { .. } => true,
+            GpuLayerSource::Video(gpu) => gpu.last_rendered_frame.is_some(),
             GpuLayerSource::Lottie(gpu) => gpu.last_rendered_frame.is_some(),
         }
     }
@@ -397,7 +398,19 @@ enum GpuLayerSource {
         source: crate::schema::SequenceSource,
         _texture: wgpu::Texture,
     },
+    Video(VideoGpu),
     Lottie(LottieGpu),
+}
+
+struct VideoGpu {
+    ffmpeg: crate::decoding::FfmpegInput,
+    width: u32,
+    height: u32,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    bytes_per_row: u32,
+    rows_per_image: u32,
+    last_rendered_frame: Option<u32>,
 }
 
 struct LottieGpu {
@@ -894,6 +907,20 @@ impl GpuRenderer {
                     scene.seed,
                     environment.fps,
                 )?,
+                Layer::Video(video_layer) => build_video_layer(
+                    &device,
+                    &queue,
+                    width,
+                    height,
+                    video_layer,
+                    group_chain.clone(),
+                    &blend_bind_group_layout,
+                    &sampler,
+                    &scene.params,
+                    &scene.modulators,
+                    scene.seed,
+                    environment.fps,
+                )?,
                 Layer::Procedural(procedural_layer) => build_procedural_layer(
                     &device,
                     &queue,
@@ -1069,6 +1096,7 @@ impl GpuRenderer {
 
         self.prepare_procedural_layers(frame_index, &mut encoder)?;
         self.prepare_sequence_layers(frame_index)?;
+        self.prepare_video_layers(frame_index)?;
         self.prepare_lottie_layers(frame_index)?;
         self.render_layers_to_view(frame_index, &output_view, &mut encoder)?;
 
@@ -1491,6 +1519,39 @@ impl GpuRenderer {
 
         Ok(())
     }
+    fn prepare_video_layers(&mut self, frame_index: u32) -> Result<()> {
+        for layer in &mut self.layers {
+            let GpuLayerSource::Video(video) = &mut layer.source else {
+                continue;
+            };
+
+            // Video layers are sequential; we read one frame per render step.
+            if let Some(frame_data) = video.ffmpeg.read_frame() {
+                self.queue.write_texture(
+                    wgpu::ImageCopyTexture {
+                        texture: &video.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &frame_data,
+                    wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(video.bytes_per_row),
+                        rows_per_image: Some(video.rows_per_image),
+                    },
+                    wgpu::Extent3d {
+                        width: video.width,
+                        height: video.height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                video.last_rendered_frame = Some(frame_index);
+            }
+        }
+        Ok(())
+    }
+
 
     fn prepare_sequence_layers(&mut self, frame_index: u32) -> Result<()> {
         for layer in &mut self.layers {
@@ -1763,6 +1824,10 @@ impl SoftwareRenderer {
                         )
                     })?;
                     SoftwareLayerSource::Lottie(LottieSoftware { composition })
+                }
+                Layer::Video(_) => {
+                    eprintln!("[warn] video layers require GPU backend; layer rendered as transparent in software mode");
+                    SoftwareLayerSource::Shader
                 }
             };
 
@@ -4382,4 +4447,137 @@ layers:
         }
         hash
     }
+}
+
+fn build_video_layer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame_width: u32,
+    frame_height: u32,
+    layer: &crate::schema::VideoLayer,
+    group_chain: Vec<crate::schema::Group>,
+    blend_bind_group_layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    params: &crate::schema::Parameters,
+    modulators: &crate::schema::ModulatorMap,
+    seed: u64,
+    fps: u32,
+) -> Result<GpuLayer> {
+    let (width, height) = probe_video_resolution(&layer.video.path)?;
+
+    let ffmpeg = crate::decoding::FfmpegInput::spawn(&layer.video.path, width, height)?;
+    
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(&format!("vcr-video-{}", layer.common.id)),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    let bytes_per_row = (width * 4) as u32; 
+    let rows_per_image = height;
+
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let common = &layer.common;
+
+    let state = crate::timeline::evaluate_layer_state_or_hidden(
+        &common.id,
+        &common.position,
+        common.pos_x.as_ref(),
+        common.pos_y.as_ref(),
+        &common.scale,
+        &common.rotation_degrees,
+        &common.opacity,
+        common.timing_controls(),
+        &common.modulators,
+        &group_chain,
+        0,
+        fps,
+        params,
+        seed,
+        modulators,
+    )?;
+
+    let draw = build_layer_draw_resources(
+        device,
+        queue,
+        frame_width,
+        frame_height,
+        common,
+        state.position,
+        state.scale,
+        state.rotation_degrees,
+        state.opacity,
+        width,
+        height,
+        &view,
+        blend_bind_group_layout,
+        sampler,
+    )?;
+
+    Ok(GpuLayer {
+        id: common.id.clone(),
+        z_index: common.z_index,
+        width,
+        height,
+        position: common.position.clone(),
+        position_x: common.pos_x.clone(),
+        position_y: common.pos_y.clone(),
+        scale: common.scale.clone(),
+        rotation_degrees: common.rotation_degrees.clone(),
+        opacity: common.opacity.clone(),
+        timing: common.timing_controls(),
+        modulators: common.modulators.clone(),
+        group_chain,
+        all_properties_static: common.has_static_properties(),
+        uniform_buffer: draw.uniform_buffer,
+        blend_bind_group: draw.blend_bind_group,
+        vertex_buffer: draw.vertex_buffer,
+        last_vertices: Some(draw.initial_vertices),
+        last_opacity: Some(state.opacity),
+        anchor: common.anchor,
+        source: GpuLayerSource::Video(VideoGpu {
+            ffmpeg,
+            width,
+            height,
+            texture,
+            view,
+            bytes_per_row,
+            rows_per_image,
+            last_rendered_frame: None,
+        }),
+    })
+}
+
+fn probe_video_resolution(path: &Path) -> Result<(u32, u32)> {
+    let output = std::process::Command::new("ffprobe")
+        .arg("-v")
+        .arg("error")
+        .arg("-select_streams")
+        .arg("v:0")
+        .arg("-show_entries")
+        .arg("stream=width,height")
+        .arg("-of")
+        .arg("csv=s=x:p=0")
+        .arg(path)
+        .output()
+        .context("failed to run ffprobe")?;
+
+    let s = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = s.trim().split('x').collect();
+    if parts.len() != 2 {
+        bail!("failed to parse video resolution from ffprobe output: '{}'", s);
+    }
+
+    let w = parts[0].parse()?;
+    let h = parts[1].parse()?;
+    Ok((w, h))
 }

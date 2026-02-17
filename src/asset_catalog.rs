@@ -284,6 +284,15 @@ pub fn resolve_manifest_asset_reference(
                 );
             }
         }
+        ManifestSourceUsage::Video => {
+            if !matches!(entry.item.item_type, LibraryItemType::Video) {
+                bail!(
+                    "asset reference '{}' has type '{}' but this layer expects a video asset",
+                    entry.reference,
+                    entry.item.item_type.as_str()
+                );
+            }
+        }
     }
 
     verify_item(&workspace_root, &entry.item)?;

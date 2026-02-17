@@ -1,0 +1,73 @@
+version: 1
+environment:
+  resolution: { width: 1080, height: 1080 }
+  fps: 30
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+layers:
+  - id: "background"
+    z_index: 0
+    procedural:
+      kind: gradient
+      start_color: { r: 0.1, g: 0.1, b: 0.1, a: 1.0 }
+      end_color: { r: 0.2, g: 0.2, b: 0.3, a: 1.0 }
+      direction: vertical
+
+  - id: "y2k_star"
+    z_index: 10
+    source: "pack:y2k-bold-modern/y2k-1"
+    scale: [0.3, 0.3]
+    pos_x: 540
+    pos_y: 540
+    rotation_degrees: "t * 2"
+    anchor: center
+
+  - id: "y2k_element_1"
+    z_index: 5
+    source: "pack:y2k-bold-modern/y2k-10"
+    scale: [0.2, 0.2]
+    pos_x: 200
+    pos_y: 200
+    opacity: "0.8 + 0.2 * sin(t * 0.1)"
+    anchor: center
+
+  - id: "y2k_element_2"
+    z_index: 5
+    source: "pack:y2k-bold-modern/y2k-15"
+    scale: [0.2, 0.2]
+    pos_x: 880
+    pos_y: 200
+    opacity: "0.8 + 0.2 * cos(t * 0.1)"
+    anchor: center
+
+  - id: "y2k_element_3"
+    z_index: 5
+    source: "pack:y2k-bold-modern/y2k-20"
+    scale: [0.2, 0.2]
+    pos_x: 200
+    pos_y: 880
+    rotation_degrees: "t * -1"
+    anchor: center
+
+  - id: "y2k_element_4"
+    z_index: 5
+    source: "pack:y2k-bold-modern/y2k-25"
+    scale: [0.2, 0.2]
+    pos_x: 880
+    pos_y: 880
+    rotation_degrees: "t * 1.5"
+    anchor: center
+
+  - id: "title"
+    z_index: 20
+    text:
+      content: "Y2K BOLD MODERN"
+      font_family: "GeistPixel-Line"
+      font_size: 80
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    pos_x: 540
+    pos_y: 100
+    anchor: center

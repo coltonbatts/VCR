@@ -1050,6 +1050,18 @@ fn validate_manifest(
                 )?;
                 lottie_layer.lottie.path = resolved;
             }
+            Layer::Video(video_layer) => {
+                let resolved = resolve_and_validate_layer_asset_path(
+                    manifest_path,
+                    &manifest_dir,
+                    &video_layer.video.path,
+                    &video_layer.common.id,
+                    "video.path",
+                    ManifestSourceUsage::Video,
+                    options.allow_raw_paths,
+                )?;
+                video_layer.video.path = resolved;
+            }
         }
     }
 

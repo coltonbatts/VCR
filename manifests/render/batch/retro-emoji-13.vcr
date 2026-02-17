@@ -1,0 +1,14 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 30
+  duration: 10
+
+layers:
+  - id: retro-emoji-13
+    z_index: 10
+    position: [960, 540]
+    anchor: center
+    scale: [0.75, 0.75]
+    video:
+      path: "library:retro-emoji-13"
