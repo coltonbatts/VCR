@@ -231,6 +231,7 @@ Comprehensive guides and technical references are available in the `docs/` direc
 
 - **[VCR Skill Reference](SKILL.md)**: The primary guide for authors and AI agents.
 - **[Standard Operating Procedure](VCR_SOP.md)**: The mandatory "Golden Path" for render verification.
+- **[Prompt Guide](docs/PROMPT_GUIDE.md)**: How to write bulletproof VCR prompts.
 - **[Agent Protocol](AGENTS.md)**: How automated tools interact with the engine.
 - **[Project Custodian](docs/PROJECT_CUSTODIAN.md)**: Architectural overview and project map.
 - **[PRD](docs/PRD.md)**: Product vision and roadmap.
