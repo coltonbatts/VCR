@@ -15,8 +15,8 @@ mod implementation {
     use vcr::encoding::FfmpegPipe;
     use vcr::renderer::Renderer;
     use vcr::schema::{
-        AsciiFontVariant, Duration as ManifestDuration, EncodingConfig, Environment,
-        ProResProfile, Resolution,
+        AsciiFontVariant, Duration as ManifestDuration, EncodingConfig, Environment, ProResProfile,
+        Resolution,
     };
     use vcr::timeline::RenderSceneData;
 
