@@ -1,0 +1,123 @@
+standardized_vcr_prompt: |-
+  ROLE
+  You are the VCR render engine. Execute deterministically from explicit parameters and fail fast on invalid or missing critical inputs.
+
+  TASK
+  Render with these explicit parameters:
+  - Resolution: 1080x1920
+  - Render FPS: 60
+  - Output FPS: 60
+  - Duration: 10.000s
+  - Frames: 600
+  - Output Type: video
+  - Output Path: renders/occult_eye_pyramid.mov
+  - Container: mov
+  - Codec: prores_4444
+  - Alpha: true
+  - Determinism Seed: 0
+  - No blocking validation errors were found in timing fields.
+
+  INSTRUCTIONS
+  - Determinism is required. Use the fixed seed and avoid time-varying randomness.
+  - If exactly one of duration or frame count is provided, derive the other using fps and integer rounding for frames.
+  - If render fps differs from output fps, apply frame sampling with interpolation disabled unless explicitly overridden.
+  - Validate asset paths, fonts, and output compatibility before rendering.
+  - Do not synthesize unsupported features; surface them as validation issues.
+
+  CONTEXT
+  - Source mode: natural_language
+  - Original input snapshot: Objective: Create a high-fidelity 3D occult element: a floating eye above a pyramid, optimized for mobile (9:16).  1. Geometry & Aesthetic: - Build a clean 3D pyramid (sharp silhouette, stable edges) with subtle carved surface detail. - Place a floating eye directly above the pyramid apex (clearly separated, centered, and readable at all times). - Eye construction should include sclera, iris, and pupil depth (not a flat decal), with smooth geometry and no flicker. - Use high geometry density for any procedural chains/segments (minimum 120 where applicable) to prevent blobbing or temporal breakdown. - Style direction: mystical/occult, premium, cinematic, not cartoon.  2. Materials & Lighting: - Pyramid material: dark stone/obsidian with metallic edge response. - Eye material: glossy organic surface with reflective highlights and subtle emissive iris glow. - Dual-light setup:   - Primary key: warm gold/amber.   - Rim/fill: cool teal/cyan. - Keep specular highlights smooth and stable across rotation.  3. Framing & Camera (9:16 Vertical): - Composition must be perfectly centered in 1080x1920. - Maintain visual hierarchy: eye above apex with a clean negative-space gap. - Reposition camera (ro.z) and adjust focal length so the full animated element keeps at least a 15% safety margin from all edges at maximum extent. - Zero clipping is mandatory.  4. Motion: - Duration: 10 seconds. - Rotation: slow, elegant, continuous 3D motion (no jitter). - Optional subtle eye behavior: gentle iris drift/pulse, but keep deterministic and smooth.  5. Technical Spec: - Render at 60 fps. - Export as ProRes 4444 .mov with transparent background. - Output path: renders/occult_eye_pyramid.mov - Deterministic seed: 0.  6. Mandatory Verification (Truth Loop): - Generate a 1-second preview snapshot of frame 0 using ffmpeg. - Generate a 3x3 contact sheet using scripts/vcr_contact_sheet.py for the full 10-second render. - Inspect for clipping, instability, or blobbing; self-correct and rerender until clean. - Attach the final contact sheet as proof.
+  - Normalization produced 1 unresolved issue(s).
+
+  OUTPUT FORMAT
+  - Primary artifact path: renders/occult_eye_pyramid.mov
+  - Emit run metadata with resolution, fps, duration_seconds, frames, codec, alpha, seed, and frame conversion policy.
+normalized_spec:
+  project: {}
+  intent:
+    prompt: |-
+      Objective: Create a high-fidelity 3D occult element: a floating eye above a pyramid, optimized for mobile (9:16).
+
+      1. Geometry & Aesthetic:
+      - Build a clean 3D pyramid (sharp silhouette, stable edges) with subtle carved surface detail.
+      - Place a floating eye directly above the pyramid apex (clearly separated, centered, and readable at all times).
+      - Eye construction should include sclera, iris, and pupil depth (not a flat decal), with smooth geometry and no flicker.
+      - Use high geometry density for any procedural chains/segments (minimum 120 where applicable) to prevent blobbing or temporal breakdown.
+      - Style direction: mystical/occult, premium, cinematic, not cartoon.
+
+      2. Materials & Lighting:
+      - Pyramid material: dark stone/obsidian with metallic edge response.
+      - Eye material: glossy organic surface with reflective highlights and subtle emissive iris glow.
+      - Dual-light setup:
+        - Primary key: warm gold/amber.
+        - Rim/fill: cool teal/cyan.
+      - Keep specular highlights smooth and stable across rotation.
+
+      3. Framing & Camera (9:16 Vertical):
+      - Composition must be perfectly centered in 1080x1920.
+      - Maintain visual hierarchy: eye above apex with a clean negative-space gap.
+      - Reposition camera (ro.z) and adjust focal length so the full animated element keeps at least a 15% safety margin from all edges at maximum extent.
+      - Zero clipping is mandatory.
+
+      4. Motion:
+      - Duration: 10 seconds.
+      - Rotation: slow, elegant, continuous 3D motion (no jitter).
+      - Optional subtle eye behavior: gentle iris drift/pulse, but keep deterministic and smooth.
+
+      5. Technical Spec:
+      - Render at 60 fps.
+      - Export as ProRes 4444 .mov with transparent background.
+      - Output path: renders/occult_eye_pyramid.mov
+      - Deterministic seed: 0.
+
+      6. Mandatory Verification (Truth Loop):
+      - Generate a 1-second preview snapshot of frame 0 using ffmpeg.
+      - Generate a 3x3 contact sheet using scripts/vcr_contact_sheet.py for the full 10-second render.
+      - Inspect for clipping, instability, or blobbing; self-correct and rerender until clean.
+      - Attach the final contact sheet as proof.
+  input: {}
+  scene: {}
+  ascii: {}
+  render:
+    resolution:
+      width: 1080
+      height: 1920
+    fps: 60
+    duration_seconds: 10.0
+    frames: 600
+  output:
+    type: video
+    path: renders/occult_eye_pyramid.mov
+    container: mov
+    codec: prores_4444
+    alpha: true
+    fps: 60
+    frame_rate_conversion:
+      policy: frame_sampling
+      interpolation: false
+  determinism:
+    enabled: true
+    seed: 0
+  notes: null
+unknowns_and_fixes:
+- issue: 'Ambiguous style terms without deterministic parameter mapping: cinematic.'
+  why_it_matters: Casual style words are subjective and can produce inconsistent outputs.
+  proposed_fix: |-
+    Add explicit style directives in YAML, for example:
+    scene:
+      style_directives:
+        bloom: 0.2
+        chromatic_aberration_px: 1.5
+        grain_strength: 0.1
+assumptions_applied:
+- Defaulted output fps to render fps because `output.fps` was missing.
+- Computed frames as round(duration_seconds*fps) (10.000*60).
+acceptance_checks:
+- Spec serializes to valid YAML with expected top-level keys.
+- assert render.resolution.width == 1080 && render.resolution.height == 1920
+- assert render.fps == 60
+- assert output.fps == 60
+- assert determinism.seed == 0
+- assert output.path == "renders/occult_eye_pyramid.mov" && output.codec == "prores_4444"
+- assert frames == round(duration_seconds * fps) (600 == round(10.000 * 60))
+- assert all referenced asset and font paths exist before render execution.

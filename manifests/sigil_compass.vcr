@@ -1,0 +1,23 @@
+# Sigil Compass - compass rose / occult hybrid
+version: 1
+
+environment:
+  resolution:
+    width: 1080
+    height: 1920
+  fps: 60
+  duration: 10.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+seed: 0
+
+layers:
+  - id: "sigil_compass"
+    z_index: 0
+    wgpu_shader:
+      shader_path: "shaders/sigil_compass.wgsl"
+      width: 1080
+      height: 1920
+      time_mode: seconds

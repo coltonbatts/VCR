@@ -1,0 +1,31 @@
+project: {}
+intent:
+  prompt: >-
+    High-fidelity 3D occult element: floating eye above a pyramid for 1080x1920 vertical. No text or ASCII output.
+scene:
+  style_directives:
+    bloom: 0.18
+    chromatic_aberration_px: 0.4
+    grain_strength: 0.02
+    contrast: 1.1
+    saturation: 0.95
+ascii:
+  font: GeistPixel-Line
+render:
+  resolution:
+    width: 1080
+    height: 1920
+  fps: 60
+  duration_seconds: 10.0
+output:
+  type: video
+  path: renders/occult_eye_pyramid.mov
+  container: mov
+  codec: prores_4444
+  alpha: true
+determinism:
+  enabled: true
+  seed: 0
+notes: >-
+  Geometry target: centered floating eye above pyramid with clean gap and no clipping;
+  smooth deterministic motion.

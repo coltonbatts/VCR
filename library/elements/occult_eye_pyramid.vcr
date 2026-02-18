@@ -1,0 +1,23 @@
+# Occult eye above pyramid - 1080x1920, 60fps, deterministic alpha render
+version: 1
+
+environment:
+  resolution:
+    width: 1080
+    height: 1920
+  fps: 60
+  duration: 10.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+seed: 0
+
+layers:
+  - id: "occult_eye_pyramid"
+    z_index: 0
+    wgpu_shader:
+      shader_path: "occult_eye_pyramid.wgsl"
+      width: 1080
+      height: 1920
+      time_mode: seconds

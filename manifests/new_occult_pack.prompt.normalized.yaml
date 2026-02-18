@@ -1,0 +1,109 @@
+standardized_vcr_prompt: |-
+  ROLE
+  You are the VCR render engine. Execute deterministically from explicit parameters and fail fast on invalid or missing critical inputs.
+
+  TASK
+  Render with these explicit parameters:
+  - Resolution: 1080x1920
+  - Render FPS: 60
+  - Output FPS: 60
+  - Duration: 90.000s
+  - Frames: 5400
+  - Output Type: video
+  - Output Path: renders/relic_hand_orb.mov
+  - Container: mov
+  - Codec: prores_4444
+  - Alpha: true
+  - Determinism Seed: 0
+  - No blocking validation errors were found in timing fields.
+
+  INSTRUCTIONS
+  - Determinism is required. Use the fixed seed and avoid time-varying randomness.
+  - If exactly one of duration or frame count is provided, derive the other using fps and integer rounding for frames.
+  - If render fps differs from output fps, apply frame sampling with interpolation disabled unless explicitly overridden.
+  - Validate asset paths, fonts, and output compatibility before rendering.
+  - Do not synthesize unsupported features; surface them as validation issues.
+
+  CONTEXT
+  - Source mode: natural_language
+  - Original input snapshot: Create three NEW high-fidelity 3D assets we have not done before: 1) relic_hand_orb 2) oracle_globe 3) sigil_compass  Style direction: - occult + 90s dreamcore + premium cinematic - vertical mobile composition (1080x1920) - transparent background - deterministic smooth motion  Shared technical requirements for all three assets: - 10 seconds duration - 60 fps - ProRes 4444 MOV with alpha - seed 0 - output paths:   - renders/relic_hand_orb.mov   - renders/oracle_globe.mov   - renders/sigil_compass.mov  Creative requirements: - Relic hand orb: floating stylized 3D hand with occult palm sigil and a hovering orb. - Oracle globe: mystical globe with internal lines/runes and controlled emissive pulse. - Sigil compass: 3D compass-rose/sigil hybrid with clean rotational motion and occult detailing.
+  - Normalization produced 1 unresolved issue(s).
+
+  OUTPUT FORMAT
+  - Primary artifact path: renders/relic_hand_orb.mov
+  - Emit run metadata with resolution, fps, duration_seconds, frames, codec, alpha, seed, and frame conversion policy.
+normalized_spec:
+  project: {}
+  intent:
+    prompt: |-
+      Create three NEW high-fidelity 3D assets we have not done before:
+      1) relic_hand_orb
+      2) oracle_globe
+      3) sigil_compass
+
+      Style direction:
+      - occult + 90s dreamcore + premium cinematic
+      - vertical mobile composition (1080x1920)
+      - transparent background
+      - deterministic smooth motion
+
+      Shared technical requirements for all three assets:
+      - 10 seconds duration
+      - 60 fps
+      - ProRes 4444 MOV with alpha
+      - seed 0
+      - output paths:
+        - renders/relic_hand_orb.mov
+        - renders/oracle_globe.mov
+        - renders/sigil_compass.mov
+
+      Creative requirements:
+      - Relic hand orb: floating stylized 3D hand with occult palm sigil and a hovering orb.
+      - Oracle globe: mystical globe with internal lines/runes and controlled emissive pulse.
+      - Sigil compass: 3D compass-rose/sigil hybrid with clean rotational motion and occult detailing.
+  input: {}
+  scene: {}
+  ascii: {}
+  render:
+    resolution:
+      width: 1080
+      height: 1920
+    fps: 60
+    duration_seconds: 90.0
+    frames: 5400
+  output:
+    type: video
+    path: renders/relic_hand_orb.mov
+    container: mov
+    codec: prores_4444
+    alpha: true
+    fps: 60
+    frame_rate_conversion:
+      policy: frame_sampling
+      interpolation: false
+  determinism:
+    enabled: true
+    seed: 0
+  notes: null
+unknowns_and_fixes:
+- issue: 'Ambiguous style terms without deterministic parameter mapping: cinematic, dreamcore.'
+  why_it_matters: Casual style words are subjective and can produce inconsistent outputs.
+  proposed_fix: |-
+    Add explicit style directives in YAML, for example:
+    scene:
+      style_directives:
+        bloom: 0.2
+        chromatic_aberration_px: 1.5
+        grain_strength: 0.1
+assumptions_applied:
+- Defaulted output fps to render fps because `output.fps` was missing.
+- Computed frames as round(duration_seconds*fps) (90.000*60).
+acceptance_checks:
+- Spec serializes to valid YAML with expected top-level keys.
+- assert render.resolution.width == 1080 && render.resolution.height == 1920
+- assert render.fps == 60
+- assert output.fps == 60
+- assert determinism.seed == 0
+- assert output.path == "renders/relic_hand_orb.mov" && output.codec == "prores_4444"
+- assert frames == round(duration_seconds * fps) (5400 == round(90.000 * 60))
+- assert all referenced asset and font paths exist before render execution.

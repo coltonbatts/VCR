@@ -1,0 +1,33 @@
+project:
+  name: new_occult_pack
+intent:
+  prompt: >-
+    Create three distinct new 3D occult assets: relic hand orb,
+    oracle globe, and sigil compass. No text layers.
+scene:
+  style_directives:
+    bloom: 0.16
+    chromatic_aberration_px: 0.35
+    grain_strength: 0.015
+    contrast: 1.08
+    saturation: 0.94
+ascii:
+  font: GeistPixel-Line
+render:
+  resolution:
+    width: 1080
+    height: 1920
+  fps: 60
+  duration_seconds: 10.0
+output:
+  type: video
+  path: ./renders/template.mov
+  container: mov
+  codec: prores_4444
+  alpha: true
+determinism:
+  enabled: true
+  seed: 0
+notes: >-
+  Per-asset outputs: renders/relic_hand_orb.mov, renders/oracle_globe.mov,
+  renders/sigil_compass.mov.
