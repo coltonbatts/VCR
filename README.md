@@ -33,6 +33,16 @@ VCR is designed to be **Agent-First**. It provides:
 - **Deterministic Pipeline**: Agents can reason about frames and pixels without worrying about platform-specific variations.
 - **Structured Manifests**: Declarative YAML makes it easy for LLMs to author and modify complex scenes.
 
+## Visual-First Development
+
+VCR follows a **Visual-First** methodology. Because motion graphics are often too complex to verify via unit tests alone, we use automated visual verification loops:
+
+- **Snapshot Previews**: Immediate keyframe extraction to verify framing and initial state.
+- **Contact Sheets**: 3x3 mosaics that capture the start, middle, and end of animations to ensure stability throughout the entire duration.
+- **SOP Compliance**: All elements delivered to the VCR library must pass the [Standard Operating Procedure](VCR_SOP.md).
+
+**Never ship blind.** If you can't see the middle of your animation, you haven't finished the render.
+
 **Built for Silicon Macs** (and anywhere else with Rust). Your M1/M2 can actually do something interesting.
 
 **GPU + automatic CPU fallback.** Fast on real hardware. Still works everywhere.
@@ -220,6 +230,7 @@ Example: `pos_x: "t * 20"` moves the layer 20 units per frame.
 Comprehensive guides and technical references are available in the `docs/` directory:
 
 - **[VCR Skill Reference](SKILL.md)**: The primary guide for authors and AI agents.
+- **[Standard Operating Procedure](VCR_SOP.md)**: The mandatory "Golden Path" for render verification.
 - **[Agent Protocol](AGENTS.md)**: How automated tools interact with the engine.
 - **[Project Custodian](docs/PROJECT_CUSTODIAN.md)**: Architectural overview and project map.
 - **[PRD](docs/PRD.md)**: Product vision and roadmap.

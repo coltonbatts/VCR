@@ -421,10 +421,11 @@ All in `.skills/` with their own `SKILL.md` files:
 ### For Contributors / AI Agents
 
 1. Read `SKILL.md` first (primary reference)
-2. Study `examples/skill_01_*.vcr` through `skill_05_*.vcr` for progression
-3. Use `vcr lint` and `vcr explain` to validate manifests
-4. Run `cargo test` before committing changes
-5. Check determinism with `cargo test --test determinism`
+2. **Visual Verification is Mandatory**: AI agents MUST generate a 3x3 contact sheet using `scripts/vcr_contact_sheet.py` before proposing or delivering any VCR manifest or shader.
+3. Study `examples/skill_01_*.vcr` through `skill_05_*.vcr` for progression
+4. Use `vcr lint` and `vcr explain` to validate manifests
+5. Run `cargo test` before committing changes
+6. Check determinism with `cargo test --test determinism`
 
 ### To Close Feature Gaps
 

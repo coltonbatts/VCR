@@ -1,0 +1,21 @@
+# Impossible Penrose Triangle Illusion
+version: 1
+
+environment:
+  resolution:
+    width: 1080
+    height: 1920
+  fps: 30
+  duration: 10.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+layers:
+  - id: "penrose_triangle"
+    z_index: 0
+    wgpu_shader:
+      shader_path: "shaders/penrose_triangle.wgsl"
+      width: 1080
+      height: 1920
+      time_mode: seconds
