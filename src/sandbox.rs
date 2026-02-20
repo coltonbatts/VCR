@@ -51,7 +51,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_valid_child_path() {
+    fn sandbox_valid_child_path() {
         let dir = tempdir().unwrap();
         let sandbox = ManifestSandbox::new(dir.path()).unwrap();
 
@@ -63,13 +63,7 @@ mod tests {
     }
 
     #[test]
-    fn test_path_traversal_dot_dot() {
-        let dir = tempdir().unwrap();
-        // We need to create it so canonicalize doesn't fail early with NotFound,
-        // but wait, creating a file outside tempdir might be bad practice in tests.
-        // If canonicalize fails with NotFound, that's also a rejection. 
-        // Let's create a nested structure to test traversal within controlled bounds.
-        
+    fn sandbox_rejects_path_traversal() {
         let parent_dir = tempdir().unwrap();
         let root_dir = parent_dir.path().join("root");
         fs::create_dir(&root_dir).unwrap();
@@ -86,7 +80,7 @@ mod tests {
     }
 
     #[test]
-    fn test_absolute_path_injection() {
+    fn sandbox_rejects_absolute_outside_root() {
         let parent_dir = tempdir().unwrap();
         let root_dir = parent_dir.path().join("root");
         fs::create_dir(&root_dir).unwrap();
@@ -99,6 +93,28 @@ mod tests {
         // Access via absolute path
         let absolute_outside = fs::canonicalize(&outside_file).unwrap();
         let result = sandbox.resolve(absolute_outside);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Path traversal violation"));
+    }
+
+    #[test]
+    fn sandbox_rejects_symlink_escape() {
+        let parent_dir = tempdir().unwrap();
+        let root_dir = parent_dir.path().join("root");
+        fs::create_dir(&root_dir).unwrap();
+        
+        let outside_file = parent_dir.path().join("outside.txt");
+        File::create(&outside_file).unwrap();
+        
+        let sandbox = ManifestSandbox::new(&root_dir).unwrap();
+        
+        let symlink_path = root_dir.join("link_to_outside");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside_file, &symlink_path).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&outside_file, &symlink_path).unwrap();
+
+        let result = sandbox.resolve("link_to_outside");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Path traversal violation"));
     }

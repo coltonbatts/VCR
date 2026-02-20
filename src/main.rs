@@ -10,6 +10,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use vcr::agent_errors::{
     suggest_fix_for_lint_error, suggest_fix_for_validation_error, AgentErrorReport, AgentErrorType,
@@ -202,6 +203,18 @@ enum Commands {
             help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
         )]
         set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit machine-readable JSON output (manifest, backend, frame_count, frame_hash, output_hash, duration_ms). Suppresses standard console text."
+        )]
+        json: bool,
+    },
+    #[command(about = "Verify an output artifact")]
+    Verify {
+        #[arg(value_name = "OUTPUT_FILE")]
+        output_file: PathBuf,
+        #[arg(long = "json")]
+        json: bool,
     },
     #[command(about = "Render a manifest to ProRes .mov video")]
     Build {
@@ -821,6 +834,7 @@ impl Commands {
             Self::Library { .. } => "library",
             Self::Doctor => "doctor",
             Self::DeterminismReport { .. } => "determinism-report",
+            Self::Verify { .. } => "verify",
         }
     }
 }
@@ -875,6 +889,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             output,
             determinism_report,
             set,
+            json,
         } => {
             let output = resolve_output_path(&manifest, output, "mov", None, quiet)?;
             run_render(
@@ -883,10 +898,14 @@ fn run_cli(cli: Cli) -> Result<()> {
                 &set,
                 ascii_overrides,
                 determinism_report,
+                json,
                 cli.backend,
                 ffmpeg_mode,
                 quiet,
             )
+        }
+        Commands::Verify { output_file, json } => {
+            run_verify(&output_file, json)
         }
         Commands::Build {
             manifest,
@@ -912,7 +931,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 cli.backend,
                 ffmpeg_mode,
                 quiet,
-            )
+            ).map(|_| ())
         }
         Commands::Check { manifest, set } => run_check(&manifest, &set, quiet),
         Commands::Lint { manifest, set } => run_lint(&manifest, &set, quiet),
@@ -3060,6 +3079,12 @@ fn create_renderer(
     }
 }
 
+pub struct BuildResult {
+    pub backend_name: String,
+    pub frame_count: u32,
+    pub frame_hash: String,
+}
+
 fn run_build(
     manifest_path: &Path,
     output_path: &Path,
@@ -3070,7 +3095,7 @@ fn run_build(
     backend: BackendArg,
     ffmpeg_mode: FfmpegMode,
     quiet: bool,
-) -> Result<()> {
+) -> Result<BuildResult> {
     let parse_start = Instant::now();
     let mut manifest = load_manifest_with_overrides(manifest_path, set_values)?;
     if let Some(profile) = forced_profile {
@@ -3121,10 +3146,12 @@ fn run_build(
     let ffmpeg = FfmpegPipe::spawn_with_mode(&manifest.environment, output_path, ffmpeg_mode)?;
     let mut render_elapsed = Duration::ZERO;
     let mut encode_elapsed = Duration::ZERO;
+    let mut frame_hasher = Sha256::new();
 
     for (offset, frame_index) in window.frame_indices().enumerate() {
         let render_start = Instant::now();
         let rgba = renderer.render_frame_rgba(frame_index)?;
+        frame_hasher.update(&rgba);
         render_elapsed += render_start.elapsed();
 
         let encode_start = Instant::now();
@@ -3132,12 +3159,13 @@ fn run_build(
         encode_elapsed += encode_start.elapsed();
 
         if frame_index % manifest.environment.fps == 0 {
-            progress_log(
-                quiet,
-                format_args!("rendered frame {}/{}", offset + 1, window.count),
-            );
+            if !quiet {
+                println!("rendered frame {}/{}", offset + 1, window.count);
+            }
         }
     }
+
+    let frame_hash = format!("{:x}", frame_hasher.finalize());
 
     ffmpeg.finish()?;
     verify_encoded_output_conformance(output_path, &manifest.environment, quiet)?;
@@ -3161,7 +3189,29 @@ fn run_build(
             encode: encode_elapsed,
         },
     );
-    Ok(())
+    Ok(BuildResult {
+        backend_name: renderer.backend_name().to_string(),
+        frame_count: window.count,
+        frame_hash,
+    })
+}
+
+#[derive(Serialize)]
+pub struct RenderJsonOutput {
+    pub manifest: PathBuf,
+    pub backend: String,
+    pub frame_count: u32,
+    pub frame_hash: String,
+    pub output_hash: String,
+    pub duration_ms: u64,
+}
+
+#[derive(Serialize)]
+pub struct VerifyJsonOutput {
+    pub file_path: PathBuf,
+    pub hash: String,
+    pub tool_version: String,
+    pub backend: Option<String>,
 }
 
 fn run_render(
@@ -3170,11 +3220,13 @@ fn run_render(
     set_values: &[String],
     ascii_overrides: Option<AsciiRuntimeOverrides>,
     determinism_report: bool,
+    json: bool,
     backend: BackendArg,
     ffmpeg_mode: FfmpegMode,
     quiet: bool,
 ) -> Result<()> {
-    run_build(
+    let start_time = Instant::now();
+    let build_result = run_build(
         manifest_path,
         output_path,
         FrameWindowArgs {
@@ -3187,10 +3239,54 @@ fn run_render(
         ascii_overrides,
         backend,
         ffmpeg_mode,
-        quiet,
+        quiet || json,
     )?;
-    if determinism_report {
-        run_determinism_report(manifest_path, 0, set_values, false)?;
+    
+    if json {
+        let mut hasher = Sha256::new();
+        let mut file = std::fs::File::open(output_path)?;
+        std::io::copy(&mut file, &mut hasher)?;
+        let output_hash = format!("{:x}", hasher.finalize());
+
+        let output = RenderJsonOutput {
+            manifest: manifest_path.to_path_buf(),
+            backend: build_result.backend_name,
+            frame_count: build_result.frame_count,
+            frame_hash: build_result.frame_hash,
+            output_hash,
+            duration_ms: start_time.elapsed().as_millis() as u64,
+        };
+        println!("{}", serde_json::to_string(&output).unwrap());
+    } else {
+        if determinism_report {
+            run_determinism_report(manifest_path, 0, set_values, false)?;
+        }
+    }
+    Ok(())
+}
+
+fn run_verify(output_file: &Path, json: bool) -> Result<()> {
+    if !output_file.exists() {
+        bail!("file not found: {}", output_file.display());
+    }
+    let mut hasher = Sha256::new();
+    let mut file = std::fs::File::open(output_file)?;
+    std::io::copy(&mut file, &mut hasher)?;
+    let hash = format!("{:x}", hasher.finalize());
+    let version = version_string();
+
+    if json {
+        let output = VerifyJsonOutput {
+            file_path: output_file.to_path_buf(),
+            hash: hash.clone(),
+            tool_version: version.clone(),
+            backend: None,
+        };
+        println!("{}", serde_json::to_string(&output).unwrap());
+    } else {
+        println!("Path: {}", output_file.display());
+        println!("Hash: {}", hash);
+        println!("Version: {}", version);
     }
     Ok(())
 }

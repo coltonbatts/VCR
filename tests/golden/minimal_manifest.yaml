@@ -1,0 +1,23 @@
+version: 1
+
+environment:
+  resolution: { width: 100, height: 100 }
+  fps: 10
+  duration: 0.5
+
+layers:
+  - id: bg
+    z_index: 0
+    procedural:
+      kind: gradient
+      start_color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+      end_color: { r: 0.0, g: 0.0, b: 1.0, a: 1.0 }
+      direction: vertical
+
+  - id: text
+    z_index: 10
+    text:
+      content: "GOLDEN"
+      font_family: "GeistPixel-Line"
+      font_size: 16
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
