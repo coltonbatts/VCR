@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -55,7 +55,7 @@ use vcr::schema::{
 use vcr::tapes::{
     append_stub_tape, default_config_path, load_store, load_store_file, open_editor_at_tape,
     render_tape_table, resolve_config_path, run_deck, run_doctor as run_tape_doctor,
-    run_tape_action, save_store_file, write_starter_config, TapeAction,
+    run_tape_action, save_store_file, write_starter_config, DeckProcessExit, TapeAction,
 };
 use vcr::timeline::{
     ascii_overrides_from_flags, evaluate_manifest_layers_at_frame, resolve_bayer_dither_override,
@@ -72,6 +72,8 @@ const VCR_BANNER: &str = r#"
 "#;
 
 const EXIT_CODES_HELP: &str = "Exit codes: 0=success, 2=usage/arg error, 3=manifest validation error, 4=missing dependency, 5=I/O error";
+const QUICK_START_FOOTER: &str =
+    "\nQuick start:\n  vcr tape init\n  vcr tape list\n  vcr tape run <id>\n  vcr deck";
 
 fn version_string() -> String {
     let base = env!("CARGO_PKG_VERSION");
@@ -931,6 +933,14 @@ impl VcrExitCode {
 }
 
 fn main() -> ExitCode {
+    if std::env::args_os().len() == 1 {
+        if let Err(error) = print_help_with_quick_start() {
+            eprintln!("vcr: failed to print help: {error}");
+            return VcrExitCode::Io.to_exit_code();
+        }
+        return VcrExitCode::Success.to_exit_code();
+    }
+
     // Handle --version before parse (avoids subcommand requirement)
     if std::env::args().any(|a| a == "--version" || a == "-V") {
         println!("{}", VCR_BANNER);
@@ -942,11 +952,21 @@ fn main() -> ExitCode {
     match run_cli(cli) {
         Ok(()) => VcrExitCode::Success.to_exit_code(),
         Err(error) => {
+            if let Some(exit) = error.downcast_ref::<DeckProcessExit>() {
+                return ExitCode::from(exit.propagated_code() as u8);
+            }
             let exit_code = classify_exit_code(&error);
             print_cli_error(command_name, &error);
             exit_code.to_exit_code()
         }
     }
+}
+
+fn print_help_with_quick_start() -> Result<()> {
+    let mut command = Cli::command();
+    command.print_help().context("failed to print clap help")?;
+    println!("{QUICK_START_FOOTER}");
+    Ok(())
 }
 
 fn run_cli(cli: Cli) -> Result<()> {

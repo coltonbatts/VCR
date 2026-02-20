@@ -163,6 +163,22 @@ layers:
 
 Render it with: `vcr render demo.vcr -o demo.mov`
 
+## Install Tape Deck
+
+Install the first-party Deck binary from this repo:
+
+```bash
+cargo xtask deck-install
+```
+
+Optional system install (when `/usr/local/bin` is writable):
+
+```bash
+cargo xtask deck-install --system
+```
+
+If `~/.local/bin` is not on `PATH`, add it in your shell config (`~/.zshrc`, `~/.bashrc`, or via `fish_add_path`).
+
 ## Tapes-First Workflow (Recommended)
 
 For repeatable renders, treat manifests as implementation details and run named tapes.
@@ -234,7 +250,16 @@ vcr tape --config ./ops/tapes.yaml run alpha-lower-third
 vcr deck --config ./ops/tapes.yaml
 ```
 
-Legacy manifest-first commands still work:
+Tapes-first quick examples:
+
+```bash
+vcr tape init
+vcr tape list
+vcr tape run alpha-lower-third
+vcr deck
+```
+
+Manifest-first workflow (advanced / low-level):
 
 ```bash
 vcr render manifests/hello.vcr -o renders/hello.mov

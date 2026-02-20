@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::env;
+use std::ffi::OsString;
+use std::fmt;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Component, Path, PathBuf};
@@ -15,6 +17,7 @@ const DEFAULT_CONFIG_DIR_NAME: &str = "vcr";
 const DEFAULT_CONFIG_FILE_NAME: &str = "tapes.yaml";
 const DEFAULT_VCR_BINARY: &str = "vcr";
 const DEFAULT_OUTPUT_FLAG: &str = "--output";
+const DECK_CANDIDATES: [&str; 2] = ["tape-deck", "vhs"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -194,6 +197,33 @@ pub struct DoctorReport {
     pub ok: bool,
     pub diagnostics: Vec<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeckProcessExit {
+    pub binary: String,
+    pub code: Option<i32>,
+}
+
+impl DeckProcessExit {
+    pub fn propagated_code(&self) -> i32 {
+        self.code.unwrap_or(1)
+    }
+}
+
+impl fmt::Display for DeckProcessExit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.code {
+            Some(code) => write!(
+                f,
+                "deck command '{}' exited with status {}",
+                self.binary, code
+            ),
+            None => write!(f, "deck command '{}' exited unexpectedly", self.binary),
+        }
+    }
+}
+
+impl std::error::Error for DeckProcessExit {}
 
 static RUN_ID_COUNTERS: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
 static FEATURE_CACHE: OnceLock<Mutex<HashMap<String, FeatureProbe>>> = OnceLock::new();
@@ -1027,12 +1057,28 @@ pub fn open_editor_at_tape(config_path: &Path, tape_id: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn resolve_deck_binary<F>(mut is_available: F) -> Option<&'static str>
+where
+    F: FnMut(&str) -> bool,
+{
+    DECK_CANDIDATES
+        .iter()
+        .copied()
+        .find(|candidate| is_available(candidate))
+}
+
+fn deck_passthrough_args(config_path: &Path) -> Vec<OsString> {
+    vec![
+        OsString::from("run"),
+        OsString::from("--config"),
+        config_path.as_os_str().to_os_string(),
+    ]
+}
+
 pub fn deck_command(binary: &str, config_path: &Path) -> Command {
     let mut command = Command::new(binary);
     command
-        .arg("run")
-        .arg("--config")
-        .arg(config_path)
+        .args(deck_passthrough_args(config_path))
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
@@ -1040,21 +1086,19 @@ pub fn deck_command(binary: &str, config_path: &Path) -> Command {
 }
 
 pub fn run_deck(config_path: &Path) -> Result<()> {
-    let candidates = ["tape-deck", "vhs"];
-
     let mut first_non_not_found: Option<anyhow::Error> = None;
-    for candidate in candidates {
+    for candidate in DECK_CANDIDATES {
         let status_result = deck_command(candidate, config_path).status();
         match status_result {
             Ok(status) => {
                 if status.success() {
                     return Ok(());
                 }
-                return Err(anyhow!(
-                    "deck command '{}' exited with status {:?}",
-                    candidate,
-                    status.code()
-                ));
+                return Err(DeckProcessExit {
+                    binary: candidate.to_owned(),
+                    code: status.code(),
+                }
+                .into());
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 continue;
@@ -1075,14 +1119,21 @@ pub fn run_deck(config_path: &Path) -> Result<()> {
     }
 
     bail!(
-        "No deck binary found on PATH. Install one and retry:\n\
-         1) cd {}\n\
-         2) go build -o ~/.local/bin/tape-deck ./cmd/tape-deck\n\
-         3) tape-deck --help\n\
-         Then run: vcr deck --config {}",
+        "No deck binary found on PATH.\n\
+         Install the deck with: cargo xtask deck-install\n\
+         If ~/.local/bin is not on PATH, add it:\n\
+           zsh : echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.zshrc\n\
+           bash: echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.bashrc\n\
+           fish: fish_add_path $HOME/.local/bin\n\
+         Manual fallback:\n\
+           1) cd {}\n\
+           2) go build -o ~/.local/bin/tape-deck ./cmd/tape-deck\n\
+           3) tape-deck run --config {}\n\
+           4) vcr deck --config {}",
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("vhs-tape-deck")
             .display(),
+        config_path.display(),
         config_path.display()
     )
 }
@@ -1436,5 +1487,41 @@ mod tests {
         assert!(json.contains("\"resolved_manifest_path\""));
         assert!(json.contains("\"resolved_command\""));
         assert!(json.contains("\"record_path_written\""));
+    }
+
+    #[test]
+    fn resolve_deck_binary_prefers_tape_deck_over_vhs() {
+        let selected = resolve_deck_binary(|binary| matches!(binary, "tape-deck" | "vhs"));
+        assert_eq!(selected, Some("tape-deck"));
+    }
+
+    #[test]
+    fn resolve_deck_binary_falls_back_to_vhs_when_tape_deck_missing() {
+        let selected = resolve_deck_binary(|binary| binary == "vhs");
+        assert_eq!(selected, Some("vhs"));
+    }
+
+    #[test]
+    fn resolve_deck_binary_returns_none_when_no_candidate_available() {
+        let selected = resolve_deck_binary(|_| false);
+        assert_eq!(selected, None);
+    }
+
+    #[test]
+    fn deck_command_passes_run_and_config_exactly() {
+        let config_path = PathBuf::from("/tmp/vcr-tests/tapes.yaml");
+        let command = deck_command("tape-deck", &config_path);
+        let args = command
+            .get_args()
+            .map(|value| value.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "run".to_owned(),
+                "--config".to_owned(),
+                config_path.display().to_string()
+            ]
+        );
     }
 }

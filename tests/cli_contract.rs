@@ -29,6 +29,21 @@ fn command_available(name: &str, version_arg: &str) -> bool {
 }
 
 #[test]
+fn no_args_prints_help_with_quick_start_footer() {
+    let dir = tempdir().expect("tempdir should create");
+    let output = run_vcr(dir.path(), &[]);
+    assert!(output.status.success(), "no-args help should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Usage:"));
+    assert!(stdout.contains("Quick start:"));
+    assert!(stdout.contains("vcr tape init"));
+    assert!(stdout.contains("vcr tape list"));
+    assert!(stdout.contains("vcr tape run <id>"));
+    assert!(stdout.contains("vcr deck"));
+}
+
+#[test]
 fn prompt_command_outputs_standardized_yaml_bundle() {
     let dir = tempdir().expect("tempdir should create");
     let output = run_vcr(

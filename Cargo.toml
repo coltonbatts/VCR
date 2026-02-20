@@ -6,6 +6,9 @@ description = "VCR (Video Component Renderer): headless, local-first motion grap
 license = "MIT"
 default-run = "vcr"
 
+[workspace]
+members = ["xtask"]
+
 [features]
 default = []
 sidecar_ffmpeg = ["dep:ffmpeg-sidecar"]
