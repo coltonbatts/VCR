@@ -115,7 +115,7 @@ fn tape_compile_help_exists_and_lists_compile_flags() {
     assert!(tape_help.status.success(), "tape --help should succeed");
     let tape_stdout = String::from_utf8_lossy(&tape_help.stdout);
     assert!(tape_stdout.contains("compile"));
-    assert!(tape_stdout.contains("tapes are versioned packs"));
+    assert!(tape_stdout.contains("recommended for repeatable render runs"));
 
     let compile_help = run_vcr(dir.path(), &["tape", "compile", "--help"]);
     assert!(

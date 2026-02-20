@@ -100,7 +100,10 @@ impl RenderSceneData {
             post: manifest.post.clone(),
             ascii_post: manifest.ascii_post.clone(),
             ascii_overrides: None,
-            sandbox: manifest.sandbox.clone().unwrap_or_else(|| crate::sandbox::ManifestSandbox::new(".").unwrap()),
+            sandbox: manifest
+                .sandbox
+                .clone()
+                .unwrap_or_else(|| crate::sandbox::ManifestSandbox::new(".").unwrap()),
         }
     }
 

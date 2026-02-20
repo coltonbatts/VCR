@@ -26,7 +26,10 @@ impl ManifestSandbox {
     pub fn resolve<P: AsRef<Path>>(&self, target: P) -> Result<PathBuf> {
         let combined = self.root.join(target.as_ref());
         let canonical = fs::canonicalize(&combined).with_context(|| {
-            format!("Failed to resolve or canonicalize path: {}", combined.display())
+            format!(
+                "Failed to resolve or canonicalize path: {}",
+                combined.display()
+            )
         })?;
 
         if !canonical.starts_with(&self.root) {
@@ -67,16 +70,19 @@ mod tests {
         let parent_dir = tempdir().unwrap();
         let root_dir = parent_dir.path().join("root");
         fs::create_dir(&root_dir).unwrap();
-        
+
         let outside_file = parent_dir.path().join("outside.txt");
         File::create(&outside_file).unwrap();
-        
+
         let sandbox = ManifestSandbox::new(&root_dir).unwrap();
-        
+
         // Try to access outside.txt using ../
         let result = sandbox.resolve("../outside.txt");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Path traversal violation"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Path traversal violation"));
     }
 
     #[test]
@@ -84,17 +90,20 @@ mod tests {
         let parent_dir = tempdir().unwrap();
         let root_dir = parent_dir.path().join("root");
         fs::create_dir(&root_dir).unwrap();
-        
+
         let outside_file = parent_dir.path().join("outside.txt");
         File::create(&outside_file).unwrap();
-        
+
         let sandbox = ManifestSandbox::new(&root_dir).unwrap();
-        
+
         // Access via absolute path
         let absolute_outside = fs::canonicalize(&outside_file).unwrap();
         let result = sandbox.resolve(absolute_outside);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Path traversal violation"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Path traversal violation"));
     }
 
     #[test]
@@ -102,12 +111,12 @@ mod tests {
         let parent_dir = tempdir().unwrap();
         let root_dir = parent_dir.path().join("root");
         fs::create_dir(&root_dir).unwrap();
-        
+
         let outside_file = parent_dir.path().join("outside.txt");
         File::create(&outside_file).unwrap();
-        
+
         let sandbox = ManifestSandbox::new(&root_dir).unwrap();
-        
+
         let symlink_path = root_dir.join("link_to_outside");
         #[cfg(unix)]
         std::os::unix::fs::symlink(&outside_file, &symlink_path).unwrap();
@@ -116,6 +125,9 @@ mod tests {
 
         let result = sandbox.resolve("link_to_outside");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Path traversal violation"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Path traversal violation"));
     }
 }

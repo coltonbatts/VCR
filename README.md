@@ -163,6 +163,84 @@ layers:
 
 Render it with: `vcr render demo.vcr -o demo.mov`
 
+## Tapes-First Workflow (Recommended)
+
+For repeatable renders, treat manifests as implementation details and run named tapes.
+
+- `VCR` = render machine
+- `Tape` = immutable render recipe
+- `Deck` = interactive controller UI
+- `Run record` = reproducible execution log
+
+Initialize tapes config (default path: `~/.config/vcr/tapes.yaml` on Linux, `~/Library/Application Support/vcr/tapes.yaml` on macOS):
+
+```bash
+vcr tape init
+```
+
+List tapes:
+
+```bash
+vcr tape list
+```
+
+Create a new tape stub:
+
+```bash
+vcr tape new social-stinger
+```
+
+Edit one tape in your editor:
+
+```bash
+vcr tape edit social-stinger
+```
+
+Run the tape primary action:
+
+```bash
+vcr tape run alpha-lower-third
+```
+
+Run preview action (single-frame preview):
+
+```bash
+vcr tape preview alpha-lower-third
+```
+
+Run without executing, but still write a run record:
+
+```bash
+vcr tape run alpha-lower-third --dry-run --json
+```
+
+Validate tape config and manifests:
+
+```bash
+vcr tape doctor
+```
+
+Use Deck for interactive tape selection/insert/play:
+
+```bash
+vcr deck
+```
+
+Use a project-local config for team workflows:
+
+```bash
+vcr tape --config ./ops/tapes.yaml init
+vcr tape --config ./ops/tapes.yaml run alpha-lower-third
+vcr deck --config ./ops/tapes.yaml
+```
+
+Legacy manifest-first commands still work:
+
+```bash
+vcr render manifests/hello.vcr -o renders/hello.mov
+vcr render-frame manifests/hello.vcr --frame 24 -o renders/frame_000024.png
+```
+
 ## Manifest Reference
 
 ### Top Level

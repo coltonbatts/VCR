@@ -43,7 +43,7 @@ impl AsciiPainter {
             glyph_cache: HashMap::new(),
         })
     }
-    
+
     pub fn set_font_size(&mut self, font_size: f32) {
         if (self.font_size - font_size).abs() > f32::EPSILON {
             self.font_size = font_size;
@@ -78,10 +78,10 @@ impl AsciiPainter {
         if text.is_empty() {
             return Ok(());
         }
-        
+
         // This validation was in some files but not all; it's useful to ensure no crashes.
         ensure_supported_codepoints(&self.font, text, "ascii_painter")?;
-        
+
         let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
         layout.reset(&LayoutSettings {
             x: x as f32,
@@ -119,7 +119,7 @@ impl AsciiPainter {
                 color,
             );
         }
-        
+
         Ok(())
     }
 }

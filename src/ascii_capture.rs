@@ -1,4 +1,3 @@
-
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
@@ -1227,8 +1226,6 @@ fn spawn_stdout_worker(
     Ok((receiver, worker))
 }
 
-
-
 struct AsciiFrameRasterizer {
     painter: AsciiPainter,
     cols: usize,
@@ -1291,7 +1288,16 @@ impl AsciiFrameRasterizer {
             return;
         }
         let max_width = Some((self.cols as u32 * self.cell_width) as f32);
-        let _ = self.painter.draw_line(frame, self.pixel_width, self.pixel_height, x, y, text, [255, 255, 255, 255], max_width);
+        let _ = self.painter.draw_line(
+            frame,
+            self.pixel_width,
+            self.pixel_height,
+            x,
+            y,
+            text,
+            [255, 255, 255, 255],
+            max_width,
+        );
     }
 }
 

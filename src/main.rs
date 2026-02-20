@@ -52,6 +52,11 @@ use vcr::schema::{
     AsciiFontVariant, Duration as ManifestDuration, Environment, Layer, Manifest, ParamType,
     ParamValue, ProResProfile, ProceduralSource, Resolution, ScalarProperty,
 };
+use vcr::tapes::{
+    append_stub_tape, default_config_path, load_store, load_store_file, open_editor_at_tape,
+    render_tape_table, resolve_config_path, run_deck, run_doctor as run_tape_doctor,
+    run_tape_action, save_store_file, write_starter_config, TapeAction,
+};
 use vcr::timeline::{
     ascii_overrides_from_flags, evaluate_manifest_layers_at_frame, resolve_bayer_dither_override,
     resolve_edge_boost_override, AsciiRuntimeOverrides, RenderSceneData,
@@ -423,10 +428,25 @@ enum Commands {
         #[command(subcommand)]
         command: PackCommands,
     },
-    #[command(about = "Tape commands (tapes are versioned packs)")]
+    #[command(about = "Tape workflows (recommended for repeatable render runs)")]
     Tape {
+        #[arg(
+            long = "config",
+            value_name = "PATH",
+            help = "Tape config path (default: <user-config>/vcr/tapes.yaml)"
+        )]
+        config: Option<PathBuf>,
         #[command(subcommand)]
-        command: PackCommands,
+        command: TapeCommands,
+    },
+    #[command(about = "Open Deck UI (primary interactive entry point for running tapes)")]
+    Deck {
+        #[arg(
+            long = "config",
+            value_name = "PATH",
+            help = "Tape config path (default: <user-config>/vcr/tapes.yaml)"
+        )]
+        config: Option<PathBuf>,
     },
     #[command(about = "Friendly asset add command (library or pack)")]
     Add {
@@ -474,6 +494,61 @@ enum Commands {
 
 #[derive(Debug, Subcommand)]
 enum PackCommands {
+    Compile {
+        #[arg(long = "pack", value_name = "PACK_ID")]
+        pack: String,
+        #[arg(long = "fields", value_name = "PATH_OR_JSON")]
+        fields: String,
+        #[arg(long = "aspect", value_name = "{cinema|social|phone}")]
+        aspect: String,
+        #[arg(long = "fps")]
+        fps: u32,
+        #[arg(
+            long = "out",
+            value_name = "OUTPUT_ROOT",
+            help = "Deterministic output root. Artifacts are written to <out>/<pack_id>/<pack_version>/<aspect>_<fps>/"
+        )]
+        output: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum TapeCommands {
+    #[command(about = "Create a starter tape config with 5 example tapes")]
+    Init,
+    #[command(about = "List configured tapes (id, name, mode, preview, manifest)")]
+    List,
+    #[command(about = "Append a new tape stub to the config")]
+    New {
+        #[arg(value_name = "ID")]
+        id: String,
+    },
+    #[command(about = "Edit the tape config in $VISUAL/$EDITOR (fallback: vi)")]
+    Edit {
+        #[arg(value_name = "ID")]
+        id: String,
+    },
+    #[command(about = "Run the tape primary action and write a reproducible run record")]
+    Run {
+        #[arg(value_name = "ID")]
+        id: String,
+        #[arg(long = "dry-run", default_value_t = false)]
+        dry_run: bool,
+        #[arg(long = "json", default_value_t = false)]
+        json: bool,
+    },
+    #[command(about = "Run the tape preview action and write a reproducible run record")]
+    Preview {
+        #[arg(value_name = "ID")]
+        id: String,
+        #[arg(long = "dry-run", default_value_t = false)]
+        dry_run: bool,
+        #[arg(long = "json", default_value_t = false)]
+        json: bool,
+    },
+    #[command(about = "Validate tape config, binary availability, and tape manifest paths")]
+    Doctor,
+    #[command(about = "Legacy tape compile (tapes are versioned packs)")]
     Compile {
         #[arg(long = "pack", value_name = "PACK_ID")]
         pack: String,
@@ -829,6 +904,7 @@ impl Commands {
             Self::Ascii { .. } => "ascii",
             Self::Pack { .. } => "pack",
             Self::Tape { .. } => "tape",
+            Self::Deck { .. } => "deck",
             Self::Add { .. } => "add",
             Self::Assets { .. } => "assets",
             Self::Library { .. } => "library",
@@ -904,9 +980,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 quiet,
             )
         }
-        Commands::Verify { output_file, json } => {
-            run_verify(&output_file, json)
-        }
+        Commands::Verify { output_file, json } => run_verify(&output_file, json),
         Commands::Build {
             manifest,
             output,
@@ -931,7 +1005,8 @@ fn run_cli(cli: Cli) -> Result<()> {
                 cli.backend,
                 ffmpeg_mode,
                 quiet,
-            ).map(|_| ())
+            )
+            .map(|_| ())
         }
         Commands::Check { manifest, set } => run_check(&manifest, &set, quiet),
         Commands::Lint { manifest, set } => run_lint(&manifest, &set, quiet),
@@ -1226,15 +1301,8 @@ fn run_cli(cli: Cli) -> Result<()> {
                 output,
             } => run_pack_compile_cli(&pack, &fields, &aspect, fps, &output, cli.backend),
         },
-        Commands::Tape { command } => match command {
-            PackCommands::Compile {
-                pack,
-                fields,
-                aspect,
-                fps,
-                output,
-            } => run_pack_compile_cli(&pack, &fields, &aspect, fps, &output, cli.backend),
-        },
+        Commands::Tape { config, command } => run_tape_cli(config.as_deref(), command, cli.backend),
+        Commands::Deck { config } => run_deck_cli(config.as_deref()),
         Commands::Add {
             path,
             pack,
@@ -1304,6 +1372,151 @@ fn run_pack_compile_cli(
     println!("Wrote {}", summary.frame_hashes_path.display());
     println!("Wrote {}", summary.artifact_manifest_path.display());
     Ok(())
+}
+
+fn run_tape_cli(
+    config_override: Option<&Path>,
+    command: TapeCommands,
+    backend: BackendArg,
+) -> Result<()> {
+    let launch_cwd = std::env::current_dir().context("failed to resolve current directory")?;
+    let config_path = resolve_config_path(config_override, &launch_cwd)?;
+
+    match command {
+        TapeCommands::Init => {
+            let store = write_starter_config(&config_path, &launch_cwd, false)?;
+            println!("Wrote starter tape config: {}", store.config_path.display());
+            println!("Runs directory: {}", store.runs_dir.display());
+            println!("Next steps:");
+            println!("  vcr tape --config {} list", store.config_path.display());
+            println!(
+                "  vcr tape --config {} run alpha-lower-third",
+                store.config_path.display()
+            );
+            println!("  vcr deck --config {}", store.config_path.display());
+            Ok(())
+        }
+        TapeCommands::List => {
+            let store = load_store(&config_path, &launch_cwd).with_context(|| {
+                format!(
+                    "failed to load tape config {} (run `vcr tape init` to create one)",
+                    config_path.display()
+                )
+            })?;
+            println!("{}", render_tape_table(&store));
+            Ok(())
+        }
+        TapeCommands::New { id } => {
+            if !config_path.exists() {
+                bail!(
+                    "tape config not found at {} (run `vcr tape init` first)",
+                    config_path.display()
+                );
+            }
+            let mut file = load_store_file(&config_path)?;
+            append_stub_tape(&mut file, &id)?;
+            save_store_file(&config_path, &file)?;
+            println!("Added tape '{id}' to {}", config_path.display());
+            println!("Next steps:");
+            println!("  vcr tape --config {} edit {}", config_path.display(), id);
+            println!("  vcr tape --config {} run {}", config_path.display(), id);
+            Ok(())
+        }
+        TapeCommands::Edit { id } => {
+            if !config_path.exists() {
+                bail!(
+                    "tape config not found at {} (run `vcr tape init` first)",
+                    config_path.display()
+                );
+            }
+            open_editor_at_tape(&config_path, &id)
+        }
+        TapeCommands::Run { id, dry_run, json } => run_tape_action_cli(
+            &config_path,
+            &launch_cwd,
+            &id,
+            TapeAction::Primary,
+            dry_run,
+            json,
+        ),
+        TapeCommands::Preview { id, dry_run, json } => run_tape_action_cli(
+            &config_path,
+            &launch_cwd,
+            &id,
+            TapeAction::Preview,
+            dry_run,
+            json,
+        ),
+        TapeCommands::Doctor => {
+            let store = load_store(&config_path, &launch_cwd).with_context(|| {
+                format!(
+                    "failed to load tape config {} (run `vcr tape init` to create one)",
+                    config_path.display()
+                )
+            })?;
+            let report = run_tape_doctor(&store);
+            for line in report.diagnostics {
+                println!("{line}");
+            }
+            if report.ok {
+                Ok(())
+            } else {
+                bail!("tape doctor found issues")
+            }
+        }
+        TapeCommands::Compile {
+            pack,
+            fields,
+            aspect,
+            fps,
+            output,
+        } => run_pack_compile_cli(&pack, &fields, &aspect, fps, &output, backend),
+    }
+}
+
+fn run_tape_action_cli(
+    config_path: &Path,
+    launch_cwd: &Path,
+    tape_id: &str,
+    action: TapeAction,
+    dry_run: bool,
+    json: bool,
+) -> Result<()> {
+    let store = load_store(config_path, launch_cwd).with_context(|| {
+        format!(
+            "failed to load tape config {} (run `vcr tape init` to create one)",
+            config_path.display()
+        )
+    })?;
+    let outcome = run_tape_action(&store, tape_id, action, dry_run)?;
+    println!("Run record: {}", outcome.record_path.display());
+    if let Some(output_path) = outcome.first_output_path {
+        println!("Output: {}", output_path.display());
+    }
+    if json {
+        let serialized = serde_json::to_string_pretty(&outcome.record)
+            .context("failed to encode run record json")?;
+        println!("{serialized}");
+    }
+    Ok(())
+}
+
+fn run_deck_cli(config_override: Option<&Path>) -> Result<()> {
+    let launch_cwd = std::env::current_dir().context("failed to resolve current directory")?;
+    let config_path = resolve_config_path(config_override, &launch_cwd)?;
+    if !config_path.exists() {
+        let default_path = default_config_path()?;
+        bail!(
+            "tape config not found at {}. Run `vcr tape init`{}.",
+            config_path.display(),
+            if config_path != default_path {
+                format!(" or `vcr tape --config {} init`", config_path.display())
+            } else {
+                String::new()
+            }
+        );
+    }
+    run_deck(&config_path)
 }
 
 fn run_add_asset(
@@ -3241,7 +3454,7 @@ fn run_render(
         ffmpeg_mode,
         quiet || json,
     )?;
-    
+
     if json {
         let mut hasher = Sha256::new();
         let mut file = std::fs::File::open(output_path)?;

@@ -1818,14 +1818,13 @@ impl SoftwareRenderer {
                 },
                 Layer::Lottie(lottie_layer) => {
                     let resolved = scene.sandbox.resolve(&lottie_layer.lottie.path)?;
-                    let json_content =
-                        std::fs::read_to_string(&resolved).map_err(|e| {
-                            anyhow!(
-                                "failed to read lottie file {:?}: {:?}",
-                                lottie_layer.lottie.path,
-                                e
-                            )
-                        })?;
+                    let json_content = std::fs::read_to_string(&resolved).map_err(|e| {
+                        anyhow!(
+                            "failed to read lottie file {:?}: {:?}",
+                            lottie_layer.lottie.path,
+                            e
+                        )
+                    })?;
                     let composition = Composition::from_str(&json_content)
                         .map_err(|e| anyhow!("failed to parse lottie animation: {:?}", e))?;
                     let w = composition.width as u32;
@@ -3049,11 +3048,17 @@ fn load_rgba_image(image_path: &Path, layer_id: &str) -> Result<image::RgbaImage
     Ok(image.to_rgba8())
 }
 
-fn load_asset_pixmap(layer: &AssetLayer, sandbox: &crate::sandbox::ManifestSandbox) -> Result<Pixmap> {
+fn load_asset_pixmap(
+    layer: &AssetLayer,
+    sandbox: &crate::sandbox::ManifestSandbox,
+) -> Result<Pixmap> {
     load_layer_pixmap(&sandbox.resolve(&layer.source_path)?, &layer.common.id)
 }
 
-fn load_image_pixmap(layer: &ImageLayer, sandbox: &crate::sandbox::ManifestSandbox) -> Result<Pixmap> {
+fn load_image_pixmap(
+    layer: &ImageLayer,
+    sandbox: &crate::sandbox::ManifestSandbox,
+) -> Result<Pixmap> {
     load_layer_pixmap(&sandbox.resolve(&layer.image.path)?, &layer.common.id)
 }
 
@@ -3764,14 +3769,13 @@ fn build_wgpu_shader_layer(
     fps: u32,
 ) -> Result<GpuLayer> {
     let resolved = sandbox.resolve(&layer.wgpu_shader.shader_path)?;
-    let user_shader =
-        std::fs::read_to_string(&resolved).with_context(|| {
-            format!(
-                "layer '{}': failed reading wgpu shader file {}",
-                layer.common.id,
-                resolved.display()
-            )
-        })?;
+    let user_shader = std::fs::read_to_string(&resolved).with_context(|| {
+        format!(
+            "layer '{}': failed reading wgpu shader file {}",
+            layer.common.id,
+            resolved.display()
+        )
+    })?;
 
     let processed_shader = crate::vcr_std::preprocess_wgsl(&user_shader);
     let full_wgsl = format!("{}\n{}", processed_shader, WGPU_LAYER_SHADER_PREAMBLE);

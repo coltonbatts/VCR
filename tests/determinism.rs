@@ -99,7 +99,12 @@ struct RenderJsonOutput {
     output_hash: String,
 }
 
-fn render_cli_json(manifest: &Path, output_name: &str, backend: &str, cwd: &Path) -> RenderJsonOutput {
+fn render_cli_json(
+    manifest: &Path,
+    output_name: &str,
+    backend: &str,
+    cwd: &Path,
+) -> RenderJsonOutput {
     let result = std::process::Command::new(env!("CARGO_BIN_EXE_vcr"))
         .current_dir(cwd)
         .arg("render")
@@ -112,7 +117,11 @@ fn render_cli_json(manifest: &Path, output_name: &str, backend: &str, cwd: &Path
         .output()
         .expect("Failed to execute VCR process");
 
-    assert!(result.status.success(), "VCR render failed: {}", String::from_utf8_lossy(&result.stderr));
+    assert!(
+        result.status.success(),
+        "VCR render failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&result.stdout);
     let json_str = stdout.lines().last().expect("No output from VCR");
@@ -121,7 +130,8 @@ fn render_cli_json(manifest: &Path, output_name: &str, backend: &str, cwd: &Path
 
 #[test]
 fn determinism_repeat_render() {
-    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/minimal_manifest.yaml");
+    let manifest_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/minimal_manifest.yaml");
     let test_dir = tempfile::tempdir().unwrap();
 
     let first = render_cli_json(&manifest_path, "out.mov", "software", test_dir.path());
@@ -131,25 +141,30 @@ fn determinism_repeat_render() {
         let next = render_cli_json(&manifest_path, &output_name, "software", test_dir.path());
 
         assert_eq!(
-            first.frame_hash, next.frame_hash,
-            "Frame hash mismatch on repeat render #{}", i + 2
+            first.frame_hash,
+            next.frame_hash,
+            "Frame hash mismatch on repeat render #{}",
+            i + 2
         );
         assert_eq!(
-            first.output_hash, next.output_hash,
-            "Output file hash mismatch on repeat render #{}", i + 2
+            first.output_hash,
+            next.output_hash,
+            "Output file hash mismatch on repeat render #{}",
+            i + 2
         );
     }
 }
 
 #[test]
 fn backend_parity_contract() {
-    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/minimal_manifest.yaml");
+    let manifest_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/minimal_manifest.yaml");
     let test_dir = tempfile::tempdir().unwrap();
 
     // Software is our canonical deterministic backend
     let sw_run1 = render_cli_json(&manifest_path, "sw_1.mov", "software", test_dir.path());
     let sw_run2 = render_cli_json(&manifest_path, "sw_2.mov", "software", test_dir.path());
-    
+
     assert_eq!(
         sw_run1.frame_hash, sw_run2.frame_hash,
         "Software backend must be perfectly stable across runs"
@@ -158,7 +173,7 @@ fn backend_parity_contract() {
     // We record the GPU hash, but we explicitly do NOT fail if it mismatches software.
     // GPU rendering is not guaranteed to be bit-identical to software rasterization.
     let gpu_run = render_cli_json(&manifest_path, "gpu.mov", "gpu", test_dir.path());
-    
+
     println!("Backend Hash Contract:");
     println!("  -> Canonical SWE (CPU): {}", sw_run1.frame_hash);
     println!("  -> Hardware ACC (GPU): {}", gpu_run.frame_hash);

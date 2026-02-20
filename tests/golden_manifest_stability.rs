@@ -23,10 +23,14 @@ fn golden_manifest_stability() {
         .output()
         .expect("Failed to execute process");
 
-    assert!(output.status.success(), "VCR render failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "VCR render failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    
+
     // The JSON should be the last line in stdout
     let json_str = stdout.lines().last().expect("No output from VCR");
     let result: RenderJsonOutput = serde_json::from_str(json_str).expect("Failed to parse JSON");

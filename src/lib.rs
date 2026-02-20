@@ -1,4 +1,3 @@
-pub mod sandbox;
 pub mod agent_errors;
 pub mod agent_metadata;
 pub mod animation_engine;
@@ -27,7 +26,9 @@ pub mod play;
 pub mod post_process;
 pub mod prompt_gate;
 pub mod renderer;
+pub mod sandbox;
 pub mod schema;
+pub mod tapes;
 pub mod timeline;
 pub mod vcr_std;
 pub mod workflow;

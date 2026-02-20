@@ -6,7 +6,8 @@ use vcr::timeline::RenderSceneData;
 
 #[test]
 fn sequence_layer_is_deterministic() {
-    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sequence_test.vcr");
+    let manifest_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sequence_test.vcr");
     let first = render_hash(&manifest_path, 0);
     let second = render_hash(&manifest_path, 0);
     assert_eq!(
@@ -24,7 +25,8 @@ fn sequence_layer_is_deterministic() {
 
 #[test]
 fn sequence_layer_different_frames_produce_different_output() {
-    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sequence_test.vcr");
+    let manifest_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sequence_test.vcr");
     let frame0 = render_hash(&manifest_path, 0);
     let frame2 = render_hash(&manifest_path, 2);
     assert_ne!(
