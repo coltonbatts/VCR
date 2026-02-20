@@ -1,19 +1,15 @@
-use std::collections::HashMap;
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 
+use crate::ascii_renderer::{blend_pixel, AsciiPainter};
 use crate::encoding::{
     ffmpeg_container_output_args, ffmpeg_prores_output_args, ffmpeg_rawvideo_input_args,
 };
-use crate::font_assets::{
-    ensure_supported_codepoints, read_verified_font_bytes, verify_geist_pixel_bundle,
-};
+use crate::font_assets::verify_geist_pixel_bundle;
 use crate::schema::{ColorSpace, EncodingConfig, ProResProfile};
 use anyhow::{anyhow, bail, Context, Result};
-use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
-use fontdue::Font;
 
 const DEFAULT_FINAL_HOLD_MS: u64 = 700;
 const MIN_WIDTH: u32 = 320;
@@ -295,98 +291,14 @@ impl ScrollAnimator {
     }
 }
 
-#[derive(Debug, Clone)]
-struct GlyphBitmap {
-    width: usize,
-    height: usize,
-    bitmap: Vec<u8>,
-}
-
-struct TextPainter {
-    font: Font,
-    font_size: f32,
-    glyph_cache: HashMap<fontdue::layout::GlyphRasterConfig, GlyphBitmap>,
-}
-
-impl TextPainter {
-    fn new(manifest_root: &Path, font_file: &str, font_size: f32) -> Result<Self> {
-        let font_bytes = read_verified_font_bytes(manifest_root, font_file)?;
-        let font = Font::from_bytes(font_bytes, fontdue::FontSettings::default())
-            .map_err(|error| anyhow!("failed to parse Geist Pixel font {font_file}: {error}"))?;
-        Ok(Self {
-            font,
-            font_size,
-            glyph_cache: HashMap::new(),
-        })
-    }
-
-    fn cell_width(&self) -> u32 {
-        let metrics = self.font.metrics('M', self.font_size);
-        metrics.advance_width.ceil().max(1.0) as u32
-    }
-
-    fn line_height(&self) -> u32 {
-        (self.font_size * 1.45).round().max(1.0) as u32
-    }
-
-    fn draw_line(
-        &mut self,
-        frame: &mut [u8],
-        width: u32,
-        height: u32,
-        x: u32,
-        y: u32,
-        text: &str,
-        color: [u8; 4],
-    ) -> Result<()> {
-        ensure_supported_codepoints(&self.font, text, "ascii_stage")?;
-
-        let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
-        layout.reset(&LayoutSettings {
-            x: x as f32,
-            y: y as f32,
-            max_width: None,
-            max_height: None,
-            horizontal_align: fontdue::layout::HorizontalAlign::Left,
-            vertical_align: fontdue::layout::VerticalAlign::Top,
-            line_height: 1.0,
-            wrap_style: fontdue::layout::WrapStyle::Letter,
-            wrap_hard_breaks: true,
-        });
-        layout.append(&[&self.font], &TextStyle::new(text, self.font_size, 0));
-
-        for glyph in layout.glyphs() {
-            if glyph.width == 0 || glyph.height == 0 {
-                continue;
-            }
-            let glyph_bitmap = self.glyph_cache.entry(glyph.key).or_insert_with(|| {
-                let (_, bitmap) = self.font.rasterize_config(glyph.key);
-                GlyphBitmap {
-                    width: glyph.width,
-                    height: glyph.height,
-                    bitmap,
-                }
-            });
-            blend_glyph(
-                frame,
-                width,
-                height,
-                glyph.x.round() as i32,
-                glyph.y.round() as i32,
-                glyph_bitmap,
-                color,
-            );
-        }
-        Ok(())
-    }
-}
+// TextPainter and GlyphBitmap logic extracted to AsciiPainter
 
 struct FontPack {
-    line: TextPainter,
-    square: TextPainter,
-    grid: TextPainter,
-    circle: TextPainter,
-    triangle: TextPainter,
+    line: AsciiPainter,
+    square: AsciiPainter,
+    grid: AsciiPainter,
+    circle: AsciiPainter,
+    triangle: AsciiPainter,
     max_cell_width: u32,
     max_line_height: u32,
 }
@@ -395,11 +307,11 @@ impl FontPack {
     fn load(manifest_root: &Path, font_size: f32) -> Result<Self> {
         verify_geist_pixel_bundle(manifest_root)?;
 
-        let mut line = TextPainter::new(manifest_root, "GeistPixel-Line.ttf", font_size)?;
-        let square = TextPainter::new(manifest_root, "GeistPixel-Square.ttf", font_size)?;
-        let grid = TextPainter::new(manifest_root, "GeistPixel-Grid.ttf", font_size)?;
-        let circle = TextPainter::new(manifest_root, "GeistPixel-Circle.ttf", font_size)?;
-        let triangle = TextPainter::new(manifest_root, "GeistPixel-Triangle.ttf", font_size)?;
+        let mut line = AsciiPainter::new(manifest_root, "GeistPixel-Line.ttf", font_size)?;
+        let square = AsciiPainter::new(manifest_root, "GeistPixel-Square.ttf", font_size)?;
+        let grid = AsciiPainter::new(manifest_root, "GeistPixel-Grid.ttf", font_size)?;
+        let circle = AsciiPainter::new(manifest_root, "GeistPixel-Circle.ttf", font_size)?;
+        let triangle = AsciiPainter::new(manifest_root, "GeistPixel-Triangle.ttf", font_size)?;
 
         let max_cell_width = [
             line.cell_width(),
@@ -424,7 +336,7 @@ impl FontPack {
         .unwrap_or(16)
         .max(16);
 
-        line.font_size = font_size;
+        line.set_font_size(font_size);
 
         Ok(Self {
             line,
@@ -456,7 +368,7 @@ impl FontPack {
             LineKind::ToolBody => &mut self.circle,
             LineKind::Spacer => &mut self.line,
         };
-        painter.draw_line(frame, width, height, x, y, text, color)
+        painter.draw_line(frame, width, height, x, y, text, color, None)
     }
 }
 
@@ -1538,50 +1450,7 @@ fn apply_center_zoom_nearest(src: &[u8], dst: &mut [u8], width: u32, height: u32
     }
 }
 
-fn blend_glyph(
-    frame: &mut [u8],
-    frame_width: u32,
-    frame_height: u32,
-    x: i32,
-    y: i32,
-    glyph: &GlyphBitmap,
-    color: [u8; 4],
-) {
-    for row in 0..glyph.height {
-        let py = y + row as i32;
-        if py < 0 || py >= frame_height as i32 {
-            continue;
-        }
-
-        for col in 0..glyph.width {
-            let px = x + col as i32;
-            if px < 0 || px >= frame_width as i32 {
-                continue;
-            }
-            let mask = glyph.bitmap[row * glyph.width + col];
-            if mask == 0 {
-                continue;
-            }
-            let alpha = ((u16::from(mask) * u16::from(color[3])) / 255) as u8;
-            let idx = ((py as u32 * frame_width + px as u32) * 4) as usize;
-            blend_pixel(frame, idx, [color[0], color[1], color[2], alpha]);
-        }
-    }
-}
-
-fn blend_pixel(frame: &mut [u8], idx: usize, src: [u8; 4]) {
-    let alpha = u16::from(src[3]);
-    if alpha == 0 {
-        return;
-    }
-    let inv_alpha = 255_u16.saturating_sub(alpha);
-    for channel in 0..3 {
-        let dst = u16::from(frame[idx + channel]);
-        let src_c = u16::from(src[channel]);
-        frame[idx + channel] = ((src_c * alpha + dst * inv_alpha + 127) / 255) as u8;
-    }
-    frame[idx + 3] = 255;
-}
+// Extracted blend_glyph and blend_pixel to ascii_renderer
 
 fn scale_alpha(color: [u8; 4], factor: f32) -> [u8; 4] {
     let alpha = ((color[3] as f32) * factor.clamp(0.0, 1.0)).round() as u8;

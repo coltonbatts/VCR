@@ -1,0 +1,21 @@
+# High-fidelity (3,2) torus knot for mobile 9:16 with alpha output
+version: 1
+
+environment:
+  resolution:
+    width: 1080
+    height: 1920
+  fps: 60
+  duration: 10.0
+  encoding:
+    prores_profile: prores4444
+    vendor: "apl0"
+
+layers:
+  - id: "torus_knot_colored"
+    z_index: 0
+    wgpu_shader:
+      shader_path: "shaders/torus_knot_colored.wgsl"
+      width: 1080
+      height: 1920
+      time_mode: seconds

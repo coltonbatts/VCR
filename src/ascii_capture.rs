@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
@@ -8,11 +8,10 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
-use fontdue::{Font, FontSettings};
 use serde::Serialize;
 
 use crate::ascii_frame::{AsciiFrame, AsciiFrameMetadata};
+use crate::ascii_renderer::AsciiPainter;
 use crate::ascii_sources::{ascii_live_stream_names, ascii_live_stream_url, library_source_names};
 use crate::aspect_preset::{compute_letterbox_layout, AspectPreset, LetterboxLayout, SafeInsetsPx};
 use crate::encoding::{
@@ -1228,16 +1227,10 @@ fn spawn_stdout_worker(
     Ok((receiver, worker))
 }
 
-#[derive(Debug, Clone)]
-struct GlyphBitmap {
-    width: usize,
-    height: usize,
-    bitmap: Vec<u8>,
-}
+
 
 struct AsciiFrameRasterizer {
-    font: Font,
-    font_size: f32,
+    painter: AsciiPainter,
     cols: usize,
     rows: usize,
     cell_width: u32,
@@ -1245,22 +1238,17 @@ struct AsciiFrameRasterizer {
     pixel_width: u32,
     pixel_height: u32,
     bg_alpha: f32,
-    glyph_cache: HashMap<fontdue::layout::GlyphRasterConfig, GlyphBitmap>,
 }
 
 impl AsciiFrameRasterizer {
     fn new(font_path: &Path, font_size: f32, cols: usize, rows: usize) -> Result<Self> {
-        let font_bytes = fs::read(font_path)
-            .with_context(|| format!("failed to read font file {}", font_path.display()))?;
-        let font = Font::from_bytes(font_bytes, FontSettings::default())
-            .map_err(|error| anyhow!("failed to parse font {}: {error}", font_path.display()))?;
-        let cell_width = font.metrics('M', font_size).advance_width.ceil().max(1.0) as u32;
-        let line_height = (font_size * 1.45).round().max(1.0) as u32;
+        let painter = AsciiPainter::from_path(font_path, font_size)?;
+        let cell_width = painter.cell_width();
+        let line_height = painter.line_height();
         let pixel_width = (cols as u32).saturating_mul(cell_width).max(2);
         let pixel_height = (rows as u32).saturating_mul(line_height).max(2);
         Ok(Self {
-            font,
-            font_size,
+            painter,
             cols,
             rows,
             cell_width,
@@ -1268,7 +1256,6 @@ impl AsciiFrameRasterizer {
             pixel_width,
             pixel_height,
             bg_alpha: 1.0, // Default to opaque, will be overridden or set via specialized constructor
-            glyph_cache: HashMap::new(),
         })
     }
 
@@ -1303,42 +1290,8 @@ impl AsciiFrameRasterizer {
         if text.is_empty() {
             return;
         }
-        let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
-        layout.reset(&LayoutSettings {
-            x: x as f32,
-            y: y as f32,
-            max_width: Some((self.cols as u32 * self.cell_width) as f32),
-            max_height: None,
-            horizontal_align: fontdue::layout::HorizontalAlign::Left,
-            vertical_align: fontdue::layout::VerticalAlign::Top,
-            line_height: 1.0,
-            wrap_style: fontdue::layout::WrapStyle::Letter,
-            wrap_hard_breaks: true,
-        });
-        layout.append(&[&self.font], &TextStyle::new(text, self.font_size, 0));
-
-        for glyph in layout.glyphs() {
-            if glyph.width == 0 || glyph.height == 0 {
-                continue;
-            }
-            let glyph_bitmap = self.glyph_cache.entry(glyph.key).or_insert_with(|| {
-                let (_, bitmap) = self.font.rasterize_config(glyph.key);
-                GlyphBitmap {
-                    width: glyph.width,
-                    height: glyph.height,
-                    bitmap,
-                }
-            });
-            blend_glyph(
-                frame,
-                self.pixel_width,
-                self.pixel_height,
-                glyph.x.round() as i32,
-                glyph.y.round() as i32,
-                glyph_bitmap,
-                [255, 255, 255, 255],
-            );
-        }
+        let max_width = Some((self.cols as u32 * self.cell_width) as f32);
+        let _ = self.painter.draw_line(frame, self.pixel_width, self.pixel_height, x, y, text, [255, 255, 255, 255], max_width);
     }
 }
 
@@ -1439,49 +1392,7 @@ fn capture_encoding(bg_alpha: f32) -> EncodingConfig {
     }
 }
 
-fn blend_glyph(
-    frame: &mut [u8],
-    frame_width: u32,
-    frame_height: u32,
-    x: i32,
-    y: i32,
-    glyph: &GlyphBitmap,
-    color: [u8; 4],
-) {
-    for row in 0..glyph.height {
-        let py = y + row as i32;
-        if py < 0 || py >= frame_height as i32 {
-            continue;
-        }
-        for col in 0..glyph.width {
-            let px = x + col as i32;
-            if px < 0 || px >= frame_width as i32 {
-                continue;
-            }
-            let mask = glyph.bitmap[row * glyph.width + col];
-            if mask == 0 {
-                continue;
-            }
-            let alpha = ((u16::from(mask) * u16::from(color[3])) / 255) as u8;
-            let idx = ((py as u32 * frame_width + px as u32) * 4) as usize;
-            blend_pixel(frame, idx, [color[0], color[1], color[2], alpha]);
-        }
-    }
-}
-
-fn blend_pixel(frame: &mut [u8], idx: usize, src: [u8; 4]) {
-    let alpha = u16::from(src[3]);
-    if alpha == 0 {
-        return;
-    }
-    let inv_alpha = 255_u16.saturating_sub(alpha);
-    for channel in 0..3 {
-        let dst = u16::from(frame[idx + channel]);
-        let src_c = u16::from(src[channel]);
-        frame[idx + channel] = ((src_c * alpha + dst * inv_alpha + 127) / 255) as u8;
-    }
-    frame[idx + 3] = 255;
-}
+// Extracted blend_glyph and blend_pixel to AsciiPainter
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;

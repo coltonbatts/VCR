@@ -1460,7 +1460,7 @@ mod tests {
     #[test]
     fn glyph_mapping_covers_full_range() {
         let ramp = 10u32;
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = std::collections::BTreeSet::new();
         for i in 0..1000 {
             let luma = i as f32 / 999.0;
             seen.insert(luma_to_glyph_index(luma, ramp));

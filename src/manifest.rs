@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -81,6 +81,14 @@ pub fn load_and_validate_manifest_with_options(
         &manifest.resolved_params,
         &manifest.applied_param_overrides,
     )?;
+
+    let parent_dir = path.parent().unwrap_or_else(|| Path::new(""));
+    let sandbox_root = if parent_dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent_dir
+    };
+    manifest.sandbox = Some(crate::sandbox::ManifestSandbox::new(sandbox_root)?);
 
     validate_manifest(&mut manifest, path, options)?;
     Ok(manifest)
@@ -546,7 +554,7 @@ fn resolve_params_with_overrides(
         .map(|(name, definition)| (name.clone(), definition.default.clone()))
         .collect::<BTreeMap<_, _>>();
     let mut applied = BTreeMap::new();
-    let mut seen_override_names = HashSet::new();
+    let mut seen_override_names = BTreeSet::new();
 
     for override_entry in overrides {
         if !seen_override_names.insert(override_entry.name.clone()) {
@@ -895,12 +903,12 @@ fn validate_manifest(
     let manifest_dir = manifest_path
         .parent()
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-    let mut seen_ids = HashSet::with_capacity(manifest.layers.len());
+    let mut seen_ids = BTreeSet::new();
     let known_groups = manifest
         .groups
         .iter()
         .map(|group| group.id.as_str())
-        .collect::<HashSet<_>>();
+        .collect::<BTreeSet<_>>();
 
     for layer in &mut manifest.layers {
         layer

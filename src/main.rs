@@ -3213,7 +3213,7 @@ fn run_preview(
     ffmpeg_mode: FfmpegMode,
     quiet: bool,
 ) -> Result<ResolvedInputsSnapshot> {
-    if !(0.0..=1.0).contains(&args.scale) || args.scale == 0.0 {
+    if args.scale <= f32::EPSILON || args.scale > 1.0 {
         bail!("preview --scale must be in (0, 1], got {}", args.scale);
     }
 
@@ -3356,7 +3356,7 @@ fn run_preview_sample_frames(
     backend: BackendArg,
     quiet: bool,
 ) -> Result<()> {
-    if !(0.0..=1.0).contains(&args.scale) || args.scale == 0.0 {
+    if args.scale <= f32::EPSILON || args.scale > 1.0 {
         bail!("preview --scale must be in (0, 1], got {}", args.scale);
     }
 

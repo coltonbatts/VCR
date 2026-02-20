@@ -16,5 +16,5 @@ layers:
   - id: "gradient_seq"
     z_index: 0
     sequence:
-      path: "../tests/fixtures/sequence_gradient"
+      path: "sequence_gradient"
       pattern: "{frame:04}.png"

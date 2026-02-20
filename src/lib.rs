@@ -1,3 +1,4 @@
+pub mod sandbox;
 pub mod agent_errors;
 pub mod agent_metadata;
 pub mod animation_engine;
@@ -8,10 +9,12 @@ pub mod ascii_capture;
 pub mod ascii_frame;
 pub mod ascii_pipeline;
 pub mod ascii_render;
+pub mod ascii_renderer;
 pub mod ascii_sources;
 pub mod ascii_stage;
 pub mod aspect_preset;
 pub mod asset_catalog;
+pub mod channel_displacement;
 pub mod chat;
 pub mod decoding;
 pub mod encoding;

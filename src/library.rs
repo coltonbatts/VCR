@@ -531,11 +531,14 @@ pub fn resolve_manifest_library_reference(
     }
 
     verify_item(&workspace_root, item)?;
-    Ok(workspace_root.join(&item.path))
+    let sandbox = crate::sandbox::ManifestSandbox::new(&workspace_root)?;
+    let resolved = sandbox.resolve(&item.path)?;
+    Ok(resolved)
 }
 
 pub fn verify_item(workspace_root: &Path, item: &LibraryItem) -> Result<()> {
-    let asset_path = workspace_root.join(&item.path);
+    let sandbox = crate::sandbox::ManifestSandbox::new(workspace_root)?;
+    let asset_path = sandbox.resolve(&item.path)?;
     if !asset_path.exists() {
         bail!(
             "missing asset file for id '{}': {}",

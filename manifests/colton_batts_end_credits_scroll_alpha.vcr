@@ -1,0 +1,433 @@
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: { frames: 960 }
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+seed: 0
+
+groups:
+  - id: credits_scroll
+    pos_y: "1240 - t * 2.4"
+
+layers:
+  - id: credits_title
+    group: credits_scroll
+    z_index: 5
+    anchor: center
+    position: { x: 960, y: 0 }
+    text:
+      content: "END CREDITS"
+      font_family: "GeistPixel-Line"
+      font_size: 104
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: credits_subtitle
+    group: credits_scroll
+    z_index: 5
+    anchor: center
+    position: { x: 960, y: 110 }
+    text:
+      content: "A VCR PRODUCTION"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.85 }
+
+  - id: role_01
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 250 }
+    text:
+      content: "DIRECTED BY"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_01
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 250 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_02
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 360 }
+    text:
+      content: "WRITTEN BY"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_02
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 360 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_03
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 470 }
+    text:
+      content: "PRODUCED BY"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_03
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 470 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_04
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 580 }
+    text:
+      content: "EDITED BY"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_04
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 580 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_05
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 690 }
+    text:
+      content: "DIRECTOR OF PHOTOGRAPHY"
+      font_family: "GeistPixel-Line"
+      font_size: 36
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_05
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 690 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_06
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 800 }
+    text:
+      content: "PRODUCTION DESIGN"
+      font_family: "GeistPixel-Line"
+      font_size: 36
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_06
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 800 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_07
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 910 }
+    text:
+      content: "MUSIC BY"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_07
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 910 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_08
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 1020 }
+    text:
+      content: "SOUND DESIGN"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_08
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 1020 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_09
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 1130 }
+    text:
+      content: "VFX SUPERVISION"
+      font_family: "GeistPixel-Line"
+      font_size: 36
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_09
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 1130 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_10
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 1240 }
+    text:
+      content: "COLOR FINISH"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_10
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 1240 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_11
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 1350 }
+    text:
+      content: "TITLE DESIGN"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_11
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 1350 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_12
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 1460 }
+    text:
+      content: "MOTION GRAPHICS"
+      font_family: "GeistPixel-Line"
+      font_size: 36
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_12
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 1460 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_13
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 1570 }
+    text:
+      content: "CASTING"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_13
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 1570 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_14
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 1680 }
+    text:
+      content: "LOCATION MANAGEMENT"
+      font_family: "GeistPixel-Line"
+      font_size: 32
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_14
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 1680 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_15
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 1790 }
+    text:
+      content: "POST PRODUCTION"
+      font_family: "GeistPixel-Line"
+      font_size: 36
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_15
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 1790 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_16
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 1900 }
+    text:
+      content: "ONLINE EDITOR"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_16
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 1900 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_17
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 2010 }
+    text:
+      content: "DELIVERABLES"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_17
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 2010 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: role_18
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 360, y: 2120 }
+    text:
+      content: "SPECIAL THANKS"
+      font_family: "GeistPixel-Line"
+      font_size: 40
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: name_18
+    group: credits_scroll
+    z_index: 10
+    anchor: top_left
+    position: { x: 1080, y: 2120 }
+    text:
+      content: "Colton Batts"
+      font_family: "GeistPixel-Line"
+      font_size: 44
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }

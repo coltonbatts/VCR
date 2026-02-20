@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{anyhow, bail, Context, Result};
 
@@ -62,7 +62,7 @@ pub fn ascii_overrides_from_flags(
     })
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RenderSceneData {
     pub seed: u64,
     pub params: Parameters,
@@ -72,6 +72,22 @@ pub struct RenderSceneData {
     pub ascii_post: Option<AsciiPostConfig>,
     /// Runtime overrides for ASCII pipeline (CLI/env). Not from manifest.
     pub ascii_overrides: Option<AsciiRuntimeOverrides>,
+    pub sandbox: crate::sandbox::ManifestSandbox,
+}
+
+impl Default for RenderSceneData {
+    fn default() -> Self {
+        Self {
+            seed: 0,
+            params: Parameters::new(),
+            modulators: ModulatorMap::new(),
+            groups: Vec::new(),
+            post: Vec::new(),
+            ascii_post: None,
+            ascii_overrides: None,
+            sandbox: crate::sandbox::ManifestSandbox::new(".").unwrap(),
+        }
+    }
 }
 
 impl RenderSceneData {
@@ -84,6 +100,7 @@ impl RenderSceneData {
             post: manifest.post.clone(),
             ascii_post: manifest.ascii_post.clone(),
             ascii_overrides: None,
+            sandbox: manifest.sandbox.clone().unwrap_or_else(|| crate::sandbox::ManifestSandbox::new(".").unwrap()),
         }
     }
 
@@ -196,7 +213,7 @@ pub(crate) fn resolve_group_chain(
     };
 
     let mut chain = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = BTreeSet::new();
     let mut current = Some(group_id);
     while let Some(group_name) = current {
         if !seen.insert(group_name.to_owned()) {

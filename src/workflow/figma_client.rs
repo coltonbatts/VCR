@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::Client;
@@ -210,7 +210,7 @@ impl FigmaClient {
         &self,
         file_key: &str,
         node_ids: &[String],
-    ) -> Result<HashMap<String, String>> {
+    ) -> Result<BTreeMap<String, String>> {
         if node_ids.is_empty() {
             bail!("no node ids were provided for Figma image export");
         }
@@ -392,7 +392,7 @@ struct FigmaColor {
 struct FigmaImageResponse {
     #[serde(default)]
     err: Option<String>,
-    images: HashMap<String, String>,
+    images: BTreeMap<String, String>,
 }
 
 fn find_product_card_frame(node: &FigmaNode) -> Option<&FigmaNode> {
@@ -969,7 +969,7 @@ fn log_selected_layer(label: &str, node: &FigmaNode) {
     );
 }
 
-fn image_url_for(images: &HashMap<String, String>, node_id: &str, label: &str) -> Result<String> {
+fn image_url_for(images: &BTreeMap<String, String>, node_id: &str, label: &str) -> Result<String> {
     images
         .get(node_id)
         .filter(|value| !value.trim().is_empty())

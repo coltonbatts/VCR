@@ -19,3 +19,16 @@ __pycache__/
 
 /assets/sequences/
 /assets/animations/
+
+# Temporary scrapings and utility artifacts
+*.html
+*.json
+!manifests/**/*.json
+!assets/**/*.json
+!assets/**/metadata.json
+*.mov.metadata.json
+*.txt
+jcvd_frames/
+test_btreemap.rs
+.tmp_venv
+.venv-tools

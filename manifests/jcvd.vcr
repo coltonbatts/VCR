@@ -1,0 +1,15 @@
+version: 1
+environment:
+  resolution:
+    width: 1080
+    height: 1920
+  fps: 30
+  duration: 8
+layers:
+  - id: jcvd_sequence
+    position_x: 540
+    position_y: 960
+    anchor: center
+    sequence:
+      path: ../jcvd_frames
+      pattern: "frame_{frame:04}.png"

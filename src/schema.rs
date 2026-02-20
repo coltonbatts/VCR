@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -57,6 +57,8 @@ pub struct ParamDefinition {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
+    #[serde(skip)]
+    pub sandbox: Option<crate::sandbox::ManifestSandbox>,
     #[serde(default = "default_manifest_version")]
     pub version: u32,
     pub environment: Environment,
@@ -2385,7 +2387,7 @@ pub fn validate_manifest_manifest_level(manifest: &Manifest) -> Result<()> {
         modulator.validate(name, &manifest.params, manifest.seed)?;
     }
 
-    let mut seen_group_ids = HashSet::with_capacity(manifest.groups.len());
+    let mut seen_group_ids = BTreeSet::new();
     for group in &manifest.groups {
         group.validate(&manifest.params, manifest.seed, &manifest.modulators)?;
         if !seen_group_ids.insert(group.id.as_str()) {
@@ -2406,7 +2408,7 @@ pub fn validate_manifest_manifest_level(manifest: &Manifest) -> Result<()> {
     }
 
     for group in &manifest.groups {
-        let mut seen = HashSet::new();
+        let mut seen = BTreeSet::new();
         seen.insert(group.id.as_str());
         let mut current = group.parent.as_deref();
         while let Some(parent_id) = current {

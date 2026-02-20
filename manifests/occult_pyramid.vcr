@@ -1,0 +1,21 @@
+version: 1
+
+environment:
+  resolution:
+    width: 1080
+    height: 1920
+  fps: 30
+  duration: { frames: 300 }
+  encoding:
+    prores_profile: prores4444
+    vendor: apl0
+
+layers:
+  - id: pyramid_layer
+    z_index: 0
+    opacity: 1.0
+    wgpu_shader:
+      shader_path: "shaders/occult_pyramid.wgsl"
+      width: 1080
+      height: 1920
+      time_mode: seconds

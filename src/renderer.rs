@@ -485,6 +485,7 @@ struct GpuRenderer {
     ascii_pipeline: Option<AsciiPipeline>,
     vello_renderer: Option<VelloRenderer>,
     velato_renderer: velato::Renderer,
+    pub sandbox: crate::sandbox::ManifestSandbox,
 }
 
 struct PendingReadback {
@@ -626,6 +627,7 @@ struct SoftwareRenderer {
     pub params: Parameters,
     modulators: ModulatorMap,
     layers: Vec<SoftwareLayer>,
+    sandbox: crate::sandbox::ManifestSandbox,
 }
 
 struct SoftwareLayer {
@@ -885,6 +887,7 @@ impl GpuRenderer {
                     width,
                     height,
                     asset_layer,
+                    &scene.sandbox,
                     group_chain.clone(),
                     &blend_bind_group_layout,
                     &sampler,
@@ -899,6 +902,7 @@ impl GpuRenderer {
                     width,
                     height,
                     image_layer,
+                    &scene.sandbox,
                     group_chain.clone(),
                     &blend_bind_group_layout,
                     &sampler,
@@ -913,6 +917,7 @@ impl GpuRenderer {
                     width,
                     height,
                     video_layer,
+                    &scene.sandbox,
                     group_chain.clone(),
                     &blend_bind_group_layout,
                     &sampler,
@@ -927,6 +932,7 @@ impl GpuRenderer {
                     width,
                     height,
                     procedural_layer,
+                    &scene.sandbox,
                     group_chain,
                     &blend_bind_group_layout,
                     &procedural_bind_group_layout,
@@ -942,6 +948,7 @@ impl GpuRenderer {
                     width,
                     height,
                     shader_layer,
+                    &scene.sandbox,
                     group_chain,
                     &blend_bind_group_layout,
                     &sampler,
@@ -956,6 +963,7 @@ impl GpuRenderer {
                     width,
                     height,
                     wgpu_shader_layer,
+                    &scene.sandbox,
                     group_chain,
                     &blend_bind_group_layout,
                     &sampler,
@@ -970,6 +978,7 @@ impl GpuRenderer {
                     width,
                     height,
                     text_layer,
+                    &scene.sandbox,
                     group_chain,
                     &blend_bind_group_layout,
                     &sampler,
@@ -984,6 +993,7 @@ impl GpuRenderer {
                     width,
                     height,
                     ascii_layer,
+                    &scene.sandbox,
                     group_chain,
                     &blend_bind_group_layout,
                     &sampler,
@@ -998,6 +1008,7 @@ impl GpuRenderer {
                     width,
                     height,
                     seq_layer,
+                    &scene.sandbox,
                     group_chain,
                     &blend_bind_group_layout,
                     &sampler,
@@ -1012,6 +1023,7 @@ impl GpuRenderer {
                     width,
                     height,
                     lottie_layer,
+                    &scene.sandbox,
                     group_chain,
                     &blend_bind_group_layout,
                     &sampler,
@@ -1080,6 +1092,7 @@ impl GpuRenderer {
             ascii_pipeline,
             vello_renderer: None,
             velato_renderer: velato::Renderer::new(),
+            sandbox: scene.sandbox.clone(),
         })
     }
 
@@ -1557,7 +1570,7 @@ impl GpuRenderer {
             let GpuLayerSource::Sequence { source, _texture } = &layer.source else {
                 continue;
             };
-            let frame_path = source.frame_path(frame_index);
+            let frame_path = self.sandbox.resolve(source.frame_path(frame_index))?;
             let image = load_rgba_image(&frame_path, &layer.id)?;
             let (w, h) = image.dimensions();
             let bytes_per_row =
@@ -1776,10 +1789,10 @@ impl SoftwareRenderer {
             let group_chain = resolve_group_chain(common, &groups_by_id)?;
             let source = match layer {
                 Layer::Asset(asset_layer) => SoftwareLayerSource::Asset {
-                    pixmap: load_asset_pixmap(asset_layer)?,
+                    pixmap: load_asset_pixmap(asset_layer, &scene.sandbox)?,
                 },
                 Layer::Image(image_layer) => SoftwareLayerSource::Asset {
-                    pixmap: load_image_pixmap(image_layer)?,
+                    pixmap: load_image_pixmap(image_layer, &scene.sandbox)?,
                 },
                 Layer::Procedural(procedural_layer) => {
                     SoftwareLayerSource::Procedural(procedural_layer.procedural.clone())
@@ -1804,8 +1817,9 @@ impl SoftwareRenderer {
                     source: seq_layer.sequence.clone(),
                 },
                 Layer::Lottie(lottie_layer) => {
+                    let resolved = scene.sandbox.resolve(&lottie_layer.lottie.path)?;
                     let json_content =
-                        std::fs::read_to_string(&lottie_layer.lottie.path).map_err(|e| {
+                        std::fs::read_to_string(&resolved).map_err(|e| {
                             anyhow!(
                                 "failed to read lottie file {:?}: {:?}",
                                 lottie_layer.lottie.path,
@@ -1841,7 +1855,7 @@ impl SoftwareRenderer {
                 }
                 SoftwareLayerSource::Sequence { source } => {
                     // Load frame 0 to get dimensions. Actual per-frame loading in render_layer.
-                    let frame0_path = source.frame_path(0);
+                    let frame0_path = scene.sandbox.resolve(source.frame_path(0))?;
                     let img = load_rgba_image(&frame0_path, &common.id)?;
                     img.dimensions()
                 }
@@ -1879,6 +1893,7 @@ impl SoftwareRenderer {
             params: scene.params.clone(),
             modulators: scene.modulators.clone(),
             layers: software_layers,
+            sandbox: scene.sandbox.clone(),
         })
     }
 
@@ -1898,6 +1913,7 @@ impl SoftwareRenderer {
                 &self.modulators,
                 self.width,
                 self.height,
+                &self.sandbox,
             )?;
         }
 
@@ -1916,6 +1932,7 @@ impl SoftwareRenderer {
         modulators: &ModulatorMap,
         width: u32,
         height: u32,
+        sandbox: &crate::sandbox::ManifestSandbox,
     ) -> Result<()> {
         let Some(state) = evaluate_layer_state(
             &layer.id,
@@ -1973,7 +1990,7 @@ impl SoftwareRenderer {
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
             }
             SoftwareLayerSource::Sequence { source } => {
-                let frame_path = source.frame_path(frame_index);
+                let frame_path = sandbox.resolve(source.frame_path(frame_index))?;
                 let pixmap = load_layer_pixmap(&frame_path, &layer.id)?;
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
             }
@@ -1994,6 +2011,7 @@ fn build_asset_layer(
     frame_width: u32,
     frame_height: u32,
     layer: &AssetLayer,
+    sandbox: &crate::sandbox::ManifestSandbox,
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
@@ -2009,6 +2027,7 @@ fn build_asset_layer(
         frame_height,
         &layer.common,
         &layer.source_path,
+        sandbox,
         group_chain,
         blend_bind_group_layout,
         sampler,
@@ -2025,6 +2044,7 @@ fn build_image_layer(
     frame_width: u32,
     frame_height: u32,
     layer: &ImageLayer,
+    sandbox: &crate::sandbox::ManifestSandbox,
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
@@ -2040,6 +2060,7 @@ fn build_image_layer(
         frame_height,
         &layer.common,
         &layer.image.path,
+        sandbox,
         group_chain,
         blend_bind_group_layout,
         sampler,
@@ -2056,6 +2077,7 @@ fn build_sequence_layer(
     frame_width: u32,
     frame_height: u32,
     layer: &crate::schema::SequenceLayer,
+    sandbox: &crate::sandbox::ManifestSandbox,
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
@@ -2065,7 +2087,7 @@ fn build_sequence_layer(
     fps: u32,
 ) -> Result<GpuLayer> {
     // Load frame 0 to initialize texture dimensions and initial content.
-    let frame0_path = layer.sequence.frame_path(0);
+    let frame0_path = sandbox.resolve(layer.sequence.frame_path(0))?;
     let image = load_rgba_image(&frame0_path, &layer.common.id)?;
     let (layer_width, layer_height) = image.dimensions();
 
@@ -2186,6 +2208,7 @@ fn build_lottie_layer(
     frame_width: u32,
     frame_height: u32,
     layer: &crate::schema::LottieLayer,
+    sandbox: &crate::sandbox::ManifestSandbox,
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
@@ -2194,8 +2217,9 @@ fn build_lottie_layer(
     seed: u64,
     fps: u32,
 ) -> Result<GpuLayer> {
-    let json_content = std::fs::read_to_string(&layer.lottie.path)
-        .with_context(|| format!("failed to read lottie file {:?}", layer.lottie.path))?;
+    let resolved = sandbox.resolve(&layer.lottie.path)?;
+    let json_content = std::fs::read_to_string(&resolved)
+        .with_context(|| format!("failed to read lottie file {:?}", resolved))?;
     let composition = Composition::from_str(&json_content)
         .map_err(|e| anyhow!("failed to parse lottie animation: {:?}", e))?;
 
@@ -2294,6 +2318,7 @@ fn build_bitmap_layer(
     frame_height: u32,
     common: &LayerCommon,
     image_path: &Path,
+    sandbox: &crate::sandbox::ManifestSandbox,
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
@@ -2302,7 +2327,8 @@ fn build_bitmap_layer(
     seed: u64,
     fps: u32,
 ) -> Result<GpuLayer> {
-    let image = load_rgba_image(image_path, &common.id)?;
+    let resolved = sandbox.resolve(image_path)?;
+    let image = load_rgba_image(&resolved, &common.id)?;
     let (layer_width, layer_height) = image.dimensions();
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -2414,6 +2440,7 @@ fn build_procedural_layer(
     frame_width: u32,
     frame_height: u32,
     layer: &ProceduralLayer,
+    _sandbox: &crate::sandbox::ManifestSandbox,
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     procedural_bind_group_layout: &wgpu::BindGroupLayout,
@@ -3022,12 +3049,12 @@ fn load_rgba_image(image_path: &Path, layer_id: &str) -> Result<image::RgbaImage
     Ok(image.to_rgba8())
 }
 
-fn load_asset_pixmap(layer: &AssetLayer) -> Result<Pixmap> {
-    load_layer_pixmap(&layer.source_path, &layer.common.id)
+fn load_asset_pixmap(layer: &AssetLayer, sandbox: &crate::sandbox::ManifestSandbox) -> Result<Pixmap> {
+    load_layer_pixmap(&sandbox.resolve(&layer.source_path)?, &layer.common.id)
 }
 
-fn load_image_pixmap(layer: &ImageLayer) -> Result<Pixmap> {
-    load_layer_pixmap(&layer.image.path, &layer.common.id)
+fn load_image_pixmap(layer: &ImageLayer, sandbox: &crate::sandbox::ManifestSandbox) -> Result<Pixmap> {
+    load_layer_pixmap(&sandbox.resolve(&layer.image.path)?, &layer.common.id)
 }
 
 fn load_layer_pixmap(image_path: &Path, layer_id: &str) -> Result<Pixmap> {
@@ -3513,6 +3540,7 @@ fn build_shader_layer(
     frame_width: u32,
     frame_height: u32,
     layer: &ShaderLayer,
+    sandbox: &crate::sandbox::ManifestSandbox,
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
@@ -3525,11 +3553,12 @@ fn build_shader_layer(
     let user_fragment = if let Some(fragment) = &layer.shader.fragment {
         fragment.clone()
     } else if let Some(path) = &layer.shader.path {
-        std::fs::read_to_string(path).with_context(|| {
+        let resolved = sandbox.resolve(path)?;
+        std::fs::read_to_string(&resolved).with_context(|| {
             format!(
                 "layer '{}': failed reading shader file {}",
                 layer.common.id,
-                path.display()
+                resolved.display()
             )
         })?
     } else {
@@ -3725,6 +3754,7 @@ fn build_wgpu_shader_layer(
     frame_width: u32,
     frame_height: u32,
     layer: &WgpuShaderLayer,
+    sandbox: &crate::sandbox::ManifestSandbox,
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
@@ -3733,12 +3763,13 @@ fn build_wgpu_shader_layer(
     seed: u64,
     fps: u32,
 ) -> Result<GpuLayer> {
+    let resolved = sandbox.resolve(&layer.wgpu_shader.shader_path)?;
     let user_shader =
-        std::fs::read_to_string(&layer.wgpu_shader.shader_path).with_context(|| {
+        std::fs::read_to_string(&resolved).with_context(|| {
             format!(
                 "layer '{}': failed reading wgpu shader file {}",
                 layer.common.id,
-                layer.wgpu_shader.shader_path.display()
+                resolved.display()
             )
         })?;
 
@@ -3912,6 +3943,7 @@ fn build_text_layer(
     frame_width: u32,
     frame_height: u32,
     layer: &TextLayer,
+    _sandbox: &crate::sandbox::ManifestSandbox,
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
@@ -4033,6 +4065,7 @@ fn build_ascii_layer(
     frame_width: u32,
     frame_height: u32,
     layer: &AsciiLayer,
+    _sandbox: &crate::sandbox::ManifestSandbox,
     group_chain: Vec<Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
@@ -4178,6 +4211,7 @@ fn build_video_layer(
     frame_width: u32,
     frame_height: u32,
     layer: &crate::schema::VideoLayer,
+    sandbox: &crate::sandbox::ManifestSandbox,
     group_chain: Vec<crate::schema::Group>,
     blend_bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
@@ -4186,9 +4220,10 @@ fn build_video_layer(
     seed: u64,
     fps: u32,
 ) -> Result<GpuLayer> {
-    let (width, height) = probe_video_resolution(&layer.video.path)?;
+    let resolved = sandbox.resolve(&layer.video.path)?;
+    let (width, height) = probe_video_resolution(&resolved)?;
 
-    let ffmpeg = crate::decoding::FfmpegInput::spawn(&layer.video.path, width, height)?;
+    let ffmpeg = crate::decoding::FfmpegInput::spawn(&resolved, width, height)?;
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(&format!("vcr-video-{}", layer.common.id)),
