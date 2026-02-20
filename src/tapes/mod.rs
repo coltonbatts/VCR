@@ -609,6 +609,29 @@ pub fn build_command_plan(
         output_paths.push(output_path);
     }
 
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == store.output_flag {
+            if let Some(val) = args.get_mut(index + 1) {
+                let path = std::path::PathBuf::from(&val);
+                if let Ok(rel) = path.strip_prefix(&store.project_root) {
+                    *val = rel.to_string_lossy().to_string();
+                }
+            }
+            index += 2;
+            continue;
+        }
+        let prefix = format!("{}=", store.output_flag);
+        if args[index].starts_with(&prefix) {
+            let val = &args[index][prefix.len()..];
+            let path = std::path::PathBuf::from(val);
+            if let Ok(rel) = path.strip_prefix(&store.project_root) {
+                args[index] = format!("{}{}", prefix, rel.to_string_lossy());
+            }
+        }
+        index += 1;
+    }
+
     let record_path = store
         .runs_dir
         .join("records")

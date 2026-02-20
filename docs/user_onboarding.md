@@ -1,40 +1,46 @@
-# VCR Onboarding (Quick Path)
+# VCR Onboarding Guide
 
-## 1. Install
+Welcome to **VCR** (Video Component Renderer).
+
+Think of VCR as **"After Effects for code."**
+
+It's a terminal-driven motion graphics engine that lets you create professional, high-quality video animations without touching a complex GUI or paying for a subscription.
+
+Instead of clicking around a timeline, you write simple text files (YAML manifests) describing your scene's layers, shapes, text, animations, and video clips. VCR parses these files and deterministically renders them into pristine video files (like ProRes 4444 with native transparent backgrounds).
+
+Because your animations are just code, you can:
+
+- **Version control them** with Git alongside your project.
+- **Get the exact same pixel-perfect render** every single time, on any machine.
+- **Automate video generation** via scripts, CI/CD, or AI agents.
+
+## Getting Started
+
+### 1. Install VCR
+
+The fastest way to get VCR and the Tape Deck interactive UI is via our one-liner install script.
+*(Requires [FFmpeg](https://ffmpeg.org/download.html) to be installed on your system).*
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/coltonbatts/VCR/main/scripts/install.sh | bash
-vcr --version
 ```
 
-## 2. Start from a Template (Path-Safe)
+*(Make sure `~/.local/bin` is in your shell's PATH after installation!)*
 
-Run from the repository root and keep the copied file under `examples/` so relative shader paths keep working.
+### 2. Open the Deck
+
+VCR uses a **Tapes-First Workflow**. You treat your animation manifests as immutable recipes ("Tapes"), VCR as the render engine, and the "Tape Deck" as your interactive controller UI.
+
+Instead of memorizing long rendering commands to manage your files, just open the Deck in your terminal:
 
 ```bash
-ls examples/*.vcr
-cp examples/ai_company_hero.vcr examples/my_brand.vcr
+vcr deck
 ```
 
-## 3. Render
+From the Deck interface, you can effortlessly:
 
-```bash
-vcr render ./examples/my_brand.vcr -o ./renders/my_brand.mov
-```
+- **Initialize** your project's `tapes.yaml` environment automatically.
+- **Create** new tapes from templates.
+- **Preview & Play** your animations instantly.
 
-## 4. Preview While Editing
-
-- Works in standard builds: `vcr watch ./examples/my_brand.vcr`
-- Optional preview window (`play` feature required): `cargo run --release --features play -- play ./examples/my_brand.vcr`
-
-## 5. Output Profiles and Alpha
-
-- `vcr render` forces ProRes 4444 for `.mov` output (alpha-safe default contract).
-- `vcr build` follows `environment.encoding.prores_profile` in the manifest.
-- For alpha with `vcr build`, set:
-
-```yaml
-environment:
-  encoding:
-    prores_profile: prores4444
-```
+That's it! You're now generating deterministic motion graphics direct from your terminal. Enjoy!

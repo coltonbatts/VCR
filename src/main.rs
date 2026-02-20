@@ -1816,14 +1816,16 @@ fn print_cli_error(command_name: &str, error: &anyhow::Error) {
         return;
     }
 
-    let head = single_line(error.to_string());
+    let head = clean_message(error.to_string());
     let root = error
         .chain()
         .last()
-        .map(|cause| single_line(cause.to_string()))
+        .map(|cause| clean_message(cause.to_string()))
         .unwrap_or_else(|| head.clone());
     let summary = if root == head {
         head.clone()
+    } else if head.contains('\n') {
+        format!("{head}\n\nCaused by: {root}")
     } else {
         format!("{head}. {root}")
     };
@@ -1870,17 +1872,18 @@ fn print_cli_error(command_name: &str, error: &anyhow::Error) {
         eprintln!("vcr {command_name}: {summary}");
         if std::env::var_os("VCR_ERROR_VERBOSE").is_some() {
             for cause in error.chain().skip(1) {
-                eprintln!("detail: {}", single_line(cause.to_string()));
+                eprintln!("detail: {}", clean_message(cause.to_string()));
             }
         }
     }
 }
 
-fn single_line(value: String) -> String {
+fn clean_message(value: String) -> String {
     value
-        .split_whitespace()
+        .lines()
+        .map(|line| line.trim())
         .collect::<Vec<_>>()
-        .join(" ")
+        .join("\n")
         .trim()
         .to_owned()
 }

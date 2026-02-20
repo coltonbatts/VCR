@@ -57,28 +57,40 @@ VCR follows a **Visual-First** methodology. Because motion graphics are often to
 - **ProRes 4444 output** via FFmpeg
 - **Headless rendering** without any graphics server
 
-## Quick Install (One-liner)
+## Quick Start
 
-If you have **Rust** and **FFmpeg** installed, you can install VCR with a single command:
+The fastest way to get VCR and the Tape Deck interactive UI is via our one-liner install script. *(Requires [FFmpeg](https://ffmpeg.org/download.html) to be installed on your system).*
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/coltonbatts/VCR/main/scripts/install.sh | bash
 ```
 
-*Works on macOS, Linux, and WSL.*
+*(Make sure `~/.local/bin` is in your shell's PATH after installation!)*
 
-## Quick Start
+### Open the Deck
 
-### Requirements
+VCR uses a **Tapes-First Workflow**. You treat your animation manifests as immutable recipes ("Tapes"), VCR as the render engine, and the "Tape Deck" as your interactive controller UI.
 
-- **Rust** (stable) — [install here](https://rustup.rs/)
-- **FFmpeg** on your PATH — `brew install ffmpeg` (macOS) or equivalent for your OS
+Instead of memorizing long rendering commands to manage your files, just open the Deck in your terminal:
 
-### Install & Build
+```bash
+vcr deck
+```
+
+From the Deck interface, you can effortlessly:
+
+- **Initialize** your project's `tapes.yaml` environment automatically.
+- **Create** new tapes from templates.
+- **Preview & Play** your animations instantly.
+
+### Manual Build / Cargo Install
+
+If you're looking to modify VCR or prefer building from source, make sure you have Rust stable installed.
 
 ```bash
 git clone https://github.com/coltonbatts/VCR.git
 cd VCR
+cargo xtask deck-install
 ```
 
 #### Feature Flags
@@ -100,170 +112,12 @@ VCR is built with a modular architecture to keep the core renderer lightweight.
 | **With Workflow** | `cargo build --release --features workflow` |
 | **Full Suite** | `cargo build --release --features "play workflow"` |
 
-### Your First Render
+### Basic File Usage (Headless Flow)
 
-Create a file called `manifests/hello.vcr`:
-
-```yaml
-environment:
-  resolution:
-    width: 1920
-    height: 1080
-  fps: 24
-  duration:
-    frames: 120
-
-layers:
-  - id: background
-    z_index: 0
-    procedural:
-      kind: solid_color
-      color: { r: 0.05, g: 0.05, b: 0.05, a: 1.0 }
-
-  - id: animated_gradient
-    z_index: 1
-    pos_x: "t * 20"
-    procedural:
-      kind: gradient
-      start_color: { r: 0.2, g: 0.6, b: 1.0, a: 0.9 }
-      end_color: { r: 1.0, g: 0.3, b: 0.2, a: 0.9 }
-      direction: horizontal
-```
-
-Render it:
+If you're using VCR headlessly (e.g. CI/CD or Agent usage without the Tape Deck), you can still point the renderer directly at `.vcr` composition files:
 
 ```bash
 vcr render manifests/hello.vcr -o hello.mov
-```
-
-### Copy-Paste High-End Demo
-
-Want to see something more complex? Copy this to `demo.vcr`:
-
-```yaml
-version: 1
-environment:
-  resolution: { width: 1920, height: 1080 }
-  fps: 24
-  duration: { frames: 48 }
-layers:
-  - id: bg
-    procedural:
-      kind: gradient
-      start_color: { r: 0.1, g: 0.1, b: 0.2, a: 1.0 }
-      end_color: { r: 0.3, g: 0.0, b: 0.1, a: 1.0 }
-      direction: vertical
-  - id: circle
-    pos_x: "1920/2 + sin(t * 0.2) * 200"
-    pos_y: "1080/2"
-    procedural:
-      kind: solid_color
-      color: { r: 0.9, g: 0.8, b: 0.2, a: 0.8 }
-```
-
-Render it with: `vcr render demo.vcr -o demo.mov`
-
-## Install Tape Deck
-
-Install the first-party Deck binary from this repo:
-
-```bash
-cargo xtask deck-install
-```
-
-Optional system install (when `/usr/local/bin` is writable):
-
-```bash
-cargo xtask deck-install --system
-```
-
-If `~/.local/bin` is not on `PATH`, add it in your shell config (`~/.zshrc`, `~/.bashrc`, or via `fish_add_path`).
-
-## Tapes-First Workflow (Recommended)
-
-For repeatable renders, treat manifests as implementation details and run named tapes.
-
-- `VCR` = render machine
-- `Tape` = immutable render recipe
-- `Deck` = interactive controller UI
-- `Run record` = reproducible execution log
-
-Initialize tapes config (default path: `~/.config/vcr/tapes.yaml` on Linux, `~/Library/Application Support/vcr/tapes.yaml` on macOS):
-
-```bash
-vcr tape init
-```
-
-List tapes:
-
-```bash
-vcr tape list
-```
-
-Create a new tape stub:
-
-```bash
-vcr tape new social-stinger
-```
-
-Edit one tape in your editor:
-
-```bash
-vcr tape edit social-stinger
-```
-
-Run the tape primary action:
-
-```bash
-vcr tape run alpha-lower-third
-```
-
-Run preview action (single-frame preview):
-
-```bash
-vcr tape preview alpha-lower-third
-```
-
-Run without executing, but still write a run record:
-
-```bash
-vcr tape run alpha-lower-third --dry-run --json
-```
-
-Validate tape config and manifests:
-
-```bash
-vcr tape doctor
-```
-
-Use Deck for interactive tape selection/insert/play:
-
-```bash
-vcr deck
-```
-
-Use a project-local config for team workflows:
-
-```bash
-vcr tape --config ./ops/tapes.yaml init
-vcr tape --config ./ops/tapes.yaml run alpha-lower-third
-vcr deck --config ./ops/tapes.yaml
-```
-
-Tapes-first quick examples:
-
-```bash
-vcr tape init
-vcr tape list
-vcr tape run alpha-lower-third
-vcr deck
-```
-
-Manifest-first workflow (advanced / low-level):
-
-```bash
-vcr render manifests/hello.vcr -o renders/hello.mov
-vcr render-frame manifests/hello.vcr --frame 24 -o renders/frame_000024.png
 ```
 
 ## Manifest Reference
