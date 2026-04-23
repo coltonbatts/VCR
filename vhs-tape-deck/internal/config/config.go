@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	DefaultAppDirName = "vhs-tape-deck"
-	DefaultConfigName = "config.yaml"
+	DefaultAppDirName = "vcr"
+	DefaultConfigName = "tapes.yaml"
 )
 
 type Mode string

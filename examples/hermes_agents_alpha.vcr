@@ -1,0 +1,321 @@
+# White-on-alpha Hermes piece: typography + procedural caduceus (winged staff / snakes).
+# Render:  cargo run --release -- render examples/hermes_agents_alpha.vcr -o renders/hermes_agents_alpha.mov --backend gpu
+# Preview: cargo run --release -- render-frame examples/hermes_agents_alpha.vcr --frame 45 -o renders/hermes_preview.png --backend gpu
+#
+# Procedural geometry uses normalized coordinates (0–1 of frame); pos_x offsets are in pixels.
+
+version: 1
+
+environment:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 60
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+
+layers:
+  - id: alpha_void
+    z_index: -100
+    procedural:
+      kind: solid_color
+      color: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
+
+  # Soft halos behind the staff (pulsing rings)
+  - id: halo_a
+    z_index: -20
+    opacity: "0.04 + 0.035 * sin(t * 0.11)"
+    procedural:
+      kind: ring
+      center: { x: 0.678, y: 0.52 }
+      outer_radius: "0.14 + sin(t * 0.09) * 0.012"
+      inner_radius: "0.125 + sin(t * 0.09) * 0.012"
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: halo_b
+    z_index: -19
+    opacity: "0.03 + 0.028 * sin(t * 0.13 + 1.2)"
+    procedural:
+      kind: ring
+      center: { x: 0.678, y: 0.52 }
+      outer_radius: "0.22 + sin(t * 0.07 + 0.4) * 0.018"
+      inner_radius: "0.202 + sin(t * 0.07 + 0.4) * 0.018"
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  # Caduceus: central staff
+  - id: staff_shaft
+    z_index: 2
+    procedural:
+      kind: line
+      start: { x: 0.678, y: 0.288 }
+      end: { x: 0.678, y: 0.756 }
+      thickness: 0.0048
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: staff_crest_bar
+    z_index: 3
+    procedural:
+      kind: line
+      start: { x: 0.628, y: 0.302 }
+      end: { x: 0.728, y: 0.302 }
+      thickness: 0.0034
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
+
+  - id: staff_finial
+    z_index: 4
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.278 }
+      radius: 0.009
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  # Wings (triangles), Hermes-style
+  - id: wing_left
+    z_index: 5
+    procedural:
+      kind: triangle
+      p0: { x: 0.678, y: 0.288 }
+      p1: { x: 0.612, y: 0.348 }
+      p2: { x: 0.652, y: 0.312 }
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+
+  - id: wing_right
+    z_index: 5
+    procedural:
+      kind: triangle
+      p0: { x: 0.678, y: 0.288 }
+      p1: { x: 0.744, y: 0.348 }
+      p2: { x: 0.704, y: 0.312 }
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+
+  # Entwined snakes — two chains of nodes with opposite phase
+  - id: snake_a_00
+    z_index: 1
+    pos_x: "sin(t * 0.14) * 34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.338 }
+      radius: 0.0072
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+  - id: snake_a_01
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 0.55) * 34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.368 }
+      radius: 0.0072
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+  - id: snake_a_02
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 1.1) * 34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.398 }
+      radius: 0.0072
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+  - id: snake_a_03
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 1.65) * 34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.428 }
+      radius: 0.0072
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+  - id: snake_a_04
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 2.2) * 34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.458 }
+      radius: 0.0072
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+  - id: snake_a_05
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 2.75) * 34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.488 }
+      radius: 0.0072
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+  - id: snake_a_06
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.3) * 34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.518 }
+      radius: 0.0072
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+  - id: snake_a_07
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.85) * 34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.548 }
+      radius: 0.0072
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+  - id: snake_a_08
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 4.4) * 34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.578 }
+      radius: 0.0072
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+  - id: snake_a_09
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 4.95) * 34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.608 }
+      radius: 0.0072
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+  - id: snake_a_10
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 5.5) * 34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.638 }
+      radius: 0.0072
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+  - id: snake_a_11
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 6.05) * 34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.668 }
+      radius: 0.0072
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.95 }
+
+  - id: snake_b_00
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.14159) * -34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.353 }
+      radius: 0.0066
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.88 }
+  - id: snake_b_01
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.14159 + 0.55) * -34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.383 }
+      radius: 0.0066
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.88 }
+  - id: snake_b_02
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.14159 + 1.1) * -34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.413 }
+      radius: 0.0066
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.88 }
+  - id: snake_b_03
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.14159 + 1.65) * -34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.443 }
+      radius: 0.0066
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.88 }
+  - id: snake_b_04
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.14159 + 2.2) * -34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.473 }
+      radius: 0.0066
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.88 }
+  - id: snake_b_05
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.14159 + 2.75) * -34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.503 }
+      radius: 0.0066
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.88 }
+  - id: snake_b_06
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.14159 + 3.3) * -34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.533 }
+      radius: 0.0066
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.88 }
+  - id: snake_b_07
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.14159 + 3.85) * -34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.563 }
+      radius: 0.0066
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.88 }
+  - id: snake_b_08
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.14159 + 4.4) * -34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.593 }
+      radius: 0.0066
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.88 }
+  - id: snake_b_09
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.14159 + 4.95) * -34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.623 }
+      radius: 0.0066
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.88 }
+  - id: snake_b_10
+    z_index: 1
+    pos_x: "sin(t * 0.14 + 3.14159 + 5.5) * -34"
+    procedural:
+      kind: circle
+      center: { x: 0.678, y: 0.653 }
+      radius: 0.0066
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.88 }
+
+  # Typography — all white; slight pulse
+  - id: title_hermes
+    z_index: 20
+    anchor: top_left
+    position: { x: 96, y: 312 }
+    opacity: "0.9 + 0.1 * sin(t * 0.08)"
+    text:
+      content: "HERMES"
+      font_family: "GeistPixel-Line"
+      font_size: 118
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: title_agents
+    z_index: 20
+    anchor: top_left
+    position: { x: 96, y: 452 }
+    opacity: "0.9 + 0.1 * sin(t * 0.08 + 0.7)"
+    text:
+      content: "AGENTS"
+      font_family: "GeistPixel-Line"
+      font_size: 118
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: tagline
+    z_index: 21
+    anchor: top_left
+    position: { x: 104, y: 612 }
+    text:
+      content: "caduceus · Dr. Staff · winged wire"
+      font_family: "GeistPixel-Square"
+      font_size: 26
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.55 }
+
+  - id: underline_pulse
+    z_index: 19
+    anchor: top_left
+    pos_x: "96 + sin(t * 0.06) * 6"
+    procedural:
+      kind: rounded_rect
+      center: { x: 0.192, y: 0.628 }
+      size: { x: 0.38, y: 0.004 }
+      corner_radius: 0.001
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 0.35 }

@@ -12,7 +12,7 @@ vcr watch <file> -o preview.mov --scale 0.5     # Live reload on changes
 vcr lint <file>                     # Deep lint (unreachable layers)
 vcr dump <file> --frame 30          # Layer states at frame
 vcr params <file> --json            # List parameters
-vcr explain <file> --set speed=2.0  # Resolved manifest state
+vcr explain <file> --set speed=2.0  # Resolved manifest state + backend preflight JSON
 vcr determinism-report <file> --frame 0 --json  # Frame hash
 vcr ascii library                   # List curated ASCII animations
 vcr doctor                          # Verify dependencies

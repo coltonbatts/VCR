@@ -43,6 +43,8 @@ vcr build scene.vcr --set speed=2.0 --set color=#ff0000
 vcr doctor
 ```
 
+Video and still outputs also write a sidecar `*.metadata.json`. The `agent_context` object (when present) lists each layer’s evaluated position, opacity, visibility, and related fields at the **last timeline frame** included in that output—useful for agent iteration after `build`, `render-frame`, or `preview`.
+
 ---
 
 ## Prompt Gate (Agent-First Entry)

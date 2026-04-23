@@ -48,6 +48,7 @@ use vcr::packs::{compile_pack, PackCompileBackend, PackCompileRequest};
 use vcr::play::{run_play, PlayArgs};
 use vcr::prompt_gate::translate_to_standard_prompt;
 use vcr::renderer::Renderer;
+use vcr::renderer::{software_unsupported_layers, SOFTWARE_SUPPORTED_LAYER_TYPES};
 use vcr::schema::{
     AsciiFontVariant, Duration as ManifestDuration, Environment, Layer, Manifest, ParamType,
     ParamValue, ProResProfile, ProceduralSource, Resolution, ScalarProperty,
@@ -1041,7 +1042,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             manifest,
             set,
             json,
-        } => run_explain(&manifest, &set, json),
+        } => run_explain(&manifest, &set, json, cli.backend),
         Commands::Preview {
             manifest,
             output,
@@ -3230,9 +3231,35 @@ fn run_params(manifest_path: &Path, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_explain(manifest_path: &Path, set_values: &[String], json: bool) -> Result<()> {
+fn run_explain(
+    manifest_path: &Path,
+    set_values: &[String],
+    json: bool,
+    requested_backend: BackendArg,
+) -> Result<()> {
     let manifest = load_manifest_with_overrides(manifest_path, set_values)?;
     if json {
+        let unsupported_software_layers = software_unsupported_layers(&manifest.layers)
+            .into_iter()
+            .map(|layer| ExplainUnsupportedLayerJson {
+                id: layer.id.to_owned(),
+                kind: layer.kind.to_owned(),
+            })
+            .collect::<Vec<_>>();
+        let software_compatible = unsupported_software_layers.is_empty();
+        let recommended_backend = if software_compatible {
+            "software"
+        } else {
+            "gpu"
+        };
+        let blockers = if software_compatible {
+            Vec::new()
+        } else {
+            vec![format!(
+                "software backend cannot render {} unsupported layer(s); use --backend gpu or remove/replace them",
+                unsupported_software_layers.len()
+            )]
+        };
         let payload = ExplainJsonOutput {
             manifest: manifest_path.display().to_string(),
             manifest_hash: manifest.manifest_hash.clone(),
@@ -3244,6 +3271,14 @@ fn run_explain(manifest_path: &Path, set_values: &[String], json: bool) -> Resul
             },
             overrides: manifest.applied_param_overrides.clone(),
             resolved_params: manifest.resolved_params.clone(),
+            backend_preflight: ExplainBackendPreflightJson {
+                requested_backend: backend_label(requested_backend),
+                recommended_backend,
+                software_compatible,
+                software_supported_layer_types: &SOFTWARE_SUPPORTED_LAYER_TYPES,
+                unsupported_software_layers,
+                blockers,
+            },
         };
         println!(
             "{}",
@@ -3407,6 +3442,7 @@ fn run_build(
     verify_encoded_output_conformance(output_path, &manifest.environment, quiet)?;
     println!("Wrote {}", output_path.display());
     let metadata_path = metadata_sidecar_for_file(output_path);
+    let agent_frame = (window.count > 0).then(|| window.start_frame + window.count - 1);
     emit_render_metadata(
         &metadata_path,
         &manifest,
@@ -3414,6 +3450,7 @@ fn run_build(
         renderer.backend_name(),
         renderer.backend_reason(),
         window,
+        agent_frame,
     )?;
     println!("Wrote {}", metadata_path.display());
     print_timing_summary(
@@ -3493,10 +3530,8 @@ fn run_render(
             duration_ms: start_time.elapsed().as_millis() as u64,
         };
         println!("{}", serde_json::to_string(&output).unwrap());
-    } else {
-        if determinism_report {
-            run_determinism_report(manifest_path, 0, set_values, false)?;
-        }
+    } else if determinism_report {
+        run_determinism_report(manifest_path, 0, set_values, false)?;
     }
     Ok(())
 }
@@ -3657,6 +3692,7 @@ fn run_preview(
         println!("Wrote {}", output_path.display());
     }
 
+    let agent_frame = (window.count > 0).then(|| window.start_frame + window.count - 1);
     emit_render_metadata(
         &metadata_path,
         &manifest,
@@ -3664,6 +3700,7 @@ fn run_preview(
         renderer.backend_name(),
         renderer.backend_reason(),
         window,
+        agent_frame,
     )?;
     println!("Wrote {}", metadata_path.display());
 
@@ -3770,6 +3807,7 @@ fn run_preview_sample_frames(
         start_frame: *frame_indices.first().unwrap_or(&0),
         count: frame_indices.len() as u32,
     };
+    let agent_frame = frame_indices.last().copied();
     emit_render_metadata(
         &metadata_path,
         &manifest,
@@ -3777,6 +3815,7 @@ fn run_preview_sample_frames(
         renderer.backend_name(),
         renderer.backend_reason(),
         window,
+        agent_frame,
     )?;
     println!("Wrote {}", metadata_path.display());
 
@@ -3791,6 +3830,14 @@ fn run_preview_sample_frames(
     );
 
     Ok(())
+}
+
+fn backend_label(backend: BackendArg) -> &'static str {
+    match backend {
+        BackendArg::Auto => "auto",
+        BackendArg::Software => "software",
+        BackendArg::Gpu => "gpu",
+    }
 }
 
 fn sampled_frame_indices(total_frames: u32, requested: u32) -> Vec<u32> {
@@ -3929,6 +3976,7 @@ fn run_render_frame(
         renderer.backend_name(),
         renderer.backend_reason(),
         window,
+        Some(frame_index),
     )?;
     println!("Wrote {}", metadata_path.display());
     print_timing_summary(
@@ -4010,6 +4058,7 @@ fn run_render_frames(
 
     println!("Wrote {} frames to {}", window.count, output_dir.display());
     let metadata_path = metadata_sidecar_for_directory(output_dir, "frames");
+    let agent_frame = (window.count > 0).then(|| window.start_frame + window.count - 1);
     emit_render_metadata(
         &metadata_path,
         &manifest,
@@ -4017,6 +4066,7 @@ fn run_render_frames(
         renderer.backend_name(),
         renderer.backend_reason(),
         window,
+        agent_frame,
     )?;
     println!("Wrote {}", metadata_path.display());
     print_timing_summary(
@@ -4220,12 +4270,29 @@ struct ExplainEnvironmentJson {
 }
 
 #[derive(Debug, Serialize)]
+struct ExplainUnsupportedLayerJson {
+    id: String,
+    kind: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ExplainBackendPreflightJson {
+    requested_backend: &'static str,
+    recommended_backend: &'static str,
+    software_compatible: bool,
+    software_supported_layer_types: &'static [&'static str],
+    unsupported_software_layers: Vec<ExplainUnsupportedLayerJson>,
+    blockers: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct ExplainJsonOutput {
     manifest: String,
     manifest_hash: String,
     environment: ExplainEnvironmentJson,
     overrides: BTreeMap<String, ParamValue>,
     resolved_params: BTreeMap<String, ParamValue>,
+    backend_preflight: ExplainBackendPreflightJson,
 }
 
 #[derive(Debug, Clone)]
@@ -4333,6 +4400,8 @@ fn compute_render_manifest_hash(
     Ok(format!("{:016x}", fnv1a64(&encoded)))
 }
 
+// `agent_context_timeline_frame`: timeline index for `agent_context.layers_rendered` (usually the
+// last frame written). `None` omits `agent_context` (e.g. zero-frame windows).
 fn emit_render_metadata(
     metadata_path: &Path,
     manifest: &Manifest,
@@ -4340,6 +4409,7 @@ fn emit_render_metadata(
     backend_name: &str,
     backend_reason: &str,
     window: FrameWindow,
+    agent_context_timeline_frame: Option<u32>,
 ) -> Result<()> {
     if let Some(parent) = metadata_path.parent() {
         fs::create_dir_all(parent)
@@ -4353,6 +4423,21 @@ fn emit_render_metadata(
         &manifest.applied_param_overrides,
         window,
     )?;
+
+    let agent_context = match agent_context_timeline_frame {
+        Some(frame_index) => {
+            let states = evaluate_manifest_layers_at_frame(manifest, frame_index)
+                .context("failed to evaluate manifest layers for render metadata agent_context")?;
+            Some(
+                vcr::agent_metadata::AgentContextMetadata::from_layer_states(
+                    &states,
+                    manifest.manifest_hash.clone(),
+                    manifest.resolved_params.clone(),
+                ),
+            )
+        }
+        None => None,
+    };
 
     let metadata = RenderMetadata {
         manifest_hash: render_manifest_hash,
@@ -4370,7 +4455,7 @@ fn emit_render_metadata(
         end_frame: window.start_frame + window.count.saturating_sub(1),
         resolved_params: manifest.resolved_params.clone(),
         overrides: manifest.applied_param_overrides.clone(),
-        agent_context: None, // TODO: Populate with actual layer states from final frame
+        agent_context,
     };
 
     let payload =
