@@ -137,7 +137,7 @@ Notes:
 ## Minimal Param Example
 
 ```yaml
-version: 1
+version: 2          # t is seconds; see docs/PARAMS.md "Time Model"
 environment:
   resolution: { width: 1280, height: 720 }
   fps: 24
@@ -161,6 +161,11 @@ layers:
       end_color: { r: 0.05, g: 0.06, b: 0.08, a: 1.0 }
       direction: vertical
 ```
+
+Time: with `version: 2`, expressions see `t` (layer-local seconds), `frame`, and `fps`, so
+animation speed does not depend on `environment.fps`. Manifests without a version (or with
+`version: 1`) keep the legacy frame-based `t` and render exactly as before. See
+`docs/PARAMS.md` for the full time model.
 
 Override at runtime:
 

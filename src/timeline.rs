@@ -4,11 +4,13 @@ use anyhow::{anyhow, bail, Context, Result};
 
 use crate::schema::{
     ExpressionContext, Group, LayerCommon, Manifest, ModulatorBinding, ModulatorMap, Parameters,
-    PropertyValue, ScalarProperty, TimingControls, Vec2,
+    PropertyValue, ScalarProperty, TimeBase, TimingControls, Vec2,
 };
 
 #[derive(Debug, Clone, Default)]
 pub struct RenderSceneData {
+    /// Manifest version; selects the time model (see `TimeBase::for_manifest_version`).
+    pub version: u32,
     pub seed: u64,
     pub params: Parameters,
     pub modulators: ModulatorMap,
@@ -18,11 +20,16 @@ pub struct RenderSceneData {
 impl RenderSceneData {
     pub fn from_manifest(manifest: &Manifest) -> Self {
         Self {
+            version: manifest.version,
             seed: manifest.seed,
             params: manifest.params.clone(),
             modulators: manifest.modulators.clone(),
             groups: manifest.groups.clone(),
         }
+    }
+
+    pub fn time_base(&self, fps: u32) -> TimeBase {
+        TimeBase::for_manifest_version(self.version, fps)
     }
 }
 
@@ -78,7 +85,7 @@ pub fn evaluate_manifest_layers_at_frame(
             &common.modulators,
             &group_chain,
             frame_index,
-            manifest.environment.fps,
+            manifest.time_base(),
             &scene.params,
             scene.seed,
             &scene.modulators,
@@ -154,6 +161,36 @@ pub(crate) fn resolve_group_chain(
     Ok(chain)
 }
 
+/// Layer-local frame for `frame_index` after group and layer timing remaps, or `None`
+/// when the layer (or one of its groups) is outside its active window.
+pub(crate) fn layer_local_frame(
+    timing: TimingControls,
+    group_chain: &[Group],
+    frame_index: u32,
+    time_base: TimeBase,
+) -> Option<f32> {
+    let mut frame = frame_index as f32;
+    for group in group_chain {
+        frame = group.timing_controls().remap_frame(frame, time_base.fps)?;
+    }
+    timing.remap_frame(frame, time_base.fps)
+}
+
+/// Frame at which a layer's source content (procedural shapes, shader uniforms, ascii
+/// reveals) is evaluated. Version 1 used the global frame; version 2 uses layer-local time.
+pub(crate) fn layer_source_frame(
+    timing: TimingControls,
+    group_chain: &[Group],
+    frame_index: u32,
+    time_base: TimeBase,
+) -> Option<f32> {
+    if time_base.sources_use_local_time() {
+        layer_local_frame(timing, group_chain, frame_index, time_base)
+    } else {
+        Some(frame_index as f32)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_layer_state(
     layer_id: &str,
@@ -167,7 +204,7 @@ pub(crate) fn evaluate_layer_state(
     layer_modulators: &[ModulatorBinding],
     group_chain: &[Group],
     frame_index: u32,
-    fps: u32,
+    time_base: TimeBase,
     params: &Parameters,
     seed: u64,
     modulator_defs: &ModulatorMap,
@@ -179,16 +216,16 @@ pub(crate) fn evaluate_layer_state(
     let mut combined_opacity = 1.0;
 
     for group in group_chain {
-        frame = match group.timing_controls().remap_frame(frame, fps) {
+        frame = match group.timing_controls().remap_frame(frame, time_base.fps) {
             Some(mapped) => mapped,
             None => return Ok(None),
         };
 
-        let context = ExpressionContext::new(frame, params, seed);
+        let context = ExpressionContext::new(frame, time_base, params, seed);
         let mut group_position = group
-            .sample_position_with_context(frame, &context)
+            .sample_position_with_context(&context)
             .with_context(|| format!("group '{}' failed to evaluate position", group.id))?;
-        let mut group_scale = group.scale.sample_at(frame);
+        let mut group_scale = group.scale.sample(&context);
         let mut group_rotation = group
             .rotation_degrees
             .evaluate_with_context(&context)
@@ -217,20 +254,20 @@ pub(crate) fn evaluate_layer_state(
         combined_opacity *= group_opacity;
     }
 
-    frame = match timing.remap_frame(frame, fps) {
+    frame = match timing.remap_frame(frame, time_base.fps) {
         Some(mapped) => mapped,
         None => return Ok(None),
     };
-    let context = ExpressionContext::new(frame, params, seed);
+    let context = ExpressionContext::new(frame, time_base, params, seed);
 
-    let mut layer_position = position.sample_at(frame);
+    let mut layer_position = position.sample(&context);
     if let Some(x) = position_x {
         layer_position.x = x.evaluate_with_context(&context)?;
     }
     if let Some(y) = position_y {
         layer_position.y = y.evaluate_with_context(&context)?;
     }
-    let mut layer_scale = scale.sample_at(frame);
+    let mut layer_scale = scale.sample(&context);
     let mut layer_rotation = rotation_degrees.evaluate_with_context(&context)?;
     let mut layer_opacity = opacity.evaluate_with_context(&context)?;
 
@@ -287,7 +324,7 @@ pub(crate) fn evaluate_layer_state_or_hidden(
     layer_modulators: &[ModulatorBinding],
     group_chain: &[Group],
     frame_index: u32,
-    fps: u32,
+    time_base: TimeBase,
     params: &Parameters,
     seed: u64,
     modulator_defs: &ModulatorMap,
@@ -304,7 +341,7 @@ pub(crate) fn evaluate_layer_state_or_hidden(
         layer_modulators,
         group_chain,
         frame_index,
-        fps,
+        time_base,
         params,
         seed,
         modulator_defs,
@@ -453,7 +490,7 @@ layers:
             &common.modulators,
             &group_chain,
             0,
-            manifest.environment.fps,
+            manifest.time_base(),
             &manifest.params,
             manifest.seed,
             &manifest.modulators,

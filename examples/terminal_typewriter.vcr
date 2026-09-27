@@ -1,3 +1,4 @@
+version: 2
 environment:
   resolution:
     width: 1920

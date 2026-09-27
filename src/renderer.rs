@@ -19,10 +19,10 @@ use crate::schema::{
     Anchor, AnimatableColor, AsciiLayer, AssetLayer, ColorRgba, Environment, ExpressionContext,
     GradientDirection, Group, ImageLayer, Layer, LayerCommon, ModulatorBinding, ModulatorMap,
     Parameters, ProceduralLayer, ProceduralSource, PropertyValue, ScalarProperty, ShaderLayer,
-    TextLayer, TimingControls, Vec2,
+    TextLayer, TimeBase, TimingControls, Vec2,
 };
 use crate::timeline::{
-    evaluate_layer_state, evaluate_layer_state_or_hidden, resolve_group_chain,
+    evaluate_layer_state, evaluate_layer_state_or_hidden, layer_source_frame, resolve_group_chain,
     resolve_groups_by_id, RenderSceneData,
 };
 
@@ -370,7 +370,7 @@ struct GpuRenderer {
     queue: Arc<wgpu::Queue>,
     width: u32,
     height: u32,
-    fps: u32,
+    time_base: TimeBase,
     seed: u64,
     params: Parameters,
     modulators: ModulatorMap,
@@ -519,7 +519,7 @@ enum RendererBackend {
 struct SoftwareRenderer {
     width: u32,
     height: u32,
-    fps: u32,
+    time_base: TimeBase,
     seed: u64,
     params: Parameters,
     modulators: ModulatorMap,
@@ -577,6 +577,7 @@ impl GpuRenderer {
     ) -> Result<Self> {
         let width = environment.resolution.width;
         let height = environment.resolution.height;
+        let time_base = scene.time_base(environment.fps);
         let groups_by_id = resolve_groups_by_id(&scene.groups);
         let device = context.device.clone();
         let queue = context.queue.clone();
@@ -771,7 +772,7 @@ impl GpuRenderer {
                     &scene.params,
                     &scene.modulators,
                     scene.seed,
-                    environment.fps,
+                    time_base,
                 )?,
                 Layer::Image(image_layer) => build_image_layer(
                     &device,
@@ -785,7 +786,7 @@ impl GpuRenderer {
                     &scene.params,
                     &scene.modulators,
                     scene.seed,
-                    environment.fps,
+                    time_base,
                 )?,
                 Layer::Procedural(procedural_layer) => build_procedural_layer(
                     &device,
@@ -800,7 +801,7 @@ impl GpuRenderer {
                     &scene.params,
                     &scene.modulators,
                     scene.seed,
-                    environment.fps,
+                    time_base,
                 )?,
                 Layer::Shader(shader_layer) => build_shader_layer(
                     &device,
@@ -814,7 +815,7 @@ impl GpuRenderer {
                     &scene.params,
                     &scene.modulators,
                     scene.seed,
-                    environment.fps,
+                    time_base,
                 )?,
                 Layer::Text(text_layer) => build_text_layer(
                     &device,
@@ -828,7 +829,7 @@ impl GpuRenderer {
                     &scene.params,
                     &scene.modulators,
                     scene.seed,
-                    environment.fps,
+                    time_base,
                 )?,
                 Layer::Ascii(ascii_layer) => build_ascii_layer(
                     &device,
@@ -842,7 +843,7 @@ impl GpuRenderer {
                     &scene.params,
                     &scene.modulators,
                     scene.seed,
-                    environment.fps,
+                    time_base,
                 )?,
             };
             gpu_layers.push(gpu_layer);
@@ -856,7 +857,7 @@ impl GpuRenderer {
             queue,
             width,
             height,
-            fps: environment.fps,
+            time_base,
             seed: scene.seed,
             params: scene.params.clone(),
             modulators: scene.modulators.clone(),
@@ -969,7 +970,7 @@ impl GpuRenderer {
                     &self.queue,
                     self.width,
                     self.height,
-                    self.fps,
+                    self.time_base,
                     self.seed,
                     &self.params,
                     &self.modulators,
@@ -1042,8 +1043,17 @@ impl GpuRenderer {
         frame_index: u32,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<()> {
-        let context = ExpressionContext::new(frame_index as f32, &self.params, self.seed);
         for layer in &mut self.layers {
+            let Some(source_frame) = layer_source_frame(
+                layer.timing,
+                &layer.group_chain,
+                frame_index,
+                self.time_base,
+            ) else {
+                continue;
+            };
+            let context =
+                ExpressionContext::new(source_frame, self.time_base, &self.params, self.seed);
             let GpuLayerSource::Procedural(procedural) = &mut layer.source else {
                 continue;
             };
@@ -1088,8 +1098,17 @@ impl GpuRenderer {
         }
 
         // Shader layers
-        let fps = self.fps;
         for layer in &mut self.layers {
+            let Some(source_frame) = layer_source_frame(
+                layer.timing,
+                &layer.group_chain,
+                frame_index,
+                self.time_base,
+            ) else {
+                continue;
+            };
+            let context =
+                ExpressionContext::new(source_frame, self.time_base, &self.params, self.seed);
             let GpuLayerSource::Shader(shader) = &mut layer.source else {
                 continue;
             };
@@ -1099,14 +1118,14 @@ impl GpuRenderer {
                 continue;
             }
 
-            let time = frame_index as f32 / fps as f32;
+            let time = context.seconds();
             let mut custom = [0.0_f32; 8];
             for (i, prop) in shader.uniforms.iter().enumerate() {
                 custom[i] = prop.evaluate_with_context(&context)?;
             }
             let uniform = ShaderUniform {
                 time,
-                frame: frame_index,
+                frame: source_frame.max(0.0).floor() as u32,
                 resolution: [self.width as f32, self.height as f32],
                 custom,
             };
@@ -1139,6 +1158,14 @@ impl GpuRenderer {
 
         // ASCII layers
         for layer in &mut self.layers {
+            let Some(source_frame) = layer_source_frame(
+                layer.timing,
+                &layer.group_chain,
+                frame_index,
+                self.time_base,
+            ) else {
+                continue;
+            };
             let GpuLayerSource::Ascii(ascii) = &mut layer.source else {
                 continue;
             };
@@ -1148,7 +1175,9 @@ impl GpuRenderer {
                 continue;
             }
 
-            let pixmap = ascii.prepared.render_frame_pixmap(frame_index)?;
+            let pixmap = ascii
+                .prepared
+                .render_frame_pixmap(source_frame.max(0.0).floor() as u32)?;
             queue_write_pixmap_texture(
                 &self.queue,
                 &ascii.texture,
@@ -1285,6 +1314,7 @@ impl Renderer {
 impl SoftwareRenderer {
     fn new(environment: &Environment, layers: &[Layer], scene: &RenderSceneData) -> Result<Self> {
         let width = environment.resolution.width;
+        let time_base = scene.time_base(environment.fps);
         let height = environment.resolution.height;
         let groups_by_id = resolve_groups_by_id(&scene.groups);
         let mut software_layers = Vec::with_capacity(layers.len());
@@ -1347,7 +1377,7 @@ impl SoftwareRenderer {
         Ok(Self {
             width,
             height,
-            fps: environment.fps,
+            time_base,
             seed: scene.seed,
             params: scene.params.clone(),
             modulators: scene.modulators.clone(),
@@ -1387,7 +1417,7 @@ impl SoftwareRenderer {
             &layer.modulators,
             &layer.group_chain,
             frame_index,
-            self.fps,
+            self.time_base,
             &self.params,
             self.seed,
             &self.modulators,
@@ -1408,12 +1438,22 @@ impl SoftwareRenderer {
             layer.anchor,
         );
 
+        let Some(source_frame) = layer_source_frame(
+            layer.timing,
+            &layer.group_chain,
+            frame_index,
+            self.time_base,
+        ) else {
+            return Ok(());
+        };
+
         match &layer.source {
             SoftwareLayerSource::Asset { pixmap } => {
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
             }
             SoftwareLayerSource::Procedural(source) => {
-                let context = ExpressionContext::new(frame_index as f32, &self.params, self.seed);
+                let context =
+                    ExpressionContext::new(source_frame, self.time_base, &self.params, self.seed);
                 let procedural =
                     render_procedural_pixmap(source, self.width, self.height, &context)?;
                 draw_layer_pixmap(output, procedural.as_ref(), opacity, transform);
@@ -1425,7 +1465,7 @@ impl SoftwareRenderer {
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
             }
             SoftwareLayerSource::Ascii { prepared } => {
-                let pixmap = prepared.render_frame_pixmap(frame_index)?;
+                let pixmap = prepared.render_frame_pixmap(source_frame.max(0.0).floor() as u32)?;
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
             }
         }
@@ -1446,7 +1486,7 @@ fn build_asset_layer(
     params: &Parameters,
     modulators: &ModulatorMap,
     seed: u64,
-    fps: u32,
+    time_base: TimeBase,
 ) -> Result<GpuLayer> {
     build_bitmap_layer(
         device,
@@ -1461,7 +1501,7 @@ fn build_asset_layer(
         params,
         modulators,
         seed,
-        fps,
+        time_base,
     )
 }
 
@@ -1477,7 +1517,7 @@ fn build_image_layer(
     params: &Parameters,
     modulators: &ModulatorMap,
     seed: u64,
-    fps: u32,
+    time_base: TimeBase,
 ) -> Result<GpuLayer> {
     build_bitmap_layer(
         device,
@@ -1492,7 +1532,7 @@ fn build_image_layer(
         params,
         modulators,
         seed,
-        fps,
+        time_base,
     )
 }
 
@@ -1509,7 +1549,7 @@ fn build_bitmap_layer(
     params: &Parameters,
     modulators: &ModulatorMap,
     seed: u64,
-    fps: u32,
+    time_base: TimeBase,
 ) -> Result<GpuLayer> {
     let image = load_rgba_image(image_path, &common.id)?;
     let (layer_width, layer_height) = image.dimensions();
@@ -1568,7 +1608,7 @@ fn build_bitmap_layer(
         &common.modulators,
         &group_chain,
         0,
-        fps,
+        time_base,
         params,
         seed,
         modulators,
@@ -1630,7 +1670,7 @@ fn build_procedural_layer(
     params: &Parameters,
     modulators: &ModulatorMap,
     seed: u64,
-    fps: u32,
+    time_base: TimeBase,
 ) -> Result<GpuLayer> {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(&format!("vcr-procedural-layer-{}", layer.common.id)),
@@ -1648,7 +1688,7 @@ fn build_procedural_layer(
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let init_context = ExpressionContext::new(0.0, params, seed);
+    let init_context = ExpressionContext::new(0.0, time_base, params, seed);
     let uniform = evaluate_procedural_uniform(&layer.procedural, &init_context)?;
     let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("vcr-procedural-uniform-{}", layer.common.id)),
@@ -1677,7 +1717,7 @@ fn build_procedural_layer(
         &layer.common.modulators,
         &group_chain,
         0,
-        fps,
+        time_base,
         params,
         seed,
         modulators,
@@ -1823,7 +1863,7 @@ fn refresh_layer_draw_state(
     queue: &wgpu::Queue,
     frame_width: u32,
     frame_height: u32,
-    fps: u32,
+    time_base: TimeBase,
     seed: u64,
     params: &Parameters,
     modulators: &ModulatorMap,
@@ -1842,7 +1882,7 @@ fn refresh_layer_draw_state(
         &layer.modulators,
         &layer.group_chain,
         frame_index,
-        fps,
+        time_base,
         params,
         seed,
         modulators,
@@ -2738,7 +2778,7 @@ fn build_shader_layer(
     params: &Parameters,
     modulators: &ModulatorMap,
     seed: u64,
-    fps: u32,
+    time_base: TimeBase,
 ) -> Result<GpuLayer> {
     // Load shader source
     let user_fragment = if let Some(fragment) = &layer.shader.fragment {
@@ -2832,7 +2872,7 @@ fn build_shader_layer(
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     // Create uniform buffer
-    let init_context = ExpressionContext::new(0.0, params, seed);
+    let init_context = ExpressionContext::new(0.0, time_base, params, seed);
     let mut custom = [0.0_f32; 8];
     let uniform_props: Vec<ScalarProperty> = layer.shader.uniforms.values().cloned().collect();
     for (i, prop) in uniform_props.iter().enumerate() {
@@ -2874,7 +2914,7 @@ fn build_shader_layer(
         &layer.common.modulators,
         &group_chain,
         0,
-        fps,
+        time_base,
         params,
         seed,
         modulators,
@@ -2949,7 +2989,7 @@ fn build_text_layer(
     params: &Parameters,
     modulators: &ModulatorMap,
     seed: u64,
-    fps: u32,
+    time_base: TimeBase,
 ) -> Result<GpuLayer> {
     let pixmap = render_text_to_pixmap(layer)?;
     let (layer_width, layer_height) = (pixmap.width(), pixmap.height());
@@ -3007,7 +3047,7 @@ fn build_text_layer(
         &layer.common.modulators,
         &group_chain,
         0,
-        fps,
+        time_base,
         params,
         seed,
         modulators,
@@ -3070,7 +3110,7 @@ fn build_ascii_layer(
     params: &Parameters,
     modulators: &ModulatorMap,
     seed: u64,
-    fps: u32,
+    time_base: TimeBase,
 ) -> Result<GpuLayer> {
     let prepared = PreparedAsciiLayer::new(&layer.ascii, &layer.common.id)?;
     let layer_width = prepared.pixel_width();
@@ -3111,7 +3151,7 @@ fn build_ascii_layer(
         &layer.common.modulators,
         &group_chain,
         0,
-        fps,
+        time_base,
         params,
         seed,
         modulators,

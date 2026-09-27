@@ -44,6 +44,41 @@ Notes:
 - Shell quoting is handled by the shell. VCR receives already-tokenized strings and does not implement shell parsing.
 - Bounds (`min`, `max`) apply to numeric param types (`float`, `int`, and expression-scalar bool/int/float forms).
 
+## Time Model (manifest `version`)
+
+The manifest `version` selects what "time" means. New manifests should use `version: 2`.
+
+| | `version: 1` (default, legacy) | `version: 2` |
+|---|---|---|
+| expression `t` | layer-local **frame number** | layer-local **seconds** |
+| expression `frame` | layer-local frame number | layer-local frame number |
+| expression `fps` | `environment.fps` | `environment.fps` |
+| `env(t)` default attack / decay | 12 / 24 (frames) | 0.5 / 1.0 (seconds) |
+| procedural colors/radii, shader uniforms, ascii reveal | evaluated at the **global** frame | evaluated at **layer-local** time |
+| params named `frame` / `fps` | allowed (param value wins) | rejected (reserved) |
+
+Why it matters: in `version: 1`, `pos_x: "100 + t * 50"` moves 50 px *per frame*, so the
+same manifest plays 2.5x faster in wall-clock time at 60fps than at 24fps. In `version: 2`
+it moves 50 px per second at any frame rate. `version: 1` manifests render byte-identically
+to earlier VCR releases; nothing changes unless you opt in.
+
+"Layer-local" means after group and layer timing controls: `local = (global + time_offset) * time_scale`,
+applied from the outermost group inward. `start_time` / `end_time` are visibility windows
+in global seconds and do not shift local time.
+
+Tips for `version: 2`:
+
+- Per-frame randomness: `random(frame)` (not `random(t)`, which changes once per second).
+- `step(0.5, fract(t * 2))` blinks at 2 Hz. In `version: 1` it is always 0 because `t` is an integer frame.
+- Keyframe mappings accept `start_time`/`end_time` (seconds) as well as `start_frame`/`end_frame`:
+  `opacity: { start_time: 0.5, end_time: 1.5, from: 0, to: 1, easing: ease_out }`.
+  A mapping must use one pair or the other, not a mix.
+
+Migrating a `version: 1` manifest: add `version: 2`, then divide the time constants in
+expressions by `fps` (for example `smoothstep(24, 48, t)` becomes `smoothstep(1, 2, t)` at 24fps).
+`start_frame`/`end_frame` keyframes keep working unchanged in both versions because they
+are explicit frame numbers.
+
 ## Substitution (`${param_name}`)
 
 Substitution is intentionally strict and deterministic.

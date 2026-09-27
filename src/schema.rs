@@ -9,8 +9,74 @@ pub type Parameters = BTreeMap<String, f32>;
 pub type ModulatorMap = BTreeMap<String, ModulatorDefinition>;
 
 const DEFAULT_MANIFEST_VERSION: u32 = 1;
-const DEFAULT_ENV_ATTACK: f32 = 12.0;
-const DEFAULT_ENV_DECAY: f32 = 24.0;
+/// First manifest version where expression `t` and keyframe times are in seconds.
+pub const SECONDS_TIME_MANIFEST_VERSION: u32 = 2;
+const LATEST_MANIFEST_VERSION: u32 = SECONDS_TIME_MANIFEST_VERSION;
+const DEFAULT_ENV_ATTACK_FRAMES: f32 = 12.0;
+const DEFAULT_ENV_DECAY_FRAMES: f32 = 24.0;
+const DEFAULT_ENV_ATTACK_SECONDS: f32 = 0.5;
+const DEFAULT_ENV_DECAY_SECONDS: f32 = 1.0;
+/// Names that expressions resolve as time builtins. In version 2 manifests they are
+/// reserved; in version 1 a param with the same name wins for `frame`/`fps` so that
+/// legacy manifests keep their meaning.
+const TIME_BUILTINS: [&str; 3] = ["t", "frame", "fps"];
+
+/// Unit that expression `t` is measured in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeUnit {
+    /// Version 1: `t` is the (layer-local) frame number, so animation speed depends on fps.
+    Frames,
+    /// Version 2+: `t` is (layer-local) seconds, so animation is fps-independent.
+    Seconds,
+}
+
+/// Everything needed to turn a frame index into expression/keyframe time.
+///
+/// All evaluation happens on a layer-local frame (after group/layer timing remaps);
+/// `TimeBase` decides how that frame is exposed to expressions and how keyframe times
+/// expressed in seconds are mapped onto it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimeBase {
+    pub fps: u32,
+    pub unit: TimeUnit,
+}
+
+impl TimeBase {
+    pub fn for_manifest_version(version: u32, fps: u32) -> Self {
+        let unit = if version >= SECONDS_TIME_MANIFEST_VERSION {
+            TimeUnit::Seconds
+        } else {
+            TimeUnit::Frames
+        };
+        Self { fps, unit }
+    }
+
+    pub fn legacy_frames(fps: u32) -> Self {
+        Self {
+            fps,
+            unit: TimeUnit::Frames,
+        }
+    }
+
+    pub fn seconds(fps: u32) -> Self {
+        Self {
+            fps,
+            unit: TimeUnit::Seconds,
+        }
+    }
+
+    pub fn fps_f32(self) -> f32 {
+        self.fps.max(1) as f32
+    }
+
+    /// Version 2 evaluates procedural/shader/ascii source animation in layer-local time
+    /// (honouring start_time/time_offset/time_scale and group timing). Version 1 kept the
+    /// historical behaviour of evaluating sources at the global frame.
+    pub fn sources_use_local_time(self) -> bool {
+        self.unit == TimeUnit::Seconds
+    }
+}
 const MAX_RESOLUTION: u32 = 8192;
 const MAX_FRAME_COUNT: u32 = 100_000;
 
@@ -77,6 +143,17 @@ pub struct Manifest {
     pub applied_param_overrides: BTreeMap<String, ParamValue>,
     #[serde(skip)]
     pub manifest_hash: String,
+}
+
+impl Manifest {
+    pub fn time_base(&self) -> TimeBase {
+        TimeBase::for_manifest_version(self.version, self.environment.fps)
+    }
+
+    /// Context used to probe expressions at time zero during validation.
+    pub fn probe_context(&self) -> ExpressionContext<'_> {
+        ExpressionContext::new(0.0, self.time_base(), &self.params, self.seed)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -264,13 +341,12 @@ pub struct ModulatorDefinition {
 }
 
 impl ModulatorDefinition {
-    fn validate(&self, name: &str, params: &Parameters, seed: u64) -> Result<()> {
-        let context = ExpressionContext::new(0.0, params, seed);
-        let probe = self
+    fn validate(&self, name: &str, probe: &ExpressionContext<'_>) -> Result<()> {
+        let value = self
             .expression
-            .evaluate_with_context(&context)
+            .evaluate_with_context(probe)
             .map_err(|error| anyhow!("modulator '{name}': {error}"))?;
-        validate_number(&format!("modulator '{name}' expression result"), probe)
+        validate_number(&format!("modulator '{name}' expression result"), value)
     }
 }
 
@@ -394,12 +470,7 @@ impl Group {
         }
     }
 
-    pub fn validate(
-        &self,
-        params: &Parameters,
-        seed: u64,
-        modulators: &ModulatorMap,
-    ) -> Result<()> {
+    pub fn validate(&self, probe: &ExpressionContext<'_>, modulators: &ModulatorMap) -> Result<()> {
         if self.id.trim().is_empty() {
             bail!("group id cannot be empty");
         }
@@ -419,22 +490,22 @@ impl Group {
             .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
         if let Some(position_x) = &self.pos_x {
             position_x
-                .validate_with_context("pos_x", params, seed)
+                .validate_with_context("pos_x", probe)
                 .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
         }
         if let Some(position_y) = &self.pos_y {
             position_y
-                .validate_with_context("pos_y", params, seed)
+                .validate_with_context("pos_y", probe)
                 .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
         }
         self.scale
             .validate("scale")
             .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
         self.rotation_degrees
-            .validate_with_context("rotation_degrees", params, seed)
+            .validate_with_context("rotation_degrees", probe)
             .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
         self.opacity
-            .validate_with_context("opacity", params, seed)
+            .validate_with_context("opacity", probe)
             .map_err(|error| anyhow!("group '{}': {error}", self.id))?;
         self.timing_controls()
             .validate("timing")
@@ -460,17 +531,13 @@ impl Group {
             && self.timing_controls().is_default()
     }
 
-    pub fn sample_position_with_context(
-        &self,
-        frame: f32,
-        context: &ExpressionContext<'_>,
-    ) -> Result<Vec2> {
-        let mut position = self.position.sample_at(frame);
+    pub fn sample_position_with_context(&self, context: &ExpressionContext<'_>) -> Result<Vec2> {
+        let mut position = self.position.sample(context);
         if let Some(pos_x) = &self.pos_x {
-            position.x = pos_x.evaluate_with_context(&context.with_time(frame))?;
+            position.x = pos_x.evaluate_with_context(context)?;
         }
         if let Some(pos_y) = &self.pos_y {
-            position.y = pos_y.evaluate_with_context(&context.with_time(frame))?;
+            position.y = pos_y.evaluate_with_context(context)?;
         }
         Ok(position)
     }
@@ -525,8 +592,7 @@ pub struct LayerCommon {
 impl LayerCommon {
     pub fn validate_with_context(
         &self,
-        params: &Parameters,
-        seed: u64,
+        probe: &ExpressionContext<'_>,
         modulators: &ModulatorMap,
     ) -> Result<()> {
         if self.id.trim().is_empty() {
@@ -548,22 +614,22 @@ impl LayerCommon {
             .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
         if let Some(position_x) = &self.pos_x {
             position_x
-                .validate_with_context("pos_x", params, seed)
+                .validate_with_context("pos_x", probe)
                 .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
         }
         if let Some(position_y) = &self.pos_y {
             position_y
-                .validate_with_context("pos_y", params, seed)
+                .validate_with_context("pos_y", probe)
                 .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
         }
         self.scale
             .validate("scale")
             .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
         self.rotation_degrees
-            .validate_with_context("rotation_degrees", params, seed)
+            .validate_with_context("rotation_degrees", probe)
             .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
         self.opacity
-            .validate_with_context("opacity", params, seed)
+            .validate_with_context("opacity", probe)
             .map_err(|error| anyhow!("layer '{}': {error}", self.id))?;
         self.timing_controls()
             .validate("timing")
@@ -730,19 +796,13 @@ impl Layer {
         }
     }
 
-    pub fn validate(
-        &self,
-        params: &Parameters,
-        seed: u64,
-        modulators: &ModulatorMap,
-    ) -> Result<()> {
-        self.common()
-            .validate_with_context(params, seed, modulators)?;
+    pub fn validate(&self, probe: &ExpressionContext<'_>, modulators: &ModulatorMap) -> Result<()> {
+        self.common().validate_with_context(probe, modulators)?;
         match self {
             Self::Asset(layer) => layer.validate(),
             Self::Image(layer) => layer.validate(),
-            Self::Procedural(layer) => layer.validate(params, seed),
-            Self::Shader(layer) => layer.validate(params, seed),
+            Self::Procedural(layer) => layer.validate(probe),
+            Self::Shader(layer) => layer.validate(probe),
             Self::Text(layer) => layer.validate(),
             Self::Ascii(layer) => layer.validate(),
         }
@@ -1134,7 +1194,7 @@ pub struct ShaderSource {
 }
 
 impl ShaderLayer {
-    fn validate(&self, params: &Parameters, seed: u64) -> Result<()> {
+    fn validate(&self, probe: &ExpressionContext<'_>) -> Result<()> {
         let label = format!("layer '{}'", self.common.id);
         match (&self.shader.fragment, &self.shader.path) {
             (Some(_), None) | (None, Some(_)) => {}
@@ -1147,16 +1207,16 @@ impl ShaderLayer {
             bail!("{label}: shader supports at most 8 custom uniforms");
         }
         for (name, prop) in &self.shader.uniforms {
-            prop.validate_with_context(&format!("{label}.uniforms.{name}"), params, seed)?;
+            prop.validate_with_context(&format!("{label}.uniforms.{name}"), probe)?;
         }
         Ok(())
     }
 }
 
 impl ProceduralLayer {
-    fn validate(&self, params: &Parameters, seed: u64) -> Result<()> {
+    fn validate(&self, probe: &ExpressionContext<'_>) -> Result<()> {
         self.procedural
-            .validate(params, seed)
+            .validate(probe)
             .map_err(|error| anyhow!("layer '{}': {error}", self.common.id))
     }
 }
@@ -1211,29 +1271,29 @@ pub enum ProceduralSource {
 }
 
 impl ProceduralSource {
-    fn validate(&self, params: &Parameters, seed: u64) -> Result<()> {
+    fn validate(&self, probe: &ExpressionContext<'_>) -> Result<()> {
         match self {
-            Self::SolidColor { color } => color.validate("color", params, seed),
+            Self::SolidColor { color } => color.validate("color", probe),
             Self::Gradient {
                 start_color,
                 end_color,
                 ..
             } => {
-                start_color.validate("start_color", params, seed)?;
-                end_color.validate("end_color", params, seed)
+                start_color.validate("start_color", probe)?;
+                end_color.validate("end_color", probe)
             }
-            Self::Triangle { color, .. } => color.validate("color", params, seed),
+            Self::Triangle { color, .. } => color.validate("color", probe),
             Self::Circle { radius, color, .. } => {
-                radius.validate_with_context("radius", params, seed)?;
-                color.validate("color", params, seed)
+                radius.validate_with_context("radius", probe)?;
+                color.validate("color", probe)
             }
             Self::RoundedRect {
                 corner_radius,
                 color,
                 ..
             } => {
-                corner_radius.validate_with_context("corner_radius", params, seed)?;
-                color.validate("color", params, seed)
+                corner_radius.validate_with_context("corner_radius", probe)?;
+                color.validate("color", probe)
             }
             Self::Ring {
                 outer_radius,
@@ -1241,15 +1301,15 @@ impl ProceduralSource {
                 color,
                 ..
             } => {
-                outer_radius.validate_with_context("outer_radius", params, seed)?;
-                inner_radius.validate_with_context("inner_radius", params, seed)?;
-                color.validate("color", params, seed)
+                outer_radius.validate_with_context("outer_radius", probe)?;
+                inner_radius.validate_with_context("inner_radius", probe)?;
+                color.validate("color", probe)
             }
             Self::Line {
                 thickness, color, ..
             } => {
-                thickness.validate_with_context("thickness", params, seed)?;
-                color.validate("color", params, seed)
+                thickness.validate_with_context("thickness", probe)?;
+                color.validate("color", probe)
             }
             Self::Polygon {
                 radius,
@@ -1257,11 +1317,11 @@ impl ProceduralSource {
                 color,
                 ..
             } => {
-                radius.validate_with_context("radius", params, seed)?;
+                radius.validate_with_context("radius", probe)?;
                 if *sides < 3 {
                     bail!("polygon sides must be >= 3");
                 }
-                color.validate("color", params, seed)
+                color.validate("color", probe)
             }
         }
     }
@@ -1356,15 +1416,11 @@ impl AnimatableColor {
         self.r.is_static() && self.g.is_static() && self.b.is_static() && self.a.is_static()
     }
 
-    pub fn validate(&self, label: &str, params: &Parameters, seed: u64) -> Result<()> {
-        self.r
-            .validate_with_context(&format!("{label}.r"), params, seed)?;
-        self.g
-            .validate_with_context(&format!("{label}.g"), params, seed)?;
-        self.b
-            .validate_with_context(&format!("{label}.b"), params, seed)?;
-        self.a
-            .validate_with_context(&format!("{label}.a"), params, seed)?;
+    pub fn validate(&self, label: &str, probe: &ExpressionContext<'_>) -> Result<()> {
+        self.r.validate_with_context(&format!("{label}.r"), probe)?;
+        self.g.validate_with_context(&format!("{label}.g"), probe)?;
+        self.b.validate_with_context(&format!("{label}.b"), probe)?;
+        self.a.validate_with_context(&format!("{label}.a"), probe)?;
         Ok(())
     }
 }
@@ -1461,10 +1517,10 @@ pub enum PropertyValue<T> {
 }
 
 impl<T: Clone + Interpolate> PropertyValue<T> {
-    pub fn sample_at(&self, frame: f32) -> T {
+    pub fn sample(&self, context: &ExpressionContext<'_>) -> T {
         match self {
             Self::Static(value) => value.clone(),
-            Self::Mapping(mapping) => mapping.sample_at(frame),
+            Self::Mapping(mapping) => mapping.sample(context),
         }
     }
 }
@@ -1472,13 +1528,9 @@ impl<T: Clone + Interpolate> PropertyValue<T> {
 impl<T> PropertyValue<T> {
     pub fn validate(&self, label: &str) -> Result<()> {
         if let Self::Mapping(mapping) = self {
-            if mapping.end_frame <= mapping.start_frame {
-                bail!(
-                    "{label} mapping requires end_frame ({}) > start_frame ({})",
-                    mapping.end_frame,
-                    mapping.start_frame
-                );
-            }
+            mapping
+                .endpoints()
+                .map_err(|error| anyhow!("{label} {error}"))?;
         }
 
         Ok(())
@@ -1507,29 +1559,24 @@ impl ScalarProperty {
     pub fn evaluate_with_context(&self, context: &ExpressionContext<'_>) -> Result<f32> {
         match self {
             Self::Static(value) => Ok(*value),
-            Self::Mapping(mapping) => Ok(mapping.sample_at(context.t)),
+            Self::Mapping(mapping) => Ok(mapping.sample(context)),
             Self::Expression(expression) => expression.evaluate_with_context(context),
         }
     }
 
-    pub fn validate_with_context(&self, label: &str, params: &Parameters, seed: u64) -> Result<()> {
+    pub fn validate_with_context(&self, label: &str, probe: &ExpressionContext<'_>) -> Result<()> {
         match self {
             Self::Static(value) => validate_number(label, *value),
             Self::Mapping(mapping) => {
-                if mapping.end_frame <= mapping.start_frame {
-                    bail!(
-                        "{label} mapping requires end_frame ({}) > start_frame ({})",
-                        mapping.end_frame,
-                        mapping.start_frame
-                    );
-                }
+                mapping
+                    .endpoints()
+                    .map_err(|error| anyhow!("{label} {error}"))?;
                 validate_number(&format!("{label}.from"), mapping.from)?;
                 validate_number(&format!("{label}.to"), mapping.to)
             }
             Self::Expression(expression) => {
-                let context = ExpressionContext::new(0.0, params, seed);
-                let probe = expression.evaluate_with_context(&context)?;
-                validate_number(label, probe)
+                let value = expression.evaluate_with_context(probe)?;
+                validate_number(label, value)
             }
         }
     }
@@ -1596,14 +1643,7 @@ impl ExpressionNode {
     fn evaluate(&self, context: &ExpressionContext<'_>) -> Result<f32> {
         match self {
             Self::Constant(value) => Ok(*value),
-            Self::Variable(identifier) => match identifier.as_str() {
-                "t" => Ok(context.t),
-                _ => context
-                    .params
-                    .get(identifier)
-                    .copied()
-                    .ok_or_else(|| anyhow!("unknown variable '{identifier}'")),
-            },
+            Self::Variable(identifier) => context.resolve_variable(identifier),
             Self::Call { name, args } => evaluate_function(name, args, context),
             Self::UnaryNeg(value) => Ok(-value.evaluate(context)?),
             Self::Add(left, right) => Ok(left.evaluate(context)? + right.evaluate(context)?),
@@ -1634,18 +1674,52 @@ impl ExpressionNode {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExpressionContext<'a> {
-    pub t: f32,
+    /// Layer-local frame (fractional after time_scale remaps).
+    pub frame: f32,
+    pub time_base: TimeBase,
     pub params: &'a Parameters,
     pub seed: u64,
 }
 
 impl<'a> ExpressionContext<'a> {
-    pub fn new(t: f32, params: &'a Parameters, seed: u64) -> Self {
-        Self { t, params, seed }
+    pub fn new(frame: f32, time_base: TimeBase, params: &'a Parameters, seed: u64) -> Self {
+        Self {
+            frame,
+            time_base,
+            params,
+            seed,
+        }
     }
 
-    pub fn with_time(self, t: f32) -> Self {
-        Self { t, ..self }
+    pub fn with_frame(self, frame: f32) -> Self {
+        Self { frame, ..self }
+    }
+
+    /// Value of the expression variable `t` (frames in version 1, seconds in version 2).
+    pub fn t(&self) -> f32 {
+        match self.time_base.unit {
+            TimeUnit::Frames => self.frame,
+            TimeUnit::Seconds => self.seconds(),
+        }
+    }
+
+    pub fn seconds(&self) -> f32 {
+        self.frame / self.time_base.fps_f32()
+    }
+
+    fn resolve_variable(&self, identifier: &str) -> Result<f32> {
+        if identifier == "t" {
+            return Ok(self.t());
+        }
+        // Version 1 manifests may already define params named `frame`/`fps`; keep their meaning.
+        if let Some(value) = self.params.get(identifier) {
+            return Ok(*value);
+        }
+        match identifier {
+            "frame" => Ok(self.frame),
+            "fps" => Ok(self.time_base.fps_f32()),
+            _ => Err(anyhow!("unknown variable '{identifier}'")),
+        }
     }
 }
 
@@ -1867,21 +1941,79 @@ impl<'a> ExpressionParser<'a> {
     }
 }
 
+/// A point on a timeline, either an explicit frame number or seconds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum KeyTime {
+    Frame(f32),
+    Seconds(f32),
+}
+
+impl KeyTime {
+    pub fn to_frame(self, time_base: TimeBase) -> f32 {
+        match self {
+            Self::Frame(frame) => frame,
+            Self::Seconds(seconds) => seconds * time_base.fps_f32(),
+        }
+    }
+}
+
+/// Single-segment animation. Endpoints are given either in frames
+/// (`start_frame`/`end_frame`) or in seconds (`start_time`/`end_time`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KeyValue<T> {
-    pub start_frame: u32,
-    pub end_frame: u32,
+    #[serde(default)]
+    pub start_frame: Option<u32>,
+    #[serde(default)]
+    pub end_frame: Option<u32>,
+    #[serde(default)]
+    pub start_time: Option<f32>,
+    #[serde(default)]
+    pub end_time: Option<f32>,
     pub from: T,
     pub to: T,
     #[serde(default)]
     pub easing: EasingCurve,
 }
 
+impl<T> KeyValue<T> {
+    fn endpoints(&self) -> Result<(KeyTime, KeyTime)> {
+        match (
+            self.start_frame,
+            self.end_frame,
+            self.start_time,
+            self.end_time,
+        ) {
+            (Some(start), Some(end), None, None) => {
+                if end <= start {
+                    bail!("mapping requires end_frame ({end}) > start_frame ({start})");
+                }
+                Ok((KeyTime::Frame(start as f32), KeyTime::Frame(end as f32)))
+            }
+            (None, None, Some(start), Some(end)) => {
+                validate_number("start_time", start)?;
+                validate_number("end_time", end)?;
+                if end <= start {
+                    bail!("mapping requires end_time ({end}) > start_time ({start})");
+                }
+                Ok((KeyTime::Seconds(start), KeyTime::Seconds(end)))
+            }
+            _ => bail!(
+                "mapping must set either start_frame and end_frame (frames) or start_time and end_time (seconds), not a mix"
+            ),
+        }
+    }
+}
+
 impl<T: Clone + Interpolate> KeyValue<T> {
-    pub fn sample_at(&self, frame: f32) -> T {
-        let start_frame = self.start_frame as f32;
-        let end_frame = self.end_frame as f32;
+    pub fn sample(&self, context: &ExpressionContext<'_>) -> T {
+        // Endpoints are checked during manifest validation; an invalid mapping holds `from`.
+        let Ok((start, end)) = self.endpoints() else {
+            return self.from.clone();
+        };
+        let frame = context.frame;
+        let start_frame = start.to_frame(context.time_base);
+        let end_frame = end.to_frame(context.time_base);
         if frame <= start_frame {
             return self.from.clone();
         }
@@ -1943,35 +2075,45 @@ impl Interpolate for Vec2 {
 }
 
 pub fn validate_manifest_manifest_level(manifest: &Manifest) -> Result<()> {
-    if manifest.version != DEFAULT_MANIFEST_VERSION {
+    if !(DEFAULT_MANIFEST_VERSION..=LATEST_MANIFEST_VERSION).contains(&manifest.version) {
         bail!(
-            "unsupported manifest version {} (expected {}). Add a migration or set version: {}",
+            "unsupported manifest version {} (supported: {}..={}). Use version: {} for seconds-based time or version: {} for legacy frame-based time",
             manifest.version,
             DEFAULT_MANIFEST_VERSION,
+            LATEST_MANIFEST_VERSION,
+            LATEST_MANIFEST_VERSION,
             DEFAULT_MANIFEST_VERSION
         );
     }
+    let seconds_time = manifest.time_base().unit == TimeUnit::Seconds;
 
     for (name, value) in &manifest.params {
         if !valid_identifier(name) {
             bail!("invalid param name '{name}'. Use identifiers like energy, phase, tension_2");
         }
         if name == "t" {
-            bail!("param name 't' is reserved for frame time in expressions");
+            bail!("param name 't' is reserved for time in expressions");
+        }
+        if seconds_time && TIME_BUILTINS.contains(&name.as_str()) {
+            bail!(
+                "param name '{name}' is reserved in version {} manifests (expressions expose t, frame, fps)",
+                manifest.version
+            );
         }
         validate_number(&format!("param '{name}'"), *value)?;
     }
 
+    let probe = manifest.probe_context();
     for (name, modulator) in &manifest.modulators {
         if !valid_identifier(name) {
             bail!("invalid modulator name '{name}'. Use identifiers like wobble or pulse_1");
         }
-        modulator.validate(name, &manifest.params, manifest.seed)?;
+        modulator.validate(name, &probe)?;
     }
 
     let mut seen_group_ids = HashSet::with_capacity(manifest.groups.len());
     for group in &manifest.groups {
-        group.validate(&manifest.params, manifest.seed, &manifest.modulators)?;
+        group.validate(&probe, &manifest.modulators)?;
         if !seen_group_ids.insert(group.id.as_str()) {
             bail!("duplicate group id '{}'", group.id);
         }
@@ -2135,8 +2277,12 @@ fn evaluate_function(
                 bail!("function {name} expects 1 or 3 arguments");
             }
             let time = evaluated[0];
-            let attack = evaluated.get(1).copied().unwrap_or(DEFAULT_ENV_ATTACK);
-            let decay = evaluated.get(2).copied().unwrap_or(DEFAULT_ENV_DECAY);
+            let (default_attack, default_decay) = match context.time_base.unit {
+                TimeUnit::Frames => (DEFAULT_ENV_ATTACK_FRAMES, DEFAULT_ENV_DECAY_FRAMES),
+                TimeUnit::Seconds => (DEFAULT_ENV_ATTACK_SECONDS, DEFAULT_ENV_DECAY_SECONDS),
+            };
+            let attack = evaluated.get(1).copied().unwrap_or(default_attack);
+            let decay = evaluated.get(2).copied().unwrap_or(default_decay);
             envelope(time, attack, decay)
         }
         _ => bail!("unsupported function '{name}'"),
@@ -2305,7 +2451,7 @@ fn validate_number(label: &str, value: f32) -> Result<()> {
 mod tests {
     use super::{
         default_manifest_version, validate_manifest_manifest_level, ExpressionContext, Layer,
-        Manifest, ScalarExpression, ScalarProperty,
+        Manifest, ScalarExpression, ScalarProperty, TimeBase,
     };
 
     fn parse_expression(source: &str) -> ScalarExpression {
@@ -2319,7 +2465,7 @@ mod tests {
         let mut params = std::collections::BTreeMap::new();
         params.insert("energy".to_owned(), 2.0);
 
-        let context = ExpressionContext::new(4.0, &params, 7);
+        let context = ExpressionContext::new(4.0, TimeBase::legacy_frames(24), &params, 7);
         let value = expression
             .evaluate_with_context(&context)
             .expect("expression should evaluate");
@@ -2334,7 +2480,12 @@ mod tests {
         let params = std::collections::BTreeMap::new();
 
         let error = expression
-            .evaluate_with_context(&ExpressionContext::new(2.0, &params, 0))
+            .evaluate_with_context(&ExpressionContext::new(
+                2.0,
+                TimeBase::legacy_frames(24),
+                &params,
+                0,
+            ))
             .expect_err("inverted clamp bounds should fail");
         assert!(error.to_string().contains("requires min <= max"));
     }
@@ -2345,13 +2496,28 @@ mod tests {
         let params = std::collections::BTreeMap::new();
 
         let a = expression
-            .evaluate_with_context(&ExpressionContext::new(12.0, &params, 99))
+            .evaluate_with_context(&ExpressionContext::new(
+                12.0,
+                TimeBase::legacy_frames(24),
+                &params,
+                99,
+            ))
             .expect("noise should evaluate");
         let b = expression
-            .evaluate_with_context(&ExpressionContext::new(12.0, &params, 99))
+            .evaluate_with_context(&ExpressionContext::new(
+                12.0,
+                TimeBase::legacy_frames(24),
+                &params,
+                99,
+            ))
             .expect("noise should evaluate");
         let c = expression
-            .evaluate_with_context(&ExpressionContext::new(12.0, &params, 100))
+            .evaluate_with_context(&ExpressionContext::new(
+                12.0,
+                TimeBase::legacy_frames(24),
+                &params,
+                100,
+            ))
             .expect("noise should evaluate");
 
         assert!((a - b).abs() < f32::EPSILON);
@@ -2365,7 +2531,12 @@ mod tests {
         params.insert("energy".to_owned(), 1.0);
 
         let error = expression
-            .evaluate_with_context(&ExpressionContext::new(0.0, &params, 0))
+            .evaluate_with_context(&ExpressionContext::new(
+                0.0,
+                TimeBase::legacy_frames(24),
+                &params,
+                0,
+            ))
             .expect_err("missing_param should fail validation");
         assert!(error.to_string().contains("missing_param"));
     }
@@ -2410,13 +2581,95 @@ layers:
     }
 
     #[test]
+    fn seconds_mapping_samples_identically_across_fps() {
+        let property: ScalarProperty =
+            serde_yaml::from_str("{ start_time: 0.5, end_time: 1.5, from: 0, to: 10 }")
+                .expect("mapping should parse");
+        property
+            .validate_with_context(
+                "opacity",
+                &ExpressionContext::new(0.0, TimeBase::seconds(24), &Default::default(), 0),
+            )
+            .expect("seconds mapping should validate");
+        let params = std::collections::BTreeMap::new();
+        for (fps, frame) in [(24_u32, 24.0_f32), (60, 60.0), (25, 25.0)] {
+            let context = ExpressionContext::new(frame, TimeBase::seconds(fps), &params, 0);
+            let value = property.evaluate_with_context(&context).expect("sample");
+            assert!((value - 5.0).abs() < 1e-5, "fps {fps}: got {value}");
+        }
+    }
+
+    #[test]
+    fn mapping_rejects_mixed_frame_and_seconds_endpoints() {
+        let property: ScalarProperty =
+            serde_yaml::from_str("{ start_frame: 0, end_time: 1.5, from: 0, to: 10 }")
+                .expect("mapping should parse");
+        let params = std::collections::BTreeMap::new();
+        let error = property
+            .validate_with_context(
+                "opacity",
+                &ExpressionContext::new(0.0, TimeBase::seconds(24), &params, 0),
+            )
+            .expect_err("mixed units must be rejected");
+        assert!(error.to_string().contains("not a mix"), "{error}");
+    }
+
+    #[test]
+    fn legacy_params_named_like_time_builtins_keep_their_value() {
+        let expression = parse_expression("fps + frame");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("fps".to_owned(), 1.0);
+        let value = expression
+            .evaluate_with_context(&ExpressionContext::new(
+                10.0,
+                TimeBase::legacy_frames(24),
+                &params,
+                0,
+            ))
+            .expect("expression should evaluate");
+        // param fps (1) wins over builtin fps (24); frame falls back to the builtin (10).
+        assert!((value - 11.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn env_default_attack_decay_follow_time_unit() {
+        let expression = parse_expression("env(t)");
+        let params = std::collections::BTreeMap::new();
+        // Legacy: attack 12 frames -> half way at frame 6.
+        let legacy = expression
+            .evaluate_with_context(&ExpressionContext::new(
+                6.0,
+                TimeBase::legacy_frames(24),
+                &params,
+                0,
+            ))
+            .expect("legacy env");
+        // Seconds: attack 0.5s -> half way at 0.25s, i.e. frame 15 at 60fps.
+        let seconds = expression
+            .evaluate_with_context(&ExpressionContext::new(
+                15.0,
+                TimeBase::seconds(60),
+                &params,
+                0,
+            ))
+            .expect("seconds env");
+        assert!((legacy - 0.5).abs() < 1e-6);
+        assert!((seconds - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
     fn scalar_property_expression_uses_context() {
         let property = ScalarProperty::Expression(parse_expression("energy * cos(t)"));
         let mut params = std::collections::BTreeMap::new();
         params.insert("energy".to_owned(), 2.0);
 
         let value = property
-            .evaluate_with_context(&ExpressionContext::new(0.0, &params, 0))
+            .evaluate_with_context(&ExpressionContext::new(
+                0.0,
+                TimeBase::legacy_frames(24),
+                &params,
+                0,
+            ))
             .expect("property should evaluate");
         assert!((value - 2.0).abs() < 0.0001);
     }
@@ -2512,7 +2765,7 @@ layers:
 
         let layer = manifest.layers.first().expect("expected one layer");
         let error = layer
-            .validate(&manifest.params, manifest.seed, &manifest.modulators)
+            .validate(&manifest.probe_context(), &manifest.modulators)
             .expect_err("non-printable ASCII should be rejected");
         let message = error.to_string();
         assert!(

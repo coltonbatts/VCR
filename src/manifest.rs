@@ -7,8 +7,8 @@ use serde::Serialize;
 use serde_yaml::{Mapping, Value};
 
 use crate::schema::{
-    validate_manifest_manifest_level, ColorRgba, Layer, Manifest, ParamDefinition, ParamType,
-    ParamValue, Parameters, Vec2,
+    validate_manifest_manifest_level, ColorRgba, ExpressionContext, Layer, Manifest,
+    ParamDefinition, ParamType, ParamValue, Parameters, Vec2,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -689,9 +689,10 @@ fn validate_manifest(manifest: &mut Manifest, manifest_path: &Path) -> Result<()
         .map(|group| group.id.as_str())
         .collect::<HashSet<_>>();
 
+    let probe = ExpressionContext::new(0.0, manifest.time_base(), &manifest.params, manifest.seed);
     for layer in &mut manifest.layers {
         layer
-            .validate(&manifest.params, manifest.seed, &manifest.modulators)
+            .validate(&probe, &manifest.modulators)
             .with_context(|| format!("failed validating layer '{}'", layer.id()))?;
 
         if !seen_ids.insert(layer.id().to_owned()) {
