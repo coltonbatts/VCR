@@ -1,24 +1,25 @@
-version: 1
+version: 2
+# Keyframe showcase. `t` and every keyframe `time:` are in seconds, so this scene plays
+# the same at any fps. Authored motion uses keyframe tracks; the only oscillators left are
+# the procedural jitter/breathe modulators layered on top.
 environment:
   resolution:
     width: 1920
     height: 1080
   fps: 24
-  duration:
-    frames: 120
+  duration: 5.0
 
 seed: 4242
 params:
   energy: 0.85
-  drift: 48.0
   pulse: 0.22
   phase: 0.35
 
 modulators:
   jitter:
-    expression: "noise1d(t * 0.26, 7) * energy"
+    expression: "noise1d(t * 6.24, 7) * energy"
   breathe:
-    expression: "sin(t * 0.10 + phase) * pulse"
+    expression: "sin(t * 2.4 + phase) * pulse"
 
 groups:
   - id: rig_main
@@ -48,14 +49,19 @@ layers:
   - id: bg_haze
     group: rig_main
     z_index: 1
-    scale:
-      start_frame: 0
-      end_frame: 119
-      from: [1.18, 1.18]
-      to: [1.02, 1.02]
-      easing: ease_out
-    rotation_degrees: "sin(t * 0.022 + phase) * 5.0"
-    opacity: "clamp(0.58 + easeInOut((sin(t * 0.08 + phase) + 1.0) * 0.5) * 0.16, 0.0, 1.0)"
+    # Legacy single-segment sugar still works (here in seconds).
+    scale: { start_time: 0.0, end_time: 5.0, from: [1.18, 1.18], to: [1.02, 1.02], easing: ease_out }
+    rotation_degrees:
+      keyframes:
+        - { time: 0.0, value: -2.0, easing: [0.45, 0.0, 0.55, 1.0] }
+        - { time: 2.6, value: 3.5, easing: [0.45, 0.0, 0.55, 1.0] }
+        - { time: 5.0, value: 1.0 }
+    opacity:
+      keyframes:
+        - { time: 0.0, value: 0.0, easing: ease_out }
+        - { time: 0.8, value: 0.60, easing: ease_in_out }
+        - { time: 3.0, value: 0.74, easing: ease_in_out }
+        - { time: 5.0, value: 0.64 }
     procedural:
       kind: gradient
       start_color: { r: 0.06, g: 0.10, b: 0.16, a: 0.95 }
@@ -66,33 +72,52 @@ layers:
     group: rig_main
     z_index: 2
     position:
-      start_frame: 0
-      end_frame: 119
-      from: [-1150, -140]
-      to: [980, 60]
-      easing: ease_in_out
+      keyframes:
+        - { time: 0.0, value: [-1150, -140], easing: [0.3, 0.0, 0.2, 1.0] }
+        - { time: 2.2, value: [-60, -40], easing: [0.6, 0.0, 0.4, 1.0] }
+        - { time: 5.0, value: [980, 60] }
     scale: [0.38, 1.35]
-    rotation_degrees: "-13 + sin(t * 0.05) * 2.5"
-    opacity: "clamp(0.22 + smoothstep(0.1, 0.95, easeInOut((sin(t * 0.08 + phase) + 1.0) * 0.5)) * 0.55, 0.0, 0.9)"
+    rotation_degrees:
+      keyframes:
+        - { time: 0.0, value: -15.5, easing: ease_in_out }
+        - { time: 2.2, value: -10.5, easing: ease_in_out }
+        - { time: 5.0, value: -14.0 }
+    opacity:
+      keyframes:
+        - { time: 0.0, value: 0.0, easing: ease_out }
+        - { time: 1.4, value: 0.77, easing: ease_in_out }
+        - { time: 4.2, value: 0.45, easing: ease_in }
+        - { time: 5.0, value: 0.22 }
     procedural:
       kind: gradient
       start_color: { r: 0.02, g: 0.18, b: 0.22, a: 0.0 }
-      end_color: { r: 0.22, g: 0.78, b: 0.86, a: 0.72 }
+      end_color:
+        keyframes:
+          - { time: 0.0, value: { r: 0.22, g: 0.78, b: 0.86, a: 0.72 }, easing: ease_in_out }
+          - { time: 5.0, value: { r: 0.46, g: 0.86, b: 0.78, a: 0.72 } }
       direction: horizontal
 
   - id: hero_plate
     group: rig_foreground
     z_index: 3
-    pos_x: "180 + sin(t * 0.09 + phase) * drift"
-    pos_y: "120 + cos(t * 0.07 + phase) * (drift * 0.45)"
-    scale:
-      start_frame: 0
-      end_frame: 119
-      from: [0.72, 0.72]
-      to: [0.94, 0.94]
-      easing: ease_in_out
-    rotation_degrees: "sin(t * 0.04) * 2.0"
-    opacity: "clamp(0.18 + easeInOut((sin(t * 0.08 + phase) + 1.0) * 0.5) * 0.45, 0.0, 0.88)"
+    position:
+      keyframes:
+        - { time: 0.0, value: [140, 150], easing: [0.2, 0.0, 0.0, 1.0] }
+        - { time: 1.6, value: [224, 112], easing: ease_in_out }
+        - { time: 3.4, value: [205, 96], easing: ease_in_out }
+        - { time: 5.0, value: [168, 116] }
+    scale: { start_time: 0.0, end_time: 5.0, from: [0.72, 0.72], to: [0.94, 0.94], easing: ease_in_out }
+    rotation_degrees:
+      keyframes:
+        - { time: 0.0, value: -2.0, easing: ease_in_out }
+        - { time: 2.5, value: 2.0, easing: ease_in_out }
+        - { time: 5.0, value: -1.0 }
+    opacity:
+      keyframes:
+        - { time: 0.0, value: 0.0, easing: [0.2, 0.0, 0.0, 1.0] }
+        - { time: 1.2, value: 0.55, easing: hold }
+        - { time: 3.0, value: 0.55, easing: ease_in_out }
+        - { time: 4.2, value: 0.66 }
     modulators:
       - source: jitter
         weights:
@@ -109,10 +134,25 @@ layers:
     z_index: 4
     position: [260, 180]
     scale: [0.82, 0.82]
-    rotation_degrees: "3 + sin(t * 0.03 + 1.2) * 6.0"
-    opacity: "clamp(env(t, 24, 84) * 0.35 + 0.10, 0.0, 0.55)"
+    rotation_degrees:
+      keyframes:
+        - { time: 0.0, value: -2.5, easing: ease_in_out }
+        - { time: 3.0, value: 8.5, easing: ease_in_out }
+        - { time: 5.0, value: 6.0 }
+    # Hold keys give a hard-cut flicker, then an eased settle.
+    opacity:
+      keyframes:
+        - { time: 0.0, value: 0.10, easing: ease_in }
+        - { time: 1.0, value: 0.45, easing: hold }
+        - { time: 1.25, value: 0.20, easing: hold }
+        - { time: 1.4, value: 0.45, easing: ease_in_out }
+        - { time: 4.5, value: 0.18 }
     procedural:
       kind: gradient
-      start_color: { r: 0.86, g: 0.42, b: 0.14, a: 0.52 }
+      start_color:
+        keyframes:
+          - { time: 0.0, value: { r: 0.86, g: 0.42, b: 0.14, a: 0.52 }, easing: ease_in_out }
+          - { time: 3.0, value: { r: 0.96, g: 0.62, b: 0.26, a: 0.60 }, easing: ease_in_out }
+          - { time: 5.0, value: { r: 0.80, g: 0.36, b: 0.12, a: 0.52 } }
       end_color: { r: 0.30, g: 0.12, b: 0.06, a: 0.05 }
       direction: horizontal

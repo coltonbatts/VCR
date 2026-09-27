@@ -70,14 +70,62 @@ Tips for `version: 2`:
 
 - Per-frame randomness: `random(frame)` (not `random(t)`, which changes once per second).
 - `step(0.5, fract(t * 2))` blinks at 2 Hz. In `version: 1` it is always 0 because `t` is an integer frame.
-- Keyframe mappings accept `start_time`/`end_time` (seconds) as well as `start_frame`/`end_frame`:
-  `opacity: { start_time: 0.5, end_time: 1.5, from: 0, to: 1, easing: ease_out }`.
-  A mapping must use one pair or the other, not a mix.
+- Keyframe times: use `time:` (seconds) or `frame:` (frames); see "Keyframes" below.
 
 Migrating a `version: 1` manifest: add `version: 2`, then divide the time constants in
 expressions by `fps` (for example `smoothstep(24, 48, t)` becomes `smoothstep(1, 2, t)` at 24fps).
 `start_frame`/`end_frame` keyframes keep working unchanged in both versions because they
 are explicit frame numbers.
+
+## Keyframes
+
+Animatable properties: `position`, `scale`, `rotation_degrees`, `opacity`, `pos_x`/`pos_y`,
+procedural colors (`color`, `start_color`, `end_color`), numeric procedural fields
+(`radius`, `corner_radius`, `thickness`, ...) and shader `uniforms`. Each accepts:
+
+1. A static value: `opacity: 0.8`, `position: [100, 200]`.
+2. An expression string (scalars only): `opacity: "0.5 + 0.5 * sin(t * 3)"`.
+3. A keyframe track:
+
+```yaml
+opacity:
+  keyframes:
+    - { time: 0.0, value: 0.0, easing: ease_out }            # seconds
+    - { time: 0.6, value: 1.0, easing: hold }                # stays 1.0 until the next key
+    - { time: 2.0, value: 1.0, easing: [0.42, 0, 0.58, 1] }  # CSS cubic-bezier
+    - { time: 2.5, value: 0.0 }
+position:
+  keyframes:
+    - { frame: 0, value: [-200, 540] }                       # explicit frame numbers
+    - { frame: 36, value: [960, 540], easing: ease_in_out }
+color:                                                        # whole-color track
+  keyframes:
+    - { time: 0, value: { r: 1, g: 0.2, b: 0.1 } }
+    - { time: 1, value: { r: 0.1, g: 0.4, b: 1, a: 0.5 } }
+```
+
+4. The legacy single-segment mapping, which is shorthand for a two-key track:
+   `{ start_frame: 0, end_frame: 24, from: 0, to: 1, easing: ease_in }`, or in seconds
+   `{ start_time: 0, end_time: 1, from: 0, to: 1 }`. Use one pair or the other, not a mix.
+
+Rules:
+
+- Each key sets exactly one of `time` (seconds) or `frame`. All keys in one track use the
+  same unit, and times must be strictly increasing. `frame:` keys are fps-dependent by
+  definition, while `time:` keys are not.
+- Before the first key the first value holds; after the last key the last value holds.
+- A key's `easing` shapes the segment **from that key to the next** (the last key's
+  easing is unused). Options: `linear` (default), `ease_in`, `ease_out`, `ease_in_out`,
+  `hold` (alias `step`: keep this key's value until the next key, then jump),
+  or a cubic bezier `[x1, y1, x2, y2]` / `{ cubic_bezier: [x1, y1, x2, y2] }` with the same
+  meaning as CSS `cubic-bezier()` (`x1`, `x2` must be in `[0, 1]`; `y` may overshoot).
+- Colors interpolate per channel on the authored values. Per-channel animation also works:
+  `color: { r: { keyframes: [...] }, g: 0.2, b: "sin(t)", a: 1 }`.
+- Keyframes are sampled at the layer-local frame, so `time_offset`/`time_scale` and group
+  timing apply to them just like they apply to expressions. (Exception kept for
+  compatibility: in `version: 1`, procedural color/shape fields use the global frame.)
+- Text layer `text.color` and ascii colors are static. Text is rasterized once, so animate
+  a text layer with `opacity`/transform keyframes instead.
 
 ## Substitution (`${param_name}`)
 

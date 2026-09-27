@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
+use serde::{de::DeserializeOwned, de::Error as DeError, Deserialize, Deserializer, Serialize};
 
 pub type Parameters = BTreeMap<String, f32>;
 pub type ModulatorMap = BTreeMap<String, ModulatorDefinition>;
@@ -1392,36 +1392,57 @@ fn default_alpha() -> f32 {
     1.0
 }
 
-/// Color with animatable r/g/b/a channels. Accepts both static `{r: 0.5, ...}` and
-/// expression strings like `{r: "sin(t)", g: 0.5, b: 0, a: 1}`.
+/// Animatable color. Accepts a static color `{r: 0.5, g: 0.2, b: 0.1, a: 1}`, per-channel
+/// animation (`{r: "sin(t)", g: {keyframes: [...]}, b: 0, a: 1}`), or a whole-color keyframe
+/// track (`{keyframes: [{time: 0, value: {r: 1, g: 0, b: 0}}, ...]}`).
 #[derive(Debug, Clone)]
-pub struct AnimatableColor {
-    pub r: ScalarProperty,
-    pub g: ScalarProperty,
-    pub b: ScalarProperty,
-    pub a: ScalarProperty,
+// Parsed once per manifest; boxing the larger variant would buy nothing measurable.
+#[allow(clippy::large_enum_variant)]
+pub enum AnimatableColor {
+    Channels {
+        r: ScalarProperty,
+        g: ScalarProperty,
+        b: ScalarProperty,
+        a: ScalarProperty,
+    },
+    Keyframes(KeyframeTrack<ColorRgba>),
 }
 
 impl AnimatableColor {
     pub fn evaluate(&self, context: &ExpressionContext<'_>) -> Result<ColorRgba> {
-        Ok(ColorRgba {
-            r: self.r.evaluate_with_context(context)?,
-            g: self.g.evaluate_with_context(context)?,
-            b: self.b.evaluate_with_context(context)?,
-            a: self.a.evaluate_with_context(context)?,
-        })
+        match self {
+            Self::Channels { r, g, b, a } => Ok(ColorRgba {
+                r: r.evaluate_with_context(context)?,
+                g: g.evaluate_with_context(context)?,
+                b: b.evaluate_with_context(context)?,
+                a: a.evaluate_with_context(context)?,
+            }),
+            Self::Keyframes(track) => Ok(track.sample(context)),
+        }
     }
 
     pub fn is_static(&self) -> bool {
-        self.r.is_static() && self.g.is_static() && self.b.is_static() && self.a.is_static()
+        match self {
+            Self::Channels { r, g, b, a } => {
+                r.is_static() && g.is_static() && b.is_static() && a.is_static()
+            }
+            Self::Keyframes(_) => false,
+        }
     }
 
     pub fn validate(&self, label: &str, probe: &ExpressionContext<'_>) -> Result<()> {
-        self.r.validate_with_context(&format!("{label}.r"), probe)?;
-        self.g.validate_with_context(&format!("{label}.g"), probe)?;
-        self.b.validate_with_context(&format!("{label}.b"), probe)?;
-        self.a.validate_with_context(&format!("{label}.a"), probe)?;
-        Ok(())
+        match self {
+            Self::Channels { r, g, b, a } => {
+                r.validate_with_context(&format!("{label}.r"), probe)?;
+                g.validate_with_context(&format!("{label}.g"), probe)?;
+                b.validate_with_context(&format!("{label}.b"), probe)?;
+                a.validate_with_context(&format!("{label}.a"), probe)?;
+                Ok(())
+            }
+            Self::Keyframes(track) => {
+                track.validate(label, |value_label, color| color.validate(value_label))
+            }
+        }
     }
 }
 
@@ -1443,8 +1464,19 @@ impl<'de> Deserialize<'de> for AnimatableColor {
             ScalarProperty::Static(1.0)
         }
 
-        let fields = ColorFields::deserialize(deserializer)?;
-        Ok(AnimatableColor {
+        let value = serde_yaml::Value::deserialize(deserializer)?;
+        if value
+            .as_mapping()
+            .is_some_and(|map| map.contains_key("keyframes"))
+        {
+            return match decode_animated::<ColorRgba, D::Error>(value)? {
+                AnimatedWire::Track(track) => Ok(Self::Keyframes(track)),
+                AnimatedWire::Static(color) => Ok(color.into()),
+            };
+        }
+
+        let fields: ColorFields = serde_yaml::from_value(value).map_err(D::Error::custom)?;
+        Ok(Self::Channels {
             r: fields.r,
             g: fields.g,
             b: fields.b,
@@ -1455,7 +1487,7 @@ impl<'de> Deserialize<'de> for AnimatableColor {
 
 impl From<ColorRgba> for AnimatableColor {
     fn from(c: ColorRgba) -> Self {
-        AnimatableColor {
+        Self::Channels {
             r: ScalarProperty::Static(c.r),
             g: ScalarProperty::Static(c.g),
             b: ScalarProperty::Static(c.b),
@@ -1509,28 +1541,41 @@ impl<'de> Deserialize<'de> for Vec2 {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
+/// Animatable non-scalar property (position, scale): a static value, a `keyframes:` track,
+/// or the legacy single-segment `{start_frame, end_frame, from, to, easing}` mapping.
+#[derive(Debug, Clone)]
 pub enum PropertyValue<T> {
     Static(T),
-    Mapping(KeyValue<T>),
+    Keyframes(KeyframeTrack<T>),
+}
+
+impl<'de, T: DeserializeOwned> Deserialize<'de> for PropertyValue<T> {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_yaml::Value::deserialize(deserializer)?;
+        Ok(match decode_animated::<T, D::Error>(value)? {
+            AnimatedWire::Static(value) => Self::Static(value),
+            AnimatedWire::Track(track) => Self::Keyframes(track),
+        })
+    }
 }
 
 impl<T: Clone + Interpolate> PropertyValue<T> {
     pub fn sample(&self, context: &ExpressionContext<'_>) -> T {
         match self {
             Self::Static(value) => value.clone(),
-            Self::Mapping(mapping) => mapping.sample(context),
+            Self::Keyframes(track) => track.sample(context),
         }
     }
 }
 
 impl<T> PropertyValue<T> {
     pub fn validate(&self, label: &str) -> Result<()> {
-        if let Self::Mapping(mapping) = self {
-            mapping
-                .endpoints()
-                .map_err(|error| anyhow!("{label} {error}"))?;
+        if let Self::Keyframes(track) = self {
+            // Values (Vec2) are checked for finiteness while decoding.
+            track.validate(label, |_, _| Ok(()))?;
         }
 
         Ok(())
@@ -1547,19 +1592,38 @@ impl Default for PropertyValue<Vec2> {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
+/// Animatable scalar: a number, an expression string, a `keyframes:` track, or the legacy
+/// single-segment mapping.
+#[derive(Debug, Clone)]
 pub enum ScalarProperty {
     Static(f32),
-    Mapping(KeyValue<f32>),
+    Keyframes(KeyframeTrack<f32>),
     Expression(ScalarExpression),
+}
+
+impl<'de> Deserialize<'de> for ScalarProperty {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_yaml::Value::deserialize(deserializer)?;
+        if value.is_string() {
+            return serde_yaml::from_value(value)
+                .map(Self::Expression)
+                .map_err(D::Error::custom);
+        }
+        Ok(match decode_animated::<f32, D::Error>(value)? {
+            AnimatedWire::Static(value) => Self::Static(value),
+            AnimatedWire::Track(track) => Self::Keyframes(track),
+        })
+    }
 }
 
 impl ScalarProperty {
     pub fn evaluate_with_context(&self, context: &ExpressionContext<'_>) -> Result<f32> {
         match self {
             Self::Static(value) => Ok(*value),
-            Self::Mapping(mapping) => Ok(mapping.sample(context)),
+            Self::Keyframes(track) => Ok(track.sample(context)),
             Self::Expression(expression) => expression.evaluate_with_context(context),
         }
     }
@@ -1567,13 +1631,9 @@ impl ScalarProperty {
     pub fn validate_with_context(&self, label: &str, probe: &ExpressionContext<'_>) -> Result<()> {
         match self {
             Self::Static(value) => validate_number(label, *value),
-            Self::Mapping(mapping) => {
-                mapping
-                    .endpoints()
-                    .map_err(|error| anyhow!("{label} {error}"))?;
-                validate_number(&format!("{label}.from"), mapping.from)?;
-                validate_number(&format!("{label}.to"), mapping.to)
-            }
+            Self::Keyframes(track) => track.validate(label, |value_label, value| {
+                validate_number(value_label, *value)
+            }),
             Self::Expression(expression) => {
                 let value = expression.evaluate_with_context(probe)?;
                 validate_number(label, value)
@@ -1955,30 +2015,188 @@ impl KeyTime {
             Self::Seconds(seconds) => seconds * time_base.fps_f32(),
         }
     }
+
+    fn raw(self) -> f32 {
+        match self {
+            Self::Frame(value) | Self::Seconds(value) => value,
+        }
+    }
+
+    fn unit_label(self) -> &'static str {
+        match self {
+            Self::Frame(_) => "frame",
+            Self::Seconds(_) => "time",
+        }
+    }
+
+    fn same_unit(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Frame(_), Self::Frame(_)) | (Self::Seconds(_), Self::Seconds(_))
+        )
+    }
 }
 
-/// Single-segment animation. Endpoints are given either in frames
-/// (`start_frame`/`end_frame`) or in seconds (`start_time`/`end_time`).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct KeyValue<T> {
-    #[serde(default)]
-    pub start_frame: Option<u32>,
-    #[serde(default)]
-    pub end_frame: Option<u32>,
-    #[serde(default)]
-    pub start_time: Option<f32>,
-    #[serde(default)]
-    pub end_time: Option<f32>,
-    pub from: T,
-    pub to: T,
-    #[serde(default)]
+/// One key on a track. `easing` shapes the segment from this key to the next one
+/// (it is ignored on the last key).
+#[derive(Debug, Clone)]
+pub struct Keyframe<T> {
+    pub at: KeyTime,
+    pub value: T,
     pub easing: EasingCurve,
 }
 
-impl<T> KeyValue<T> {
-    fn endpoints(&self) -> Result<(KeyTime, KeyTime)> {
-        match (
+/// Multi-keyframe animation track. Always holds at least one key.
+///
+/// Before the first key the first value holds; after the last key the last value holds.
+/// The legacy single-segment mapping `{start_frame, end_frame, from, to, easing}` is sugar
+/// for a two-key track.
+#[derive(Debug, Clone)]
+pub struct KeyframeTrack<T> {
+    keys: Vec<Keyframe<T>>,
+}
+
+impl<T> KeyframeTrack<T> {
+    pub fn new(keys: Vec<Keyframe<T>>) -> Result<Self> {
+        if keys.is_empty() {
+            bail!("keyframes must contain at least one key");
+        }
+        Ok(Self { keys })
+    }
+
+    pub fn keys(&self) -> &[Keyframe<T>] {
+        &self.keys
+    }
+
+    /// Checks key ordering, unit consistency, easing parameters and each value.
+    pub fn validate(
+        &self,
+        label: &str,
+        mut validate_value: impl FnMut(&str, &T) -> Result<()>,
+    ) -> Result<()> {
+        let first_unit = self.keys[0].at;
+        for (index, key) in self.keys.iter().enumerate() {
+            let key_label = format!("{label}.keyframes[{index}]");
+            if !key.at.same_unit(first_unit) {
+                bail!(
+                    "{key_label} uses `{}` but keyframes[0] uses `{}`; all keys in a track must use the same unit",
+                    key.at.unit_label(),
+                    first_unit.unit_label()
+                );
+            }
+            validate_number(
+                &format!("{key_label}.{}", key.at.unit_label()),
+                key.at.raw(),
+            )?;
+            validate_value(&format!("{key_label}.value"), &key.value)?;
+            key.easing.validate(&format!("{key_label}.easing"))?;
+        }
+        for (index, pair) in self.keys.windows(2).enumerate() {
+            let (previous, next) = (pair[0].at.raw(), pair[1].at.raw());
+            if next <= previous {
+                bail!(
+                    "{label}.keyframes[{}].{unit} ({next}) must be greater than keyframes[{index}].{unit} ({previous}); keys must be strictly increasing",
+                    index + 1,
+                    unit = pair[1].at.unit_label()
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<T: Clone + Interpolate> KeyframeTrack<T> {
+    pub fn sample(&self, context: &ExpressionContext<'_>) -> T {
+        let frame = context.frame;
+        let first = &self.keys[0];
+        if frame <= first.at.to_frame(context.time_base) {
+            return first.value.clone();
+        }
+
+        for pair in self.keys.windows(2) {
+            let (from, to) = (&pair[0], &pair[1]);
+            let end_frame = to.at.to_frame(context.time_base);
+            if frame < end_frame {
+                if from.easing == EasingCurve::Hold {
+                    return from.value.clone();
+                }
+                let start_frame = from.at.to_frame(context.time_base);
+                let span = end_frame - start_frame;
+                let progress = (frame - start_frame) / span;
+                let eased = from.easing.apply(progress.clamp(0.0, 1.0));
+                return T::interpolate(&from.value, &to.value, eased);
+            }
+        }
+
+        self.keys[self.keys.len() - 1].value.clone()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KeyframeTrackWire<T> {
+    keyframes: Vec<KeyframeWire<T>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KeyframeWire<T> {
+    #[serde(default)]
+    time: Option<f32>,
+    #[serde(default)]
+    frame: Option<f32>,
+    value: T,
+    #[serde(default)]
+    easing: EasingCurve,
+}
+
+impl<T> KeyframeTrackWire<T> {
+    fn into_track(self) -> Result<KeyframeTrack<T>> {
+        let keys = self
+            .keyframes
+            .into_iter()
+            .enumerate()
+            .map(|(index, key)| {
+                let at = match (key.time, key.frame) {
+                    (Some(seconds), None) => KeyTime::Seconds(seconds),
+                    (None, Some(frame)) => KeyTime::Frame(frame),
+                    _ => bail!(
+                        "keyframes[{index}] must set exactly one of `time` (seconds) or `frame`"
+                    ),
+                };
+                Ok(Keyframe {
+                    at,
+                    value: key.value,
+                    easing: key.easing,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        KeyframeTrack::new(keys)
+    }
+}
+
+/// Legacy single-segment mapping; desugars to a two-key track. Endpoints are given either in
+/// frames (`start_frame`/`end_frame`) or in seconds (`start_time`/`end_time`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SegmentMappingWire<T> {
+    #[serde(default)]
+    start_frame: Option<u32>,
+    #[serde(default)]
+    end_frame: Option<u32>,
+    #[serde(default)]
+    start_time: Option<f32>,
+    #[serde(default)]
+    end_time: Option<f32>,
+    from: T,
+    to: T,
+    #[serde(default)]
+    easing: EasingCurve,
+}
+
+impl<T> SegmentMappingWire<T> {
+    fn into_track(self) -> Result<KeyframeTrack<T>> {
+        let (start, end) = match (
             self.start_frame,
             self.end_frame,
             self.start_time,
@@ -1988,54 +2206,83 @@ impl<T> KeyValue<T> {
                 if end <= start {
                     bail!("mapping requires end_frame ({end}) > start_frame ({start})");
                 }
-                Ok((KeyTime::Frame(start as f32), KeyTime::Frame(end as f32)))
+                (KeyTime::Frame(start as f32), KeyTime::Frame(end as f32))
             }
             (None, None, Some(start), Some(end)) => {
-                validate_number("start_time", start)?;
-                validate_number("end_time", end)?;
                 if end <= start {
                     bail!("mapping requires end_time ({end}) > start_time ({start})");
                 }
-                Ok((KeyTime::Seconds(start), KeyTime::Seconds(end)))
+                (KeyTime::Seconds(start), KeyTime::Seconds(end))
             }
             _ => bail!(
                 "mapping must set either start_frame and end_frame (frames) or start_time and end_time (seconds), not a mix"
             ),
-        }
-    }
-}
-
-impl<T: Clone + Interpolate> KeyValue<T> {
-    pub fn sample(&self, context: &ExpressionContext<'_>) -> T {
-        // Endpoints are checked during manifest validation; an invalid mapping holds `from`.
-        let Ok((start, end)) = self.endpoints() else {
-            return self.from.clone();
         };
-        let frame = context.frame;
-        let start_frame = start.to_frame(context.time_base);
-        let end_frame = end.to_frame(context.time_base);
-        if frame <= start_frame {
-            return self.from.clone();
-        }
-        if frame >= end_frame {
-            return self.to.clone();
-        }
-
-        let span = end_frame - start_frame;
-        let progress = (frame - start_frame) / span;
-        let eased = self.easing.apply(progress.clamp(0.0, 1.0));
-        T::interpolate(&self.from, &self.to, eased)
+        KeyframeTrack::new(vec![
+            Keyframe {
+                at: start,
+                value: self.from,
+                easing: self.easing,
+            },
+            Keyframe {
+                at: end,
+                value: self.to,
+                easing: EasingCurve::Linear,
+            },
+        ])
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
+/// Animatable value decoded from YAML: a static value, a `keyframes:` track, or the legacy
+/// `{from, to, ...}` mapping (desugared to a track).
+enum AnimatedWire<T> {
+    Static(T),
+    Track(KeyframeTrack<T>),
+}
+
+fn decode_animated<T: DeserializeOwned, E: DeError>(
+    value: serde_yaml::Value,
+) -> std::result::Result<AnimatedWire<T>, E> {
+    if let serde_yaml::Value::Mapping(map) = &value {
+        if map.contains_key("keyframes") {
+            let wire: KeyframeTrackWire<T> = serde_yaml::from_value(value).map_err(E::custom)?;
+            return wire
+                .into_track()
+                .map(AnimatedWire::Track)
+                .map_err(E::custom);
+        }
+        if map.contains_key("from") || map.contains_key("to") {
+            let wire: SegmentMappingWire<T> = serde_yaml::from_value(value).map_err(E::custom)?;
+            return wire
+                .into_track()
+                .map(AnimatedWire::Track)
+                .map_err(E::custom);
+        }
+    }
+    serde_yaml::from_value(value)
+        .map(AnimatedWire::Static)
+        .map_err(E::custom)
+}
+
+/// Easing for a keyframe segment.
+///
+/// YAML: `linear`, `ease_in`, `ease_out`, `ease_in_out`, `hold` (alias `step`), or a CSS-style
+/// cubic bezier as `[x1, y1, x2, y2]` / `{ cubic_bezier: [x1, y1, x2, y2] }`.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum EasingCurve {
     #[default]
     Linear,
     EaseIn,
     EaseOut,
     EaseInOut,
+    /// Keep the segment's start value until the next key (step / hold interpolation).
+    Hold,
+    CubicBezier {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+    },
 }
 
 impl EasingCurve {
@@ -2051,8 +2298,122 @@ impl EasingCurve {
                     1.0 - ((-2.0 * t + 2.0).powi(2) / 2.0)
                 }
             }
+            Self::Hold => 0.0,
+            Self::CubicBezier { x1, y1, x2, y2 } => cubic_bezier_ease(x1, y1, x2, y2, t),
         }
     }
+
+    fn validate(self, label: &str) -> Result<()> {
+        if let Self::CubicBezier { x1, y1, x2, y2 } = self {
+            for (name, value) in [("x1", x1), ("y1", y1), ("x2", x2), ("y2", y2)] {
+                validate_number(&format!("{label}.{name}"), value)?;
+            }
+            if !(0.0..=1.0).contains(&x1) || !(0.0..=1.0).contains(&x2) {
+                bail!("{label} cubic bezier x1 and x2 must be within [0, 1], got x1={x1}, x2={x2}");
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<'de> Deserialize<'de> for EasingCurve {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        const EXPECTED: &str =
+            "linear, ease_in, ease_out, ease_in_out, hold, or a cubic bezier [x1, y1, x2, y2]";
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct BezierObject {
+            cubic_bezier: [f32; 4],
+        }
+
+        let bezier = |[x1, y1, x2, y2]: [f32; 4]| Self::CubicBezier { x1, y1, x2, y2 };
+        let value = serde_yaml::Value::deserialize(deserializer)?;
+        match value {
+            serde_yaml::Value::String(name) => match name.as_str() {
+                "linear" => Ok(Self::Linear),
+                "ease_in" => Ok(Self::EaseIn),
+                "ease_out" => Ok(Self::EaseOut),
+                "ease_in_out" => Ok(Self::EaseInOut),
+                "hold" | "step" => Ok(Self::Hold),
+                other => Err(D::Error::custom(format!(
+                    "unknown easing '{other}'; expected {EXPECTED}"
+                ))),
+            },
+            serde_yaml::Value::Sequence(_) => serde_yaml::from_value::<[f32; 4]>(value)
+                .map(bezier)
+                .map_err(|error| {
+                    D::Error::custom(format!(
+                        "invalid cubic bezier easing ({error}); expected {EXPECTED}"
+                    ))
+                }),
+            serde_yaml::Value::Mapping(_) => serde_yaml::from_value::<BezierObject>(value)
+                .map(|object| bezier(object.cubic_bezier))
+                .map_err(|error| {
+                    D::Error::custom(format!("invalid easing ({error}); expected {EXPECTED}"))
+                }),
+            _ => Err(D::Error::custom(format!(
+                "invalid easing; expected {EXPECTED}"
+            ))),
+        }
+    }
+}
+
+/// CSS `cubic-bezier(x1, y1, x2, y2)` timing function: solve x(s) = t, return y(s).
+/// Pure f32 arithmetic with a fixed iteration budget, so results are deterministic.
+fn cubic_bezier_ease(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
+    if t <= 0.0 {
+        return 0.0;
+    }
+    if t >= 1.0 {
+        return 1.0;
+    }
+
+    fn curve(s: f32, p1: f32, p2: f32) -> f32 {
+        let c = 3.0 * p1;
+        let b = 3.0 * (p2 - p1) - c;
+        let a = 1.0 - c - b;
+        ((a * s + b) * s + c) * s
+    }
+    fn slope(s: f32, p1: f32, p2: f32) -> f32 {
+        let c = 3.0 * p1;
+        let b = 3.0 * (p2 - p1) - c;
+        let a = 1.0 - c - b;
+        (3.0 * a * s + 2.0 * b) * s + c
+    }
+
+    let mut s = t;
+    for _ in 0..8 {
+        let error = curve(s, x1, x2) - t;
+        if error.abs() < 1e-6 {
+            return curve(s, y1, y2);
+        }
+        let derivative = slope(s, x1, x2);
+        if derivative.abs() < 1e-6 {
+            break;
+        }
+        s -= error / derivative;
+    }
+
+    // Newton stalled on a flat section; bisect (x(s) is monotonic for x1, x2 in [0, 1]).
+    let (mut low, mut high) = (0.0_f32, 1.0_f32);
+    s = t;
+    for _ in 0..32 {
+        let x = curve(s, x1, x2);
+        if (x - t).abs() < 1e-7 {
+            break;
+        }
+        if x < t {
+            low = s;
+        } else {
+            high = s;
+        }
+        s = 0.5 * (low + high);
+    }
+    curve(s, y1, y2)
 }
 
 pub trait Interpolate {
@@ -2070,6 +2431,19 @@ impl Interpolate for Vec2 {
         Self {
             x: <f32 as Interpolate>::interpolate(&from.x, &to.x, t),
             y: <f32 as Interpolate>::interpolate(&from.y, &to.y, t),
+        }
+    }
+}
+
+/// Colors interpolate per channel on the authored (sRGB-encoded) values, matching how
+/// per-channel expressions and keyframes behave.
+impl Interpolate for ColorRgba {
+    fn interpolate(from: &Self, to: &Self, t: f32) -> Self {
+        Self {
+            r: <f32 as Interpolate>::interpolate(&from.r, &to.r, t),
+            g: <f32 as Interpolate>::interpolate(&from.g, &to.g, t),
+            b: <f32 as Interpolate>::interpolate(&from.b, &to.b, t),
+            a: <f32 as Interpolate>::interpolate(&from.a, &to.a, t),
         }
     }
 }
@@ -2601,17 +2975,199 @@ layers:
 
     #[test]
     fn mapping_rejects_mixed_frame_and_seconds_endpoints() {
-        let property: ScalarProperty =
-            serde_yaml::from_str("{ start_frame: 0, end_time: 1.5, from: 0, to: 10 }")
-                .expect("mapping should parse");
-        let params = std::collections::BTreeMap::new();
-        let error = property
-            .validate_with_context(
-                "opacity",
-                &ExpressionContext::new(0.0, TimeBase::seconds(24), &params, 0),
-            )
-            .expect_err("mixed units must be rejected");
+        let error = serde_yaml::from_str::<ScalarProperty>(
+            "{ start_frame: 0, end_time: 1.5, from: 0, to: 10 }",
+        )
+        .expect_err("mixed units must be rejected");
         assert!(error.to_string().contains("not a mix"), "{error}");
+    }
+
+    fn sample_scalar(property: &ScalarProperty, frame: f32, time_base: TimeBase) -> f32 {
+        let params = std::collections::BTreeMap::new();
+        property
+            .evaluate_with_context(&ExpressionContext::new(frame, time_base, &params, 0))
+            .expect("sample")
+    }
+
+    fn probe_scalar(property: &ScalarProperty) -> anyhow::Result<()> {
+        let params = std::collections::BTreeMap::new();
+        property.validate_with_context(
+            "opacity",
+            &ExpressionContext::new(0.0, TimeBase::seconds(24), &params, 0),
+        )
+    }
+
+    #[test]
+    fn keyframe_track_samples_segments_with_per_key_easing() {
+        let property: ScalarProperty = serde_yaml::from_str(
+            r#"
+keyframes:
+  - { time: 1.0, value: 10 }
+  - { time: 2.0, value: 20, easing: hold }
+  - { time: 3.0, value: 0, easing: ease_in }
+  - { time: 4.0, value: 100 }
+"#,
+        )
+        .expect("track should parse");
+        probe_scalar(&property).expect("track should validate");
+        let tb = TimeBase::seconds(10);
+        let at = |seconds: f32| sample_scalar(&property, seconds * 10.0, tb);
+
+        assert_eq!(at(0.0), 10.0, "before first key holds first value");
+        assert!((at(1.5) - 15.0).abs() < 1e-5, "linear segment");
+        assert_eq!(at(2.0), 20.0);
+        assert_eq!(at(2.9), 20.0, "hold keeps value until next key");
+        assert_eq!(at(3.0), 0.0, "hold switches exactly at the next key");
+        assert!((at(3.5) - 25.0).abs() < 1e-4, "ease_in: 0.5^2 * 100");
+        assert_eq!(at(9.0), 100.0, "after last key holds last value");
+    }
+
+    #[test]
+    fn frame_keyed_track_is_fps_dependent_and_seconds_track_is_not() {
+        let frames: ScalarProperty = serde_yaml::from_str(
+            "{ keyframes: [ { frame: 0, value: 0 }, { frame: 24, value: 1 } ] }",
+        )
+        .expect("frame track");
+        let seconds: ScalarProperty =
+            serde_yaml::from_str("{ keyframes: [ { time: 0, value: 0 }, { time: 1, value: 1 } ] }")
+                .expect("seconds track");
+        // Half a second in at 60fps is frame 30.
+        assert_eq!(sample_scalar(&frames, 30.0, TimeBase::seconds(60)), 1.0);
+        assert!((sample_scalar(&seconds, 30.0, TimeBase::seconds(60)) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn legacy_mapping_is_sugar_for_two_key_track() {
+        let legacy: ScalarProperty = serde_yaml::from_str(
+            "{ start_frame: 6, end_frame: 30, from: -3, to: 17.5, easing: ease_in_out }",
+        )
+        .expect("legacy mapping");
+        let track: ScalarProperty = serde_yaml::from_str(
+            r#"
+keyframes:
+  - { frame: 6, value: -3, easing: ease_in_out }
+  - { frame: 30, value: 17.5 }
+"#,
+        )
+        .expect("track");
+        let tb = TimeBase::legacy_frames(24);
+        for step in 0..=80 {
+            let frame = step as f32 * 0.5;
+            assert_eq!(
+                sample_scalar(&legacy, frame, tb).to_bits(),
+                sample_scalar(&track, frame, tb).to_bits(),
+                "frame {frame}"
+            );
+        }
+    }
+
+    #[test]
+    fn cubic_bezier_easing_matches_reference_points() {
+        use super::EasingCurve;
+        let linear = EasingCurve::CubicBezier {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
+        let ease_in_out = EasingCurve::CubicBezier {
+            x1: 0.42,
+            y1: 0.0,
+            x2: 0.58,
+            y2: 1.0,
+        };
+        for t in [0.0, 0.1, 0.25, 0.5, 0.8, 1.0] {
+            assert!((linear.apply(t) - t).abs() < 1e-4, "linear bezier at {t}");
+        }
+        assert!((ease_in_out.apply(0.5) - 0.5).abs() < 1e-4);
+        assert!(ease_in_out.apply(0.25) < 0.25, "slow start");
+        assert!(ease_in_out.apply(0.75) > 0.75, "slow end");
+        // Symmetric curve: f(t) + f(1 - t) == 1.
+        for t in [0.1_f32, 0.3, 0.45] {
+            assert!((ease_in_out.apply(t) + ease_in_out.apply(1.0 - t) - 1.0).abs() < 1e-4);
+        }
+
+        let parsed: EasingCurve = serde_yaml::from_str("[0.42, 0, 0.58, 1]").expect("array");
+        assert_eq!(parsed, ease_in_out);
+        let parsed: EasingCurve =
+            serde_yaml::from_str("{ cubic_bezier: [0.42, 0, 0.58, 1] }").expect("object");
+        assert_eq!(parsed, ease_in_out);
+        assert_eq!(
+            serde_yaml::from_str::<EasingCurve>("step").expect("alias"),
+            EasingCurve::Hold
+        );
+    }
+
+    #[test]
+    fn keyframe_track_validation_errors_are_explicit() {
+        let cases = [
+            (
+                "{ keyframes: [ { time: 1, value: 0 }, { time: 1, value: 1 } ] }",
+                "strictly increasing",
+            ),
+            (
+                "{ keyframes: [ { time: 0, value: 0 }, { frame: 30, value: 1 } ] }",
+                "same unit",
+            ),
+            (
+                "{ keyframes: [ { time: 0, value: 0, easing: [1.5, 0, 0.5, 1] }, { time: 1, value: 1 } ] }",
+                "x1 and x2 must be within [0, 1]",
+            ),
+        ];
+        for (yaml, expected) in cases {
+            let property: ScalarProperty = serde_yaml::from_str(yaml).expect("shape parses");
+            let error = probe_scalar(&property).expect_err(yaml);
+            assert!(error.to_string().contains(expected), "{yaml}: {error}");
+        }
+
+        let parse_cases = [
+            (
+                "{ keyframes: [ { time: 0, frame: 0, value: 0 } ] }",
+                "exactly one of `time` (seconds) or `frame`",
+            ),
+            ("{ keyframes: [] }", "at least one key"),
+            (
+                "{ keyframes: [ { time: 0, value: 0, easing: bounce } ] }",
+                "unknown easing 'bounce'",
+            ),
+            ("\"sin(t\"", "unterminated function call for 'sin'"),
+        ];
+        for (yaml, expected) in parse_cases {
+            let error = serde_yaml::from_str::<ScalarProperty>(yaml).expect_err(yaml);
+            assert!(error.to_string().contains(expected), "{yaml}: {error}");
+        }
+    }
+
+    #[test]
+    fn color_keyframes_interpolate_whole_colors() {
+        use super::{AnimatableColor, ColorRgba};
+        let color: AnimatableColor = serde_yaml::from_str(
+            r#"
+keyframes:
+  - { time: 0, value: { r: 1, g: 0, b: 0 } }
+  - { time: 1, value: { r: 0, g: 0, b: 1, a: 0.5 } }
+"#,
+        )
+        .expect("color track");
+        assert!(!color.is_static());
+        let params = std::collections::BTreeMap::new();
+        let mid = color
+            .evaluate(&ExpressionContext::new(
+                12.0,
+                TimeBase::seconds(24),
+                &params,
+                0,
+            ))
+            .expect("evaluate");
+        assert_eq!(
+            mid,
+            ColorRgba {
+                r: 0.5,
+                g: 0.0,
+                b: 0.5,
+                a: 0.75
+            }
+        );
     }
 
     #[test]

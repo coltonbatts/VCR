@@ -167,6 +167,22 @@ animation speed does not depend on `environment.fps`. Manifests without a versio
 `version: 1`) keep the legacy frame-based `t` and render exactly as before. See
 `docs/PARAMS.md` for the full time model.
 
+Keyframes: any animatable property accepts a multi-key track with per-segment easing
+(named curves, `hold`, or a CSS-style cubic bezier):
+
+```yaml
+opacity:
+  keyframes:
+    - { time: 0.0, value: 0, easing: ease_out }
+    - { time: 0.5, value: 1, easing: hold }
+    - { time: 2.0, value: 1, easing: [0.42, 0, 0.58, 1] }
+    - { time: 2.5, value: 0 }
+```
+
+The older `{ start_frame, end_frame, from, to, easing }` form still works as shorthand
+for a two-key track. `examples/demo_scene.vcr` shows tracks on position, scale, rotation,
+opacity, and colors. Syntax reference: `docs/PARAMS.md` ("Keyframes").
+
 Override at runtime:
 
 ```bash
