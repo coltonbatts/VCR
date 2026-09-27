@@ -17,7 +17,7 @@ layers:
     z_index: 2
     # Replace with your generated text PNG asset.
     image:
-      path: "../assets/vcr_text.png"
+      path: "assets/vcr_text.png"
     pos_x: "-1200 + smoothstep(8 + entrance_delay, 56 + entrance_delay, t * text_speed) * 1400"
     pos_y: "420 + smoothstep(20 + entrance_delay, 76 + entrance_delay, t) * drop_distance"
     opacity: "smoothstep(8, 28, t) * (1.0 - smoothstep(108, 120, t))"

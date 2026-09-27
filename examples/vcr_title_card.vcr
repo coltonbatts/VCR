@@ -37,7 +37,7 @@ layers:
     scale: [2.2, 2.2]
     opacity: "smoothstep(6, 34, t) * 0.55"
     image:
-      path: "../assets/pixel_block.png"
+      path: "assets/pixel_block.png"
 
   - id: pixel_block_b
     z_index: 2
@@ -46,7 +46,7 @@ layers:
     scale: [1.5, 1.5]
     opacity: "smoothstep(14, 44, t) * 0.36"
     image:
-      path: "../assets/pixel_block.png"
+      path: "assets/pixel_block.png"
 
   - id: pixel_block_c
     z_index: 2
@@ -55,7 +55,7 @@ layers:
     scale: [0.95, 0.95]
     opacity: "smoothstep(20, 58, t) * 0.28"
     image:
-      path: "../assets/pixel_block.png"
+      path: "assets/pixel_block.png"
 
   - id: ascii_frame
     z_index: 3
@@ -63,7 +63,7 @@ layers:
     pos_y: "160 + cos(t / 68) * 2"
     opacity: "smoothstep(24, 66, t) * 0.8"
     image:
-      path: "../assets/ascii_frame.png"
+      path: "assets/ascii_frame.png"
 
   - id: vcr_text
     z_index: 4
@@ -71,4 +71,4 @@ layers:
     pos_y: "280 + cos(t / 76) * 1.5"
     opacity: "smoothstep(36, 78, t)"
     image:
-      path: "../assets/vcr_text.png"
+      path: "assets/vcr_text.png"
