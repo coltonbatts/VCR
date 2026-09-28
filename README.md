@@ -226,15 +226,21 @@ For full help:
 ```bash
 cargo test
 cargo test --test determinism
+cargo test --test backend_parity   # GPU vs software; skips without a GPU (VCR_REQUIRE_GPU=1 to fail instead)
+cargo test --test time_model       # fps-independence of version 2 manifests
 cargo test --test cli_contract
 ```
+
+Both backends implement one color pipeline (linear light, premultiplied alpha, sRGB encode at
+output). See `docs/COLOR_PIPELINE.md`.
 
 Exit code contract is documented in `docs/EXIT_CODES.md`.
 Param semantics are documented in `docs/PARAMS.md`.
 
 ## Project Docs
 
-- `docs/PARAMS.md` - typed params and `--set` semantics
+- `docs/PARAMS.md` - typed params, `--set` semantics, time model, keyframes
+- `docs/COLOR_PIPELINE.md` - canonical color/blend pipeline and backend parity tolerance
 - `docs/PLAYGROUND.md` - preset playground runner and outputs
 - `docs/CHAT_RENDER.md` - tagged transcript to animated terminal video
 - `docs/ASCII_STAGE.md` - stylized `.vcrtxt` transcript rendering with camera/preset options

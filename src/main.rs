@@ -2034,8 +2034,7 @@ fn run_build(
         &metadata_path,
         &manifest,
         &manifest.environment,
-        renderer.backend_name(),
-        renderer.backend_reason(),
+        &renderer,
         window,
     )?;
     println!("Wrote {}", metadata_path.display());
@@ -2175,8 +2174,7 @@ fn run_preview(
         &metadata_path,
         &manifest,
         &preview_environment,
-        renderer.backend_name(),
-        renderer.backend_reason(),
+        &renderer,
         window,
     )?;
     println!("Wrote {}", metadata_path.display());
@@ -2253,8 +2251,7 @@ fn run_render_frame(
         &metadata_path,
         &manifest,
         &manifest.environment,
-        renderer.backend_name(),
-        renderer.backend_reason(),
+        &renderer,
         window,
     )?;
     println!("Wrote {}", metadata_path.display());
@@ -2340,8 +2337,7 @@ fn run_render_frames(
         &metadata_path,
         &manifest,
         &manifest.environment,
-        renderer.backend_name(),
-        renderer.backend_reason(),
+        &renderer,
         window,
     )?;
     println!("Wrote {}", metadata_path.display());
@@ -2595,6 +2591,10 @@ struct RenderMetadata {
     vcr_version: String,
     backend: String,
     backend_reason: String,
+    /// Color pipeline revision the pixels were produced with (see docs/COLOR_PIPELINE.md).
+    color_pipeline: &'static str,
+    /// Manifest features the backend could not render faithfully. Empty when faithful.
+    warnings: Vec<String>,
     resolution: RenderMetadataResolution,
     fps: u32,
     frame_count: u32,
@@ -2643,8 +2643,7 @@ fn emit_render_metadata(
     metadata_path: &Path,
     manifest: &Manifest,
     environment: &Environment,
-    backend_name: &str,
-    backend_reason: &str,
+    renderer: &Renderer,
     window: FrameWindow,
 ) -> Result<()> {
     if let Some(parent) = metadata_path.parent() {
@@ -2664,8 +2663,10 @@ fn emit_render_metadata(
         manifest_hash: render_manifest_hash,
         resolved_manifest_hash,
         vcr_version: env!("CARGO_PKG_VERSION").to_owned(),
-        backend: backend_name.to_owned(),
-        backend_reason: backend_reason.to_owned(),
+        backend: renderer.backend_name().to_owned(),
+        backend_reason: renderer.backend_reason().to_owned(),
+        color_pipeline: vcr::color::PIPELINE_ID,
+        warnings: renderer.warnings().to_vec(),
         resolution: RenderMetadataResolution {
             width: environment.resolution.width,
             height: environment.resolution.height,

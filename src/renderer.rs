@@ -8,15 +8,13 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context, Result};
 use bytemuck::{Pod, Zeroable};
 use image::ImageReader;
-use tiny_skia::{
-    BlendMode, Color, FillRule, FilterQuality, GradientStop, LinearGradient, Paint, PathBuilder,
-    Pixmap, PixmapPaint, Point, Rect, SpreadMode, Transform,
-};
+use tiny_skia::Pixmap;
 use wgpu::util::DeviceExt;
 
 use crate::ascii::PreparedAsciiLayer;
+use crate::color;
 use crate::schema::{
-    Anchor, AnimatableColor, AsciiLayer, AssetLayer, ColorRgba, Environment, ExpressionContext,
+    Anchor, AnimatableColor, AsciiLayer, AssetLayer, Environment, ExpressionContext,
     GradientDirection, Group, ImageLayer, Layer, LayerCommon, ModulatorBinding, ModulatorMap,
     Parameters, ProceduralLayer, ProceduralSource, PropertyValue, ScalarProperty, ShaderLayer,
     TextLayer, TimeBase, TimingControls, Vec2,
@@ -56,13 +54,19 @@ fn vs_main(input: VertexInput) -> VertexOutput {
   return out;
 }
 
+// Layer textures hold premultiplied linear color (sRGB-encoded storage, decoded by the
+// sampler before filtering), so opacity scales every channel and the pipeline blends with
+// premultiplied source-over into a float accumulator.
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-  let tex = textureSample(layer_tex, layer_sampler, input.uv);
-  return vec4<f32>(tex.rgb, tex.a * layer.opacity);
+  return textureSample(layer_tex, layer_sampler, input.uv) * layer.opacity;
 }
 "#;
 
+// Must stay formula-for-formula identical to `procedural_premultiplied` (software backend).
+// Colors arrive premultiplied in linear light. Geometry is evaluated in pixel space: centers,
+// points and sizes are fractions of the frame's width/height; radii and thickness are
+// fractions of the frame width, so circles stay circular at any aspect ratio.
 const PROCEDURAL_SHADER: &str = r#"
 struct ProceduralUniform {
   kind: u32,
@@ -79,6 +83,8 @@ struct ProceduralUniform {
   corner_radius: f32,
   thickness: f32,
   size: vec2<f32>,
+  resolution: vec2<f32>,
+  _padding2: vec2<f32>,
 }
 
 @group(0) @binding(0) var<uniform> procedural: ProceduralUniform;
@@ -111,7 +117,11 @@ const PI: f32 = 3.14159265358979;
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-  let uv = clamp(input.uv, vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 1.0));
+  // Recompute uv from the pixel center so both backends sample identical positions.
+  let res = procedural.resolution;
+  let uv = clamp(input.position.xy / res, vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 1.0));
+  let px = uv * res;
+  let unit = res.x;
   let transparent = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
   // 0: SolidColor
@@ -119,10 +129,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     return procedural.color_a;
   }
 
-  // 1: Gradient
+  // 1: Gradient (interpolates premultiplied linear endpoints)
   if procedural.kind == 1u {
     let amount = select(uv.y, uv.x, procedural.axis == 0u);
-    return mix(procedural.color_a, procedural.color_b, amount);
+    return procedural.color_a + (procedural.color_b - procedural.color_a) * amount;
   }
 
   // 2: Triangle
@@ -142,8 +152,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
   // 3: Circle
   if procedural.kind == 3u {
-    let dist = distance(uv, procedural.p0);
-    if dist < procedural.radius {
+    let dist = distance(px, procedural.p0 * res);
+    if dist < procedural.radius * unit {
       return procedural.color_a;
     }
     return transparent;
@@ -151,9 +161,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
   // 4: RoundedRect
   if procedural.kind == 4u {
-    let half_size = procedural.size * 0.5;
-    let d = abs(uv - procedural.p0) - half_size + vec2<f32>(procedural.corner_radius);
-    let sdf = length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0) - procedural.corner_radius;
+    let half_size = procedural.size * res * 0.5;
+    let r = procedural.corner_radius * unit;
+    let d = abs(px - procedural.p0 * res) - half_size + vec2<f32>(r);
+    let sdf = length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0) - r;
     if sdf <= 0.0 {
       return procedural.color_a;
     }
@@ -162,8 +173,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
   // 5: Ring
   if procedural.kind == 5u {
-    let dist = distance(uv, procedural.p0);
-    if dist <= procedural.radius && dist >= procedural.inner_radius {
+    let dist = distance(px, procedural.p0 * res);
+    if dist <= procedural.radius * unit && dist >= procedural.inner_radius * unit {
       return procedural.color_a;
     }
     return transparent;
@@ -171,28 +182,31 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
   // 6: Line (capsule SDF)
   if procedural.kind == 6u {
-    let ab = procedural.p1 - procedural.p0;
-    let ap = uv - procedural.p0;
-    let t_line = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
-    let closest = procedural.p0 + ab * t_line;
-    let dist = distance(uv, closest);
-    if dist <= procedural.thickness * 0.5 {
+    let a = procedural.p0 * res;
+    let ab = procedural.p1 * res - a;
+    let ap = px - a;
+    let len_sq = dot(ab, ab);
+    var t_line = 0.0;
+    if len_sq > 0.000001 {
+      t_line = clamp(dot(ap, ab) / len_sq, 0.0, 1.0);
+    }
+    let dist = distance(px, a + ab * t_line);
+    if dist <= procedural.thickness * unit * 0.5 {
       return procedural.color_a;
     }
     return transparent;
   }
 
-  // 7: Polygon (regular n-gon SDF)
+  // 7: Polygon (regular n-gon, first vertex pointing up)
   if procedural.kind == 7u {
     let n = f32(procedural.extra_u32);
-    let p = uv - procedural.p0;
-    let angle = atan2(p.y, p.x);
+    let p = px - procedural.p0 * res;
+    let angle = atan2(p.y, p.x) + PI * 0.5;
     let sector = 2.0 * PI / n;
     let r = length(p);
     let theta = ((angle % sector) + sector) % sector;
     let half_sector = sector * 0.5;
-    let cos_half = cos(half_sector);
-    let edge_dist = procedural.radius * cos_half;
+    let edge_dist = procedural.radius * unit * cos(half_sector);
     let proj = r * cos(theta - half_sector);
     if proj <= edge_dist {
       return procedural.color_a;
@@ -234,9 +248,74 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
   return out;
 }
 
+fn vcr_srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+  let low = c / 12.92;
+  let high = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+  return select(high, low, c <= vec3<f32>(0.04045));
+}
+
+// `shade` returns straight-alpha sRGB-encoded color (like manifest colors); convert it to the
+// pipeline's premultiplied linear representation.
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-  return shade(input.uv, vcr_uniforms);
+  let c = clamp(shade(input.uv, vcr_uniforms), vec4<f32>(0.0), vec4<f32>(1.0));
+  return vec4<f32>(vcr_srgb_to_linear(c.rgb) * c.a, c.a);
+}
+"#;
+
+// Converts the float accumulator (premultiplied linear) to the output target: unpremultiply,
+// then sRGB-encode (in shader, or by hardware when the target format is *Srgb).
+// Must match `color::encode_output`.
+const RESOLVE_SHADER: &str = r#"
+struct ResolveUniform {
+  encode_srgb: u32,
+  _pad0: u32,
+  _pad1: u32,
+  _pad2: u32,
+}
+
+@group(0) @binding(0) var accum_tex: texture_2d<f32>;
+@group(0) @binding(1) var<uniform> resolve: ResolveUniform;
+
+struct VertexOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+  var positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -3.0),
+    vec2<f32>(-1.0, 1.0),
+    vec2<f32>(3.0, 1.0)
+  );
+  var out: VertexOutput;
+  let p = positions[vertex_index];
+  out.position = vec4<f32>(p, 0.0, 1.0);
+  out.uv = p * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
+  return out;
+}
+
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+  let low = c * 12.92;
+  let high = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+  return select(high, low, c <= vec3<f32>(0.0031308));
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+  let dims = textureDimensions(accum_tex);
+  let coord = min(vec2<u32>(floor(input.uv * vec2<f32>(dims))), dims - vec2<u32>(1u, 1u));
+  let premultiplied = textureLoad(accum_tex, coord, 0);
+  let alpha = clamp(premultiplied.a, 0.0, 1.0);
+  if alpha < 0.5 / 255.0 {
+    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+  }
+  var rgb = clamp(premultiplied.rgb / alpha, vec3<f32>(0.0), vec3<f32>(1.0));
+  if resolve.encode_srgb == 1u {
+    rgb = linear_to_srgb(rgb);
+  }
+  return vec4<f32>(rgb, alpha);
 }
 "#;
 
@@ -286,7 +365,21 @@ struct ProceduralUniform {
     corner_radius: f32,
     thickness: f32,
     size: [f32; 2],
+    resolution: [f32; 2],
+    _padding2: [f32; 2],
 }
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct ResolveUniform {
+    encode_srgb: u32,
+    _pad: [u32; 3],
+}
+
+/// Float accumulator for layer compositing (premultiplied linear light).
+const ACCUM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Storage for every layer texture: premultiplied linear, sRGB-encoded 8-bit.
+const LAYER_TEXEL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 struct GpuLayer {
     id: String,
@@ -375,6 +468,11 @@ struct GpuRenderer {
     params: Parameters,
     modulators: ModulatorMap,
     output_texture: wgpu::Texture,
+    _accum_texture: wgpu::Texture,
+    accum_view: wgpu::TextureView,
+    resolve_pipeline: wgpu::RenderPipeline,
+    resolve_bind_group: wgpu::BindGroup,
+    _resolve_uniform_buffer: wgpu::Buffer,
     readback_buffers: [wgpu::Buffer; READBACK_BUFFER_COUNT],
     next_readback_index: usize,
     pending_readback: Option<PendingReadback>,
@@ -509,6 +607,8 @@ async fn request_best_adapter(
 pub struct Renderer {
     backend: RendererBackend,
     backend_reason: String,
+    /// Places where this backend cannot render the manifest faithfully (recorded in metadata).
+    warnings: Vec<String>,
 }
 
 enum RendererBackend {
@@ -524,6 +624,7 @@ struct SoftwareRenderer {
     params: Parameters,
     modulators: ModulatorMap,
     layers: Vec<SoftwareLayer>,
+    warnings: Vec<String>,
 }
 
 struct SoftwareLayer {
@@ -545,11 +646,21 @@ struct SoftwareLayer {
 }
 
 enum SoftwareLayerSource {
-    Asset { pixmap: Pixmap },
-    Procedural(ProceduralSource),
+    Asset {
+        texels: Texels,
+    },
+    Procedural {
+        source: ProceduralSource,
+        is_static: bool,
+        cached: Option<Texels>,
+    },
     Shader,
-    Text { pixmap: Pixmap },
-    Ascii { prepared: PreparedAsciiLayer },
+    Text {
+        texels: Texels,
+    },
+    Ascii {
+        prepared: PreparedAsciiLayer,
+    },
 }
 
 impl GpuRenderer {
@@ -596,6 +707,22 @@ impl GpuRenderer {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
+
+        let accum_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("vcr-accumulation-target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: ACCUM_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let accum_view = accum_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let unpadded_bytes_per_row = checked_bytes_per_row(width, "frame width")?.get();
         let padded_bytes_per_row =
@@ -706,8 +833,8 @@ impl GpuRenderer {
                 module: &blend_shader,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: render_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    format: ACCUM_FORMAT,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -738,7 +865,94 @@ impl GpuRenderer {
                 module: &procedural_shader,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    format: LAYER_TEXEL_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            multiview: None,
+        });
+
+        let resolve_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("vcr-resolve-bind-group-layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                                ResolveUniform,
+                            >()
+                                as u64),
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let resolve_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("vcr-resolve-uniform"),
+            contents: bytemuck::bytes_of(&ResolveUniform {
+                // *Srgb targets encode in hardware; everything else is encoded in the shader.
+                encode_srgb: u32::from(!render_format.is_srgb()),
+                _pad: [0; 3],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let resolve_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vcr-resolve-bind-group"),
+            layout: &resolve_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&accum_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: resolve_uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        let resolve_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("vcr-resolve-shader"),
+            source: wgpu::ShaderSource::Wgsl(RESOLVE_SHADER.into()),
+        });
+        let resolve_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("vcr-resolve-pipeline-layout"),
+                bind_group_layouts: &[&resolve_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let resolve_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("vcr-resolve-pipeline"),
+            layout: Some(&resolve_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &resolve_shader,
+                entry_point: "vs_main",
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &resolve_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: render_format,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -862,6 +1076,11 @@ impl GpuRenderer {
             params: scene.params.clone(),
             modulators: scene.modulators.clone(),
             output_texture,
+            _accum_texture: accum_texture,
+            accum_view,
+            resolve_pipeline,
+            resolve_bind_group,
+            _resolve_uniform_buffer: resolve_uniform_buffer,
             readback_buffers,
             next_readback_index: 0,
             pending_readback: None,
@@ -949,7 +1168,7 @@ impl GpuRenderer {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("vcr-render-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target_view,
+                view: &self.accum_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -983,6 +1202,25 @@ impl GpuRenderer {
             render_pass.set_vertex_buffer(0, layer.vertex_buffer.slice(..));
             render_pass.draw(0..6, 0..1);
         }
+        drop(render_pass);
+
+        let mut resolve_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("vcr-resolve-pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        resolve_pass.set_pipeline(&self.resolve_pipeline);
+        resolve_pass.set_bind_group(0, &self.resolve_bind_group, &[]);
+        resolve_pass.draw(0..3, 0..1);
 
         Ok(())
     }
@@ -1063,7 +1301,8 @@ impl GpuRenderer {
                 continue;
             }
 
-            let uniform = evaluate_procedural_uniform(&procedural.source, &context)?;
+            let uniform =
+                evaluate_procedural_uniform(&procedural.source, &context, self.width, self.height)?;
             if procedural.last_uniform != Some(uniform) {
                 self.queue.write_buffer(
                     &procedural.uniform_buffer,
@@ -1178,10 +1417,10 @@ impl GpuRenderer {
             let pixmap = ascii
                 .prepared
                 .render_frame_pixmap(source_frame.max(0.0).floor() as u32)?;
-            queue_write_pixmap_texture(
+            queue_write_texels(
                 &self.queue,
                 &ascii.texture,
-                pixmap.as_ref(),
+                &Texels::from_srgb_premultiplied_pixmap(&pixmap),
                 &format!("ascii layer '{}'", layer.id),
             )?;
             ascii.has_rendered = true;
@@ -1193,6 +1432,28 @@ impl GpuRenderer {
 }
 
 impl Renderer {
+    fn from_software(software: SoftwareRenderer, backend_reason: String) -> Self {
+        Self {
+            warnings: software.warnings.clone(),
+            backend: RendererBackend::Software(software),
+            backend_reason,
+        }
+    }
+
+    fn from_gpu(gpu: GpuRenderer) -> Self {
+        Self {
+            backend_reason: format!("adapter '{}' ({:?})", gpu.adapter_name, gpu.adapter_backend),
+            backend: RendererBackend::Gpu(gpu),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Features this backend could not render faithfully. Callers must surface these and
+    /// record them in render metadata.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
     pub fn new_software(
         environment: &Environment,
         layers: &[Layer],
@@ -1200,10 +1461,10 @@ impl Renderer {
     ) -> Result<Self> {
         let software = SoftwareRenderer::new(environment, layers, &scene)
             .context("failed to initialize software renderer")?;
-        Ok(Self {
-            backend: RendererBackend::Software(software),
-            backend_reason: "forced software backend".to_owned(),
-        })
+        Ok(Self::from_software(
+            software,
+            "forced software backend".to_owned(),
+        ))
     }
 
     pub async fn new_with_scene(
@@ -1218,10 +1479,7 @@ impl Renderer {
                 if can_use_software_fallback(&error_message, layers) {
                     let software = SoftwareRenderer::new(environment, layers, &scene)
                         .context("failed to initialize software renderer fallback")?;
-                    return Ok(Self {
-                        backend: RendererBackend::Software(software),
-                        backend_reason: error_message,
-                    });
+                    return Ok(Self::from_software(software, error_message));
                 }
                 if error_message.contains(NO_GPU_ADAPTER_ERR) && has_shader_layers(layers) {
                     return Err(error.context(
@@ -1232,10 +1490,7 @@ impl Renderer {
             }
         };
 
-        Ok(Self {
-            backend_reason: format!("adapter '{}' ({:?})", gpu.adapter_name, gpu.adapter_backend),
-            backend: RendererBackend::Gpu(gpu),
-        })
+        Ok(Self::from_gpu(gpu))
     }
 
     pub fn new_with_scene_and_context(
@@ -1258,19 +1513,13 @@ impl Renderer {
                 if can_use_software_fallback(&error_message, layers) {
                     let software = SoftwareRenderer::new(environment, layers, &scene)
                         .context("failed to initialize software renderer fallback")?;
-                    return Ok(Self {
-                        backend: RendererBackend::Software(software),
-                        backend_reason: error_message,
-                    });
+                    return Ok(Self::from_software(software, error_message));
                 }
                 return Err(error);
             }
         };
 
-        Ok(Self {
-            backend_reason: format!("adapter '{}' ({:?})", gpu.adapter_name, gpu.adapter_backend),
-            backend: RendererBackend::Gpu(gpu),
-        })
+        Ok(Self::from_gpu(gpu))
     }
 
     pub fn is_gpu_backend(&self) -> bool {
@@ -1313,31 +1562,39 @@ impl Renderer {
 
 impl SoftwareRenderer {
     fn new(environment: &Environment, layers: &[Layer], scene: &RenderSceneData) -> Result<Self> {
-        let width = environment.resolution.width;
         let time_base = scene.time_base(environment.fps);
+        let width = environment.resolution.width;
         let height = environment.resolution.height;
         let groups_by_id = resolve_groups_by_id(&scene.groups);
         let mut software_layers = Vec::with_capacity(layers.len());
+        let mut warnings = Vec::new();
 
         for layer in layers {
             let common = layer.common();
             let group_chain = resolve_group_chain(common, &groups_by_id)?;
             let source = match layer {
                 Layer::Asset(asset_layer) => SoftwareLayerSource::Asset {
-                    pixmap: load_asset_pixmap(asset_layer)?,
+                    texels: load_image_texels(&asset_layer.source_path, &asset_layer.common.id)?,
                 },
                 Layer::Image(image_layer) => SoftwareLayerSource::Asset {
-                    pixmap: load_image_pixmap(image_layer)?,
+                    texels: load_image_texels(&image_layer.image.path, &image_layer.common.id)?,
                 },
-                Layer::Procedural(procedural_layer) => {
-                    SoftwareLayerSource::Procedural(procedural_layer.procedural.clone())
-                }
-                Layer::Shader(_) => {
-                    eprintln!("[warn] custom shader layers require GPU backend; layer rendered as transparent");
+                Layer::Procedural(procedural_layer) => SoftwareLayerSource::Procedural {
+                    source: procedural_layer.procedural.clone(),
+                    is_static: procedural_layer.procedural.is_static(),
+                    cached: None,
+                },
+                Layer::Shader(shader_layer) => {
+                    let warning = format!(
+                        "layer '{}': custom WGSL shader layers cannot run on the software backend and are rendered as fully transparent",
+                        shader_layer.common.id
+                    );
+                    eprintln!("[VCR] WARNING: {warning}");
+                    warnings.push(warning);
                     SoftwareLayerSource::Shader
                 }
                 Layer::Text(text_layer) => SoftwareLayerSource::Text {
-                    pixmap: render_text_to_pixmap(text_layer)?,
+                    texels: render_text_texels(text_layer)?,
                 },
                 Layer::Ascii(ascii_layer) => SoftwareLayerSource::Ascii {
                     prepared: PreparedAsciiLayer::new(&ascii_layer.ascii, &ascii_layer.common.id)?,
@@ -1345,10 +1602,12 @@ impl SoftwareRenderer {
             };
 
             let (layer_width, layer_height) = match &source {
-                SoftwareLayerSource::Asset { pixmap } => (pixmap.width(), pixmap.height()),
-                SoftwareLayerSource::Procedural(_) => (width, height),
-                SoftwareLayerSource::Shader => (width, height),
-                SoftwareLayerSource::Text { pixmap } => (pixmap.width(), pixmap.height()),
+                SoftwareLayerSource::Asset { texels } | SoftwareLayerSource::Text { texels } => {
+                    (texels.width, texels.height)
+                }
+                SoftwareLayerSource::Procedural { .. } | SoftwareLayerSource::Shader => {
+                    (width, height)
+                }
                 SoftwareLayerSource::Ascii { prepared } => {
                     (prepared.pixel_width(), prepared.pixel_height())
                 }
@@ -1382,29 +1641,31 @@ impl SoftwareRenderer {
             params: scene.params.clone(),
             modulators: scene.modulators.clone(),
             layers: software_layers,
+            warnings,
         })
     }
 
     fn render_frame_rgba(&mut self, frame_index: u32) -> Result<Vec<u8>> {
-        let mut output = Pixmap::new(self.width, self.height)
-            .ok_or_else(|| anyhow!("failed to allocate software output pixmap"))?;
-        output.fill(Color::from_rgba8(0, 0, 0, 0));
-
-        for layer in &self.layers {
-            self.render_layer(&mut output, layer, frame_index)?;
+        let mut accum = vec![[0.0_f32; 4]; (self.width * self.height) as usize];
+        for index in 0..self.layers.len() {
+            self.render_layer(&mut accum, index, frame_index)?;
         }
 
-        let mut frame = output.data().to_vec();
-        unpremultiply_rgba_in_place(&mut frame);
+        let mut frame = Vec::with_capacity(accum.len() * 4);
+        for pixel in accum {
+            frame.extend_from_slice(&color::encode_output(pixel));
+        }
         Ok(frame)
     }
 
     fn render_layer(
-        &self,
-        output: &mut Pixmap,
-        layer: &SoftwareLayer,
+        &mut self,
+        accum: &mut [[f32; 4]],
+        layer_index: usize,
         frame_index: u32,
     ) -> Result<()> {
+        let (width, height, time_base, seed) = (self.width, self.height, self.time_base, self.seed);
+        let layer = &mut self.layers[layer_index];
         let Some(state) = evaluate_layer_state(
             &layer.id,
             &layer.position,
@@ -1417,9 +1678,9 @@ impl SoftwareRenderer {
             &layer.modulators,
             &layer.group_chain,
             frame_index,
-            self.time_base,
+            time_base,
             &self.params,
-            self.seed,
+            seed,
             &self.modulators,
         )?
         else {
@@ -1437,36 +1698,38 @@ impl SoftwareRenderer {
             layer.height as f32,
             layer.anchor,
         );
-
-        let Some(source_frame) = layer_source_frame(
-            layer.timing,
-            &layer.group_chain,
-            frame_index,
-            self.time_base,
-        ) else {
+        let Some(source_frame) =
+            layer_source_frame(layer.timing, &layer.group_chain, frame_index, time_base)
+        else {
             return Ok(());
         };
 
-        match &layer.source {
-            SoftwareLayerSource::Asset { pixmap } => {
-                draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
+        match &mut layer.source {
+            SoftwareLayerSource::Asset { texels } | SoftwareLayerSource::Text { texels } => {
+                composite_texels(accum, width, height, texels, opacity, transform);
             }
-            SoftwareLayerSource::Procedural(source) => {
-                let context =
-                    ExpressionContext::new(source_frame, self.time_base, &self.params, self.seed);
-                let procedural =
-                    render_procedural_pixmap(source, self.width, self.height, &context)?;
-                draw_layer_pixmap(output, procedural.as_ref(), opacity, transform);
+            SoftwareLayerSource::Procedural {
+                source,
+                is_static,
+                cached,
+            } => {
+                if cached.is_none() || !*is_static {
+                    let context =
+                        ExpressionContext::new(source_frame, time_base, &self.params, seed);
+                    let uniform = evaluate_procedural_uniform(source, &context, width, height)?;
+                    *cached = Some(render_procedural_texels(&uniform, width, height));
+                }
+                if let Some(texels) = cached.as_ref() {
+                    composite_texels(accum, width, height, texels, opacity, transform);
+                }
             }
             SoftwareLayerSource::Shader => {
-                // Custom WGSL shaders can't run on CPU — skip
-            }
-            SoftwareLayerSource::Text { pixmap } => {
-                draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
+                // Recorded as a warning at construction; see `Renderer::warnings`.
             }
             SoftwareLayerSource::Ascii { prepared } => {
                 let pixmap = prepared.render_frame_pixmap(source_frame.max(0.0).floor() as u32)?;
-                draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
+                let texels = Texels::from_srgb_premultiplied_pixmap(&pixmap);
+                composite_texels(accum, width, height, &texels, opacity, transform);
             }
         }
 
@@ -1551,8 +1814,8 @@ fn build_bitmap_layer(
     seed: u64,
     time_base: TimeBase,
 ) -> Result<GpuLayer> {
-    let image = load_rgba_image(image_path, &common.id)?;
-    let (layer_width, layer_height) = image.dimensions();
+    let texels = load_image_texels(image_path, &common.id)?;
+    let (layer_width, layer_height) = (texels.width, texels.height);
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(&format!("vcr-layer-{}", common.id)),
@@ -1564,35 +1827,12 @@ fn build_bitmap_layer(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format: LAYER_TEXEL_FORMAT,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
 
-    let bytes_per_row =
-        checked_bytes_per_row(layer_width, &format!("layer '{}' width", common.id))?;
-    let rows_per_image = NonZeroU32::new(layer_height)
-        .ok_or_else(|| anyhow!("layer '{}' has invalid height {}", common.id, layer_height))?;
-
-    queue.write_texture(
-        wgpu::ImageCopyTexture {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        image.as_raw(),
-        wgpu::ImageDataLayout {
-            offset: 0,
-            bytes_per_row: Some(bytes_per_row.get()),
-            rows_per_image: Some(rows_per_image.get()),
-        },
-        wgpu::Extent3d {
-            width: layer_width,
-            height: layer_height,
-            depth_or_array_layers: 1,
-        },
-    );
+    queue_write_texels(queue, &texture, &texels, &format!("layer '{}'", common.id))?;
 
     let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -1682,14 +1922,15 @@ fn build_procedural_layer(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        format: LAYER_TEXEL_FORMAT,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     let init_context = ExpressionContext::new(0.0, time_base, params, seed);
-    let uniform = evaluate_procedural_uniform(&layer.procedural, &init_context)?;
+    let uniform =
+        evaluate_procedural_uniform(&layer.procedural, &init_context, frame_width, frame_height)?;
     let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("vcr-procedural-uniform-{}", layer.common.id)),
         contents: bytemuck::bytes_of(&uniform),
@@ -1932,9 +2173,13 @@ fn refresh_layer_draw_state(
     Ok(())
 }
 
+/// Shared by both backends: the GPU uploads it, the software backend evaluates it per pixel
+/// with `procedural_premultiplied`. Colors are converted to premultiplied linear here.
 fn evaluate_procedural_uniform(
     source: &ProceduralSource,
     context: &ExpressionContext<'_>,
+    width: u32,
+    height: u32,
 ) -> Result<ProceduralUniform> {
     let default = ProceduralUniform {
         kind: 0,
@@ -1951,10 +2196,12 @@ fn evaluate_procedural_uniform(
         corner_radius: 0.0,
         thickness: 0.0,
         size: [0.0; 2],
+        resolution: [width as f32, height as f32],
+        _padding2: [0.0; 2],
     };
 
     fn eval_color(c: &AnimatableColor, ctx: &ExpressionContext<'_>) -> Result<[f32; 4]> {
-        Ok(c.evaluate(ctx)?.as_array())
+        Ok(color::premultiplied_linear(c.evaluate(ctx)?))
     }
 
     Ok(match source {
@@ -2061,6 +2308,121 @@ fn evaluate_procedural_uniform(
             ..default
         },
     })
+}
+
+/// Software twin of `PROCEDURAL_SHADER::fs_main`, evaluated at the center of pixel (x, y).
+/// Returns premultiplied linear color. Keep the two in lockstep.
+fn procedural_premultiplied(uniform: &ProceduralUniform, x: u32, y: u32) -> [f32; 4] {
+    const TRANSPARENT: [f32; 4] = [0.0; 4];
+    let res = uniform.resolution;
+    let uv = [
+        ((x as f32 + 0.5) / res[0]).clamp(0.0, 1.0),
+        ((y as f32 + 0.5) / res[1]).clamp(0.0, 1.0),
+    ];
+    let px = [uv[0] * res[0], uv[1] * res[1]];
+    let unit = res[0];
+    let to_px = |p: [f32; 2]| [p[0] * res[0], p[1] * res[1]];
+    let distance =
+        |a: [f32; 2], b: [f32; 2]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+
+    match uniform.kind {
+        0 => uniform.color_a,
+        1 => {
+            let amount = if uniform.axis == 0 { uv[0] } else { uv[1] };
+            let (a, b) = (uniform.color_a, uniform.color_b);
+            [
+                a[0] + (b[0] - a[0]) * amount,
+                a[1] + (b[1] - a[1]) * amount,
+                a[2] + (b[2] - a[2]) * amount,
+                a[3] + (b[3] - a[3]) * amount,
+            ]
+        }
+        2 => {
+            let sign = |p1: [f32; 2], p2: [f32; 2], p3: [f32; 2]| {
+                (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1])
+            };
+            let d1 = sign(uv, uniform.p0, uniform.p1);
+            let d2 = sign(uv, uniform.p1, uniform.p2);
+            let d3 = sign(uv, uniform.p2, uniform.p0);
+            let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+            let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+            if !(has_neg && has_pos) {
+                uniform.color_a
+            } else {
+                TRANSPARENT
+            }
+        }
+        3 => {
+            if distance(px, to_px(uniform.p0)) < uniform.radius * unit {
+                uniform.color_a
+            } else {
+                TRANSPARENT
+            }
+        }
+        4 => {
+            let center = to_px(uniform.p0);
+            let half = [
+                uniform.size[0] * res[0] * 0.5,
+                uniform.size[1] * res[1] * 0.5,
+            ];
+            let r = uniform.corner_radius * unit;
+            let d = [
+                (px[0] - center[0]).abs() - half[0] + r,
+                (px[1] - center[1]).abs() - half[1] + r,
+            ];
+            let outside = (d[0].max(0.0).powi(2) + d[1].max(0.0).powi(2)).sqrt();
+            let sdf = outside + d[0].max(d[1]).min(0.0) - r;
+            if sdf <= 0.0 {
+                uniform.color_a
+            } else {
+                TRANSPARENT
+            }
+        }
+        5 => {
+            let dist = distance(px, to_px(uniform.p0));
+            if dist <= uniform.radius * unit && dist >= uniform.inner_radius * unit {
+                uniform.color_a
+            } else {
+                TRANSPARENT
+            }
+        }
+        6 => {
+            let a = to_px(uniform.p0);
+            let b = to_px(uniform.p1);
+            let ab = [b[0] - a[0], b[1] - a[1]];
+            let ap = [px[0] - a[0], px[1] - a[1]];
+            let len_sq = ab[0] * ab[0] + ab[1] * ab[1];
+            let t = if len_sq > 0.000_001 {
+                ((ap[0] * ab[0] + ap[1] * ab[1]) / len_sq).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let closest = [a[0] + ab[0] * t, a[1] + ab[1] * t];
+            if distance(px, closest) <= uniform.thickness * unit * 0.5 {
+                uniform.color_a
+            } else {
+                TRANSPARENT
+            }
+        }
+        7 => {
+            let n = uniform.extra_u32 as f32;
+            let center = to_px(uniform.p0);
+            let p = [px[0] - center[0], px[1] - center[1]];
+            let angle = p[1].atan2(p[0]) + std::f32::consts::PI * 0.5;
+            let sector = 2.0 * std::f32::consts::PI / n;
+            let r = (p[0] * p[0] + p[1] * p[1]).sqrt();
+            let theta = ((angle % sector) + sector) % sector;
+            let half_sector = sector * 0.5;
+            let edge_dist = uniform.radius * unit * half_sector.cos();
+            let proj = r * (theta - half_sector).cos();
+            if proj <= edge_dist {
+                uniform.color_a
+            } else {
+                TRANSPARENT
+            }
+        }
+        _ => TRANSPARENT,
+    }
 }
 
 fn vertices_approx_eq(left: &[Vertex; 6], right: &[Vertex; 6]) -> bool {
@@ -2251,6 +2613,78 @@ fn copy_tight_rows(
     Ok(frame)
 }
 
+/// CPU copy of a layer texture in the pipeline's texel storage format: premultiplied linear
+/// light, sRGB-encoded, 8 bits per channel (what an `Rgba8UnormSrgb` texture holds).
+/// Both backends build layer textures from the same `Texels`.
+struct Texels {
+    width: u32,
+    height: u32,
+    data: Vec<u8>,
+}
+
+impl Texels {
+    fn from_straight_srgb8(width: u32, height: u32, mut data: Vec<u8>) -> Self {
+        color::straight_srgb8_to_texels(&mut data);
+        Self {
+            width,
+            height,
+            data,
+        }
+    }
+
+    /// tiny-skia pixmaps (ascii raster) are premultiplied in sRGB space.
+    fn from_srgb_premultiplied_pixmap(pixmap: &Pixmap) -> Self {
+        let mut data = pixmap.data().to_vec();
+        color::srgb_premultiplied8_to_texels(&mut data);
+        Self {
+            width: pixmap.width(),
+            height: pixmap.height(),
+            data,
+        }
+    }
+
+    fn premultiplied_linear(&self, x: u32, y: u32) -> [f32; 4] {
+        let offset = ((y * self.width + x) * 4) as usize;
+        color::decode_texel([
+            self.data[offset],
+            self.data[offset + 1],
+            self.data[offset + 2],
+            self.data[offset + 3],
+        ])
+    }
+
+    /// Bilinear sample with clamp-to-edge at texel-space coordinates (texel centers at +0.5),
+    /// the same convention as a GPU linear sampler.
+    fn sample_bilinear(&self, x: f32, y: f32) -> [f32; 4] {
+        let sx = x - 0.5;
+        let sy = y - 0.5;
+        let x0 = sx.floor();
+        let y0 = sy.floor();
+        // Exact weights. GPUs use reduced sub-texel precision; that is the documented source of
+        // small parity differences next to high-contrast texel edges under scaling.
+        let fx = sx - x0;
+        let fy = sy - y0;
+        let max_x = self.width as i64 - 1;
+        let max_y = self.height as i64 - 1;
+        let xi0 = (x0 as i64).clamp(0, max_x) as u32;
+        let xi1 = (x0 as i64 + 1).clamp(0, max_x) as u32;
+        let yi0 = (y0 as i64).clamp(0, max_y) as u32;
+        let yi1 = (y0 as i64 + 1).clamp(0, max_y) as u32;
+
+        let top_left = self.premultiplied_linear(xi0, yi0);
+        let top_right = self.premultiplied_linear(xi1, yi0);
+        let bottom_left = self.premultiplied_linear(xi0, yi1);
+        let bottom_right = self.premultiplied_linear(xi1, yi1);
+        let mut out = [0.0_f32; 4];
+        for channel in 0..4 {
+            let top = top_left[channel] + (top_right[channel] - top_left[channel]) * fx;
+            let bottom = bottom_left[channel] + (bottom_right[channel] - bottom_left[channel]) * fx;
+            out[channel] = top + (bottom - top) * fy;
+        }
+        out
+    }
+}
+
 fn load_rgba_image(image_path: &Path, layer_id: &str) -> Result<image::RgbaImage> {
     let image = ImageReader::open(image_path)
         .with_context(|| {
@@ -2269,38 +2703,41 @@ fn load_rgba_image(image_path: &Path, layer_id: &str) -> Result<image::RgbaImage
     Ok(image.to_rgba8())
 }
 
-fn load_asset_pixmap(layer: &AssetLayer) -> Result<Pixmap> {
-    load_layer_pixmap(&layer.source_path, &layer.common.id)
-}
-
-fn load_image_pixmap(layer: &ImageLayer) -> Result<Pixmap> {
-    load_layer_pixmap(&layer.image.path, &layer.common.id)
-}
-
-fn load_layer_pixmap(image_path: &Path, layer_id: &str) -> Result<Pixmap> {
+/// Image files are treated as straight-alpha sRGB (PNG/JPEG/WebP default).
+fn load_image_texels(image_path: &Path, layer_id: &str) -> Result<Texels> {
     let image = load_rgba_image(image_path, layer_id)?;
     let (width, height) = image.dimensions();
-
-    let mut rgba = image.into_raw();
-    premultiply_rgba_in_place(&mut rgba);
-
-    let mut pixmap = Pixmap::new(width, height)
-        .ok_or_else(|| anyhow!("failed to allocate software pixmap for '{}'", layer_id))?;
-    pixmap.data_mut().copy_from_slice(&rgba);
-    Ok(pixmap)
+    Ok(Texels::from_straight_srgb8(width, height, image.into_raw()))
 }
 
-fn draw_layer_pixmap(
-    output: &mut Pixmap,
-    source: tiny_skia::PixmapRef<'_>,
-    opacity: f32,
-    transform: Transform,
-) {
-    let mut paint = PixmapPaint::default();
-    paint.opacity = opacity;
-    paint.quality = FilterQuality::Bilinear;
-    paint.blend_mode = BlendMode::SourceOver;
-    output.draw_pixmap(0, 0, source, &paint, transform, None);
+/// Maps layer-space pixels to output pixels: `x' = a*x + c*y + tx`, `y' = b*x + d*y + ty`.
+/// Same geometry as the GPU quad built by `build_layer_quad`.
+#[derive(Debug, Clone, Copy)]
+struct LayerTransform {
+    a: f32,
+    b: f32,
+    c: f32,
+    d: f32,
+    tx: f32,
+    ty: f32,
+}
+
+impl LayerTransform {
+    fn map(self, x: f32, y: f32) -> (f32, f32) {
+        (
+            self.a * x + self.c * y + self.tx,
+            self.b * x + self.d * y + self.ty,
+        )
+    }
+
+    fn is_integer_translation(self) -> bool {
+        self.a == 1.0
+            && self.b == 0.0
+            && self.c == 0.0
+            && self.d == 1.0
+            && self.tx.fract() == 0.0
+            && self.ty.fract() == 0.0
+    }
 }
 
 fn layer_transform(
@@ -2310,7 +2747,7 @@ fn layer_transform(
     width: f32,
     height: f32,
     anchor: Anchor,
-) -> Transform {
+) -> LayerTransform {
     let scale_x = scale.x.max(0.0);
     let scale_y = scale.y.max(0.0);
     let radians = rotation_degrees.to_radians();
@@ -2330,308 +2767,162 @@ fn layer_transform(
         Anchor::Center => (position.x, position.y),
     };
 
-    let tx = center_x - (a * half_w + c * half_h);
-    let ty = center_y - (b * half_w + d * half_h);
-
-    Transform::from_row(a, b, c, d, tx, ty)
-}
-
-fn render_procedural_pixmap(
-    source: &ProceduralSource,
-    width: u32,
-    height: u32,
-    context: &ExpressionContext<'_>,
-) -> Result<Pixmap> {
-    let mut pixmap = Pixmap::new(width, height)
-        .ok_or_else(|| anyhow!("failed to allocate procedural pixmap {width}x{height}"))?;
-    pixmap.fill(Color::TRANSPARENT);
-
-    match source {
-        ProceduralSource::SolidColor { color } => {
-            pixmap.fill(color_to_skia(color.evaluate(context)?));
-        }
-        ProceduralSource::Gradient {
-            start_color,
-            end_color,
-            direction,
-        } => {
-            let sc = start_color.evaluate(context)?;
-            let ec = end_color.evaluate(context)?;
-            let mut paint = Paint::default();
-            let (start, end) = match direction {
-                GradientDirection::Horizontal => {
-                    (Point::from_xy(0.0, 0.0), Point::from_xy(width as f32, 0.0))
-                }
-                GradientDirection::Vertical => {
-                    (Point::from_xy(0.0, 0.0), Point::from_xy(0.0, height as f32))
-                }
-            };
-            paint.shader = LinearGradient::new(
-                start,
-                end,
-                vec![
-                    GradientStop::new(0.0, color_to_skia(sc)),
-                    GradientStop::new(1.0, color_to_skia(ec)),
-                ],
-                SpreadMode::Pad,
-                Transform::identity(),
-            )
-            .ok_or_else(|| anyhow!("failed to create gradient"))?;
-            let fill_rect = Rect::from_xywh(0.0, 0.0, width as f32, height as f32)
-                .ok_or_else(|| anyhow!("failed to build gradient fill rect {width}x{height}"))?;
-            pixmap.fill_rect(fill_rect, &paint, Transform::identity(), None);
-        }
-        ProceduralSource::Triangle { p0, p1, p2, color } => {
-            let c = color.evaluate(context)?;
-            let mut path = PathBuilder::new();
-            path.move_to(p0.x * width as f32, p0.y * height as f32);
-            path.line_to(p1.x * width as f32, p1.y * height as f32);
-            path.line_to(p2.x * width as f32, p2.y * height as f32);
-            path.close();
-
-            let path = path
-                .finish()
-                .ok_or_else(|| anyhow!("failed to create triangle path"))?;
-            let mut paint = Paint::default();
-            paint.set_color(color_to_skia(c));
-            paint.anti_alias = false;
-
-            pixmap.fill_path(
-                &path,
-                &paint,
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
-        ProceduralSource::Circle {
-            center,
-            radius,
-            color,
-        } => {
-            let c = color.evaluate(context)?;
-            let r = radius.evaluate_with_context(context)?;
-            let mut path = PathBuilder::new();
-            path.push_circle(
-                center.x * width as f32,
-                center.y * height as f32,
-                r * width as f32,
-            );
-
-            let path = path
-                .finish()
-                .ok_or_else(|| anyhow!("failed to create circle path"))?;
-            let mut paint = Paint::default();
-            paint.set_color(color_to_skia(c));
-            paint.anti_alias = false;
-
-            pixmap.fill_path(
-                &path,
-                &paint,
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
-        ProceduralSource::RoundedRect {
-            center,
-            size,
-            corner_radius,
-            color,
-        } => {
-            let c = color.evaluate(context)?;
-            let cr = corner_radius.evaluate_with_context(context)?;
-            let w = size.x * width as f32;
-            let h = size.y * height as f32;
-            let cx = center.x * width as f32;
-            let cy = center.y * height as f32;
-            let x = cx - w * 0.5;
-            let y = cy - h * 0.5;
-            let r = cr * width as f32;
-
-            let mut pb = PathBuilder::new();
-            pb.move_to(x + r, y);
-            pb.line_to(x + w - r, y);
-            pb.quad_to(x + w, y, x + w, y + r);
-            pb.line_to(x + w, y + h - r);
-            pb.quad_to(x + w, y + h, x + w - r, y + h);
-            pb.line_to(x + r, y + h);
-            pb.quad_to(x, y + h, x, y + h - r);
-            pb.line_to(x, y + r);
-            pb.quad_to(x, y, x + r, y);
-            pb.close();
-
-            let path = pb
-                .finish()
-                .ok_or_else(|| anyhow!("failed to create rounded rect path"))?;
-            let mut paint = Paint::default();
-            paint.set_color(color_to_skia(c));
-            paint.anti_alias = false;
-            pixmap.fill_path(
-                &path,
-                &paint,
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
-        ProceduralSource::Ring {
-            center,
-            outer_radius,
-            inner_radius,
-            color,
-        } => {
-            let c = color.evaluate(context)?;
-            let cx = center.x * width as f32;
-            let cy = center.y * height as f32;
-            let or = outer_radius.evaluate_with_context(context)? * width as f32;
-            let ir = inner_radius.evaluate_with_context(context)? * width as f32;
-
-            let mut pb = PathBuilder::new();
-            pb.push_circle(cx, cy, or);
-            pb.push_circle(cx, cy, ir);
-
-            let path = pb
-                .finish()
-                .ok_or_else(|| anyhow!("failed to create ring path"))?;
-            let mut paint = Paint::default();
-            paint.set_color(color_to_skia(c));
-            paint.anti_alias = false;
-            pixmap.fill_path(
-                &path,
-                &paint,
-                FillRule::EvenOdd,
-                Transform::identity(),
-                None,
-            );
-        }
-        ProceduralSource::Line {
-            start,
-            end,
-            thickness,
-            color,
-        } => {
-            let c = color.evaluate(context)?;
-            let t = thickness.evaluate_with_context(context)?;
-            let sx = start.x * width as f32;
-            let sy = start.y * height as f32;
-            let ex = end.x * width as f32;
-            let ey = end.y * height as f32;
-            let half_t = t * width as f32 * 0.5;
-
-            let dx = ex - sx;
-            let dy = ey - sy;
-            let len = (dx * dx + dy * dy).sqrt();
-            if len < 1e-6 {
-                // Degenerate line, skip
-            } else {
-                let nx = -dy / len * half_t;
-                let ny = dx / len * half_t;
-                let mut pb = PathBuilder::new();
-                pb.move_to(sx + nx, sy + ny);
-                pb.line_to(ex + nx, ey + ny);
-                pb.line_to(ex - nx, ey - ny);
-                pb.line_to(sx - nx, sy - ny);
-                pb.close();
-                let path = pb
-                    .finish()
-                    .ok_or_else(|| anyhow!("failed to create line path"))?;
-                let mut paint = Paint::default();
-                paint.set_color(color_to_skia(c));
-                paint.anti_alias = false;
-                pixmap.fill_path(
-                    &path,
-                    &paint,
-                    FillRule::Winding,
-                    Transform::identity(),
-                    None,
-                );
-            }
-        }
-        ProceduralSource::Polygon {
-            center,
-            radius,
-            sides,
-            color,
-        } => {
-            let c = color.evaluate(context)?;
-            let r_val = radius.evaluate_with_context(context)?;
-            let cx = center.x * width as f32;
-            let cy = center.y * height as f32;
-            let r = r_val * width as f32;
-            let n = *sides;
-
-            let mut pb = PathBuilder::new();
-            for i in 0..n {
-                let angle = 2.0 * std::f32::consts::PI * (i as f32) / (n as f32)
-                    - std::f32::consts::FRAC_PI_2;
-                let px = cx + r * angle.cos();
-                let py = cy + r * angle.sin();
-                if i == 0 {
-                    pb.move_to(px, py);
-                } else {
-                    pb.line_to(px, py);
-                }
-            }
-            pb.close();
-            let path = pb
-                .finish()
-                .ok_or_else(|| anyhow!("failed to create polygon path"))?;
-            let mut paint = Paint::default();
-            paint.set_color(color_to_skia(c));
-            paint.anti_alias = false;
-            pixmap.fill_path(
-                &path,
-                &paint,
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
-    }
-
-    Ok(pixmap)
-}
-
-fn color_to_skia(color: ColorRgba) -> Color {
-    Color::from_rgba8(
-        f32_to_channel(color.r),
-        f32_to_channel(color.g),
-        f32_to_channel(color.b),
-        f32_to_channel(color.a),
-    )
-}
-
-fn f32_to_channel(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
-fn premultiply_rgba_in_place(bytes: &mut [u8]) {
-    for pixel in bytes.chunks_exact_mut(4) {
-        let alpha = pixel[3] as u16;
-        pixel[0] = ((pixel[0] as u16 * alpha + 127) / 255) as u8;
-        pixel[1] = ((pixel[1] as u16 * alpha + 127) / 255) as u8;
-        pixel[2] = ((pixel[2] as u16 * alpha + 127) / 255) as u8;
+    LayerTransform {
+        a,
+        b,
+        c,
+        d,
+        tx: center_x - (a * half_w + c * half_h),
+        ty: center_y - (b * half_w + d * half_h),
     }
 }
 
-fn unpremultiply_rgba_in_place(bytes: &mut [u8]) {
-    for pixel in bytes.chunks_exact_mut(4) {
-        let alpha = pixel[3];
-        if alpha == 0 {
-            pixel[0] = 0;
-            pixel[1] = 0;
-            pixel[2] = 0;
+/// Composites `texels` into the premultiplied linear accumulator with source-over, sampling
+/// each covered output pixel center through the inverse transform (what the GPU rasterizer
+/// and linear sampler do for the layer quad).
+fn composite_texels(
+    accum: &mut [[f32; 4]],
+    frame_width: u32,
+    frame_height: u32,
+    texels: &Texels,
+    opacity: f32,
+    transform: LayerTransform,
+) {
+    if opacity <= 0.0 || texels.width == 0 || texels.height == 0 {
+        return;
+    }
+    let (layer_w, layer_h) = (texels.width as f32, texels.height as f32);
+
+    if transform.is_integer_translation() {
+        let (offset_x, offset_y) = (transform.tx as i64, transform.ty as i64);
+        for y in 0..texels.height {
+            let out_y = y as i64 + offset_y;
+            if out_y < 0 || out_y >= frame_height as i64 {
+                continue;
+            }
+            for x in 0..texels.width {
+                let out_x = x as i64 + offset_x;
+                if out_x < 0 || out_x >= frame_width as i64 {
+                    continue;
+                }
+                let mut source = texels.premultiplied_linear(x, y);
+                if source[3] <= 0.0 && source[0] <= 0.0 && source[1] <= 0.0 && source[2] <= 0.0 {
+                    continue;
+                }
+                source.iter_mut().for_each(|channel| *channel *= opacity);
+                let index = (out_y as usize) * frame_width as usize + out_x as usize;
+                color::source_over(&mut accum[index], source);
+            }
+        }
+        return;
+    }
+
+    let det = transform.a * transform.d - transform.b * transform.c;
+    if det.abs() < 1e-12 {
+        return;
+    }
+
+    let corners = [
+        transform.map(0.0, 0.0),
+        transform.map(layer_w, 0.0),
+        transform.map(0.0, layer_h),
+        transform.map(layer_w, layer_h),
+    ];
+    let min_x = corners.iter().map(|c| c.0).fold(f32::INFINITY, f32::min);
+    let max_x = corners
+        .iter()
+        .map(|c| c.0)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = corners.iter().map(|c| c.1).fold(f32::INFINITY, f32::min);
+    let max_y = corners
+        .iter()
+        .map(|c| c.1)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let x_start = min_x.floor().max(0.0) as u32;
+    let x_end = (max_x.ceil().max(0.0) as u32).min(frame_width);
+    let y_start = min_y.floor().max(0.0) as u32;
+    let y_end = (max_y.ceil().max(0.0) as u32).min(frame_height);
+
+    // Coverage follows GPU rasterization rules: quad corners snapped to the rasterizer's
+    // sub-pixel grid, pixel centers tested with edge functions and the top-left fill rule.
+    let snap = |(x, y): (f32, f32)| {
+        (
+            (x * RASTER_SUBPIXELS).round() / RASTER_SUBPIXELS,
+            (y * RASTER_SUBPIXELS).round() / RASTER_SUBPIXELS,
+        )
+    };
+    let quad = [
+        snap(corners[0]),
+        snap(corners[1]),
+        snap(corners[3]),
+        snap(corners[2]),
+    ];
+
+    for out_y in y_start..y_end {
+        let dy = out_y as f32 + 0.5 - transform.ty;
+        for out_x in x_start..x_end {
+            let center = (out_x as f32 + 0.5, out_y as f32 + 0.5);
+            if !quad_covers(&quad, center) {
+                continue;
+            }
+            let dx = out_x as f32 + 0.5 - transform.tx;
+            let layer_x = ((transform.d * dx - transform.c * dy) / det).clamp(0.0, layer_w);
+            let layer_y = ((-transform.b * dx + transform.a * dy) / det).clamp(0.0, layer_h);
+            let mut source = texels.sample_bilinear(layer_x, layer_y);
+            source.iter_mut().for_each(|channel| *channel *= opacity);
+            let index = out_y as usize * frame_width as usize + out_x as usize;
+            color::source_over(&mut accum[index], source);
+        }
+    }
+}
+
+/// Sub-pixel grid GPU rasterizers snap vertex positions to (8 bits, the D3D/Metal norm).
+const RASTER_SUBPIXELS: f32 = 256.0;
+
+/// Pixel-center coverage for a convex quad whose corners are in clockwise screen order
+/// (y down), using edge functions with the top-left fill rule so shared edges between
+/// adjacent quads are never covered twice.
+fn quad_covers(quad: &[(f32, f32); 4], point: (f32, f32)) -> bool {
+    for index in 0..4 {
+        let (x0, y0) = quad[index];
+        let (x1, y1) = quad[(index + 1) % 4];
+        let edge = (x1 - x0) * (point.1 - y0) - (y1 - y0) * (point.0 - x0);
+        if edge > 0.0 {
             continue;
         }
+        if edge < 0.0 {
+            return false;
+        }
+        // Exactly on the edge: only top edges (horizontal, interior below) and left edges
+        // (heading up the screen) own their pixels.
+        let is_top = y1 == y0 && x1 > x0;
+        let is_left = y1 < y0;
+        if !(is_top || is_left) {
+            return false;
+        }
+    }
+    true
+}
 
-        let alpha_u16 = alpha as u16;
-        pixel[0] = ((pixel[0] as u16 * 255 + (alpha_u16 / 2)) / alpha_u16).min(255) as u8;
-        pixel[1] = ((pixel[1] as u16 * 255 + (alpha_u16 / 2)) / alpha_u16).min(255) as u8;
-        pixel[2] = ((pixel[2] as u16 * 255 + (alpha_u16 / 2)) / alpha_u16).min(255) as u8;
+fn render_procedural_texels(uniform: &ProceduralUniform, width: u32, height: u32) -> Texels {
+    let mut data = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            data.extend_from_slice(&color::encode_texel(procedural_premultiplied(
+                uniform, x, y,
+            )));
+        }
+    }
+    Texels {
+        width,
+        height,
+        data,
     }
 }
-fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
+
+/// Rasterizes a text layer to straight-alpha sRGB (uniform text color, alpha = glyph
+/// coverage combined with source-over), then converts to texels.
+fn render_text_texels(layer: &TextLayer) -> Result<Texels> {
     let font_file = match layer.text.font_family.to_lowercase().as_str() {
         "geistpixel-line" | "line" => "GeistPixel-Line.ttf",
         "geistpixel-square" | "square" => "GeistPixel-Square.ttf",
@@ -2680,8 +2971,7 @@ fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
 
     let glyphs = layout.glyphs();
     if glyphs.is_empty() {
-        return Pixmap::new(1, 1)
-            .ok_or_else(|| anyhow!("failed to allocate fallback pixmap for empty text layer"));
+        return Ok(Texels::from_straight_srgb8(1, 1, vec![0; 4]));
     }
 
     let mut min_x = f32::MAX;
@@ -2699,15 +2989,11 @@ fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
     let width = (max_x - min_x).ceil() as u32;
     let height = (max_y - min_y).ceil() as u32;
 
-    let mut pixmap = Pixmap::new(width.max(1), height.max(1))
-        .ok_or_else(|| anyhow!("failed to allocate pixmap for text render"))?;
-    pixmap.fill(Color::TRANSPARENT);
-
-    let color = layer.text.color;
-    let r = f32_to_channel(color.r);
-    let g = f32_to_channel(color.g);
-    let b = f32_to_channel(color.b);
-    let a_base = color.a;
+    let width = width.max(1);
+    let height = height.max(1);
+    let mut coverage = vec![0.0_f32; (width * height) as usize];
+    let text_color = layer.text.color;
+    let alpha_base = text_color.a.clamp(0.0, 1.0);
 
     for glyph in glyphs {
         if glyph.width == 0 || glyph.height == 0 {
@@ -2716,53 +3002,35 @@ fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
         let (_, bitmap) = font.rasterize_config(glyph.key);
         for row in 0..glyph.height {
             for col in 0..glyph.width {
-                let alpha_mask = bitmap[row * glyph.width + col] as f32 / 255.0;
-                let alpha = (a_base * alpha_mask * 255.0).round() as u8;
-                if alpha == 0 {
+                let source_alpha = alpha_base * bitmap[row * glyph.width + col] as f32 / 255.0;
+                if source_alpha <= 0.0 {
                     continue;
                 }
-
                 let x = (glyph.x - min_x) as u32 + col as u32;
                 let y = (glyph.y - min_y) as u32 + row as u32;
-
                 if x < width && y < height {
-                    let index = (y * width + x) as usize;
-                    if let Some(pixel) = pixmap.pixels_mut().get_mut(index) {
-                        let pr = ((r as u16 * alpha as u16 + 127) / 255) as u8;
-                        let pg = ((g as u16 * alpha as u16 + 127) / 255) as u8;
-                        let pb = ((b as u16 * alpha as u16 + 127) / 255) as u8;
-
-                        // Simple alpha blend (over)
-                        let dst_a = pixel.alpha() as f32 / 255.0;
-                        let src_a = alpha as f32 / 255.0;
-                        let out_a = src_a + dst_a * (1.0 - src_a);
-
-                        if out_a > 0.0 {
-                            let out_r = (pr as f32 + pixel.red() as f32 * (1.0 - src_a)).min(255.0);
-                            let out_g =
-                                (pg as f32 + pixel.green() as f32 * (1.0 - src_a)).min(255.0);
-                            let out_b =
-                                (pb as f32 + pixel.blue() as f32 * (1.0 - src_a)).min(255.0);
-                            *pixel = tiny_skia::PremultipliedColorU8::from_rgba(
-                                out_r as u8,
-                                out_g as u8,
-                                out_b as u8,
-                                (out_a * 255.0).round() as u8,
-                            )
-                            .ok_or_else(|| {
-                                anyhow!(
-                                    "invalid premultiplied color while rasterizing text layer '{}'",
-                                    layer.common.id
-                                )
-                            })?;
-                        }
-                    }
+                    let destination = &mut coverage[(y * width + x) as usize];
+                    *destination = source_alpha + *destination * (1.0 - source_alpha);
                 }
             }
         }
     }
 
-    Ok(pixmap)
+    let rgb = [
+        color::unorm8(text_color.r),
+        color::unorm8(text_color.g),
+        color::unorm8(text_color.b),
+    ];
+    let mut straight = Vec::with_capacity(coverage.len() * 4);
+    for alpha in coverage {
+        let alpha8 = color::unorm8(alpha);
+        if alpha8 == 0 {
+            straight.extend_from_slice(&[0, 0, 0, 0]);
+        } else {
+            straight.extend_from_slice(&[rgb[0], rgb[1], rgb[2], alpha8]);
+        }
+    }
+    Ok(Texels::from_straight_srgb8(width, height, straight))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2845,7 +3113,7 @@ fn build_shader_layer(
             module: &shader_module,
             entry_point: "fs_main",
             targets: &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Rgba8Unorm,
+                format: LAYER_TEXEL_FORMAT,
                 blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
             })],
@@ -2865,7 +3133,7 @@ fn build_shader_layer(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        format: LAYER_TEXEL_FORMAT,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
@@ -2991,8 +3259,8 @@ fn build_text_layer(
     seed: u64,
     time_base: TimeBase,
 ) -> Result<GpuLayer> {
-    let pixmap = render_text_to_pixmap(layer)?;
-    let (layer_width, layer_height) = (pixmap.width(), pixmap.height());
+    let texels = render_text_texels(layer)?;
+    let (layer_width, layer_height) = (texels.width, texels.height);
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(&format!("vcr-text-layer-{}", layer.common.id)),
@@ -3004,36 +3272,17 @@ fn build_text_layer(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        format: LAYER_TEXEL_FORMAT,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
 
-    queue.write_texture(
-        wgpu::ImageCopyTexture {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        pixmap.data(),
-        wgpu::ImageDataLayout {
-            offset: 0,
-            bytes_per_row: Some(
-                checked_bytes_per_row(
-                    layer_width,
-                    &format!("text layer '{}' width", layer.common.id),
-                )?
-                .get(),
-            ),
-            rows_per_image: Some(layer_height),
-        },
-        wgpu::Extent3d {
-            width: layer_width,
-            height: layer_height,
-            depth_or_array_layers: 1,
-        },
-    );
+    queue_write_texels(
+        queue,
+        &texture,
+        &texels,
+        &format!("text layer '{}'", layer.common.id),
+    )?;
 
     let state = evaluate_layer_state_or_hidden(
         &layer.common.id,
@@ -3116,7 +3365,7 @@ fn build_ascii_layer(
     let layer_width = prepared.pixel_width();
     let layer_height = prepared.pixel_height();
     let is_static = prepared.is_static();
-    let initial_pixmap = prepared.render_frame_pixmap(0)?;
+    let initial_texels = Texels::from_srgb_premultiplied_pixmap(&prepared.render_frame_pixmap(0)?);
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(&format!("vcr-ascii-layer-{}", layer.common.id)),
@@ -3128,14 +3377,14 @@ fn build_ascii_layer(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        format: LAYER_TEXEL_FORMAT,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    queue_write_pixmap_texture(
+    queue_write_texels(
         queue,
         &texture,
-        initial_pixmap.as_ref(),
+        &initial_texels,
         &format!("ascii layer '{}'", layer.common.id),
     )?;
 
@@ -3210,15 +3459,15 @@ fn build_ascii_layer(
     })
 }
 
-fn queue_write_pixmap_texture(
+fn queue_write_texels(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
-    pixmap: tiny_skia::PixmapRef<'_>,
+    texels: &Texels,
     label: &str,
 ) -> Result<()> {
-    let bytes_per_row = checked_bytes_per_row(pixmap.width(), label)?.get();
-    let rows_per_image = NonZeroU32::new(pixmap.height())
-        .ok_or_else(|| anyhow!("{label} has invalid height {}", pixmap.height()))?
+    let bytes_per_row = checked_bytes_per_row(texels.width, label)?.get();
+    let rows_per_image = NonZeroU32::new(texels.height)
+        .ok_or_else(|| anyhow!("{label} has invalid height {}", texels.height))?
         .get();
 
     queue.write_texture(
@@ -3228,15 +3477,15 @@ fn queue_write_pixmap_texture(
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        pixmap.data(),
+        &texels.data,
         wgpu::ImageDataLayout {
             offset: 0,
             bytes_per_row: Some(bytes_per_row),
             rows_per_image: Some(rows_per_image),
         },
         wgpu::Extent3d {
-            width: pixmap.width(),
-            height: pixmap.height(),
+            width: texels.width,
+            height: texels.height,
             depth_or_array_layers: 1,
         },
     );
@@ -3438,7 +3687,8 @@ layers:
             .render_frame_rgba(4)
             .expect("frame render should succeed");
         let checksum = fnv1a64(&frame);
-        assert_eq!(checksum, 2991149225877046887);
+        // Re-pinned when the canonical linear-light pipeline landed (docs/COLOR_PIPELINE.md).
+        assert_eq!(checksum, 15821704460225728760);
     }
 
     fn pixel_at(frame: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {

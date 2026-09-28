@@ -7,6 +7,7 @@ pub mod ascii_render;
 pub mod ascii_sources;
 pub mod ascii_stage;
 pub mod chat;
+pub mod color;
 pub mod decoding;
 pub mod encoding;
 pub mod manifest;
