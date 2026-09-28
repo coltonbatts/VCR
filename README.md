@@ -264,6 +264,7 @@ Param semantics are documented in `docs/PARAMS.md`.
 
 - `docs/PARAMS.md` - typed params, `--set` semantics, time model, keyframes
 - `docs/COLOR_PIPELINE.md` - canonical color/blend pipeline and backend parity tolerance
+- `docs/PROPOSAL_COMPOSITING.md` - design proposal for track mattes, nested compositions, and motion blur
 - `docs/PLAYGROUND.md` - preset playground runner and outputs
 - `docs/CHAT_RENDER.md` - tagged transcript to animated terminal video
 - `docs/ASCII_STAGE.md` - stylized `.vcrtxt` transcript rendering with camera/preset options
