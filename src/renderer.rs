@@ -14,7 +14,7 @@ use wgpu::util::DeviceExt;
 use crate::ascii::PreparedAsciiLayer;
 use crate::color;
 use crate::schema::{
-    Anchor, AnimatableColor, AsciiLayer, AssetLayer, Environment, ExpressionContext,
+    Anchor, AnimatableColor, AsciiLayer, AssetLayer, ColorSpace, Environment, ExpressionContext,
     GradientDirection, Group, ImageLayer, Layer, LayerCommon, ModulatorBinding, ModulatorMap,
     Parameters, ProceduralLayer, ProceduralSource, PropertyValue, ScalarProperty, ShaderLayer,
     TextLayer, TimeBase, TimingControls, Vec2,
@@ -1448,6 +1448,18 @@ impl Renderer {
         }
     }
 
+    fn with_environment_warnings(mut self, environment: &Environment) -> Self {
+        if environment.color_space != ColorSpace::Rec709 {
+            let warning = format!(
+                "environment.color_space {:?} is not implemented: frames are rendered in sRGB/BT.709 primaries and encodes are tagged BT.709",
+                environment.color_space
+            );
+            eprintln!("[VCR] WARNING: {warning}");
+            self.warnings.push(warning);
+        }
+        self
+    }
+
     /// Features this backend could not render faithfully. Callers must surface these and
     /// record them in render metadata.
     pub fn warnings(&self) -> &[String] {
@@ -1461,10 +1473,10 @@ impl Renderer {
     ) -> Result<Self> {
         let software = SoftwareRenderer::new(environment, layers, &scene)
             .context("failed to initialize software renderer")?;
-        Ok(Self::from_software(
-            software,
-            "forced software backend".to_owned(),
-        ))
+        Ok(
+            Self::from_software(software, "forced software backend".to_owned())
+                .with_environment_warnings(environment),
+        )
     }
 
     pub async fn new_with_scene(
@@ -1479,7 +1491,8 @@ impl Renderer {
                 if can_use_software_fallback(&error_message, layers) {
                     let software = SoftwareRenderer::new(environment, layers, &scene)
                         .context("failed to initialize software renderer fallback")?;
-                    return Ok(Self::from_software(software, error_message));
+                    return Ok(Self::from_software(software, error_message)
+                        .with_environment_warnings(environment));
                 }
                 if error_message.contains(NO_GPU_ADAPTER_ERR) && has_shader_layers(layers) {
                     return Err(error.context(
@@ -1490,7 +1503,7 @@ impl Renderer {
             }
         };
 
-        Ok(Self::from_gpu(gpu))
+        Ok(Self::from_gpu(gpu).with_environment_warnings(environment))
     }
 
     pub fn new_with_scene_and_context(
@@ -1513,13 +1526,14 @@ impl Renderer {
                 if can_use_software_fallback(&error_message, layers) {
                     let software = SoftwareRenderer::new(environment, layers, &scene)
                         .context("failed to initialize software renderer fallback")?;
-                    return Ok(Self::from_software(software, error_message));
+                    return Ok(Self::from_software(software, error_message)
+                        .with_environment_warnings(environment));
                 }
                 return Err(error);
             }
         };
 
-        Ok(Self::from_gpu(gpu))
+        Ok(Self::from_gpu(gpu).with_environment_warnings(environment))
     }
 
     pub fn is_gpu_backend(&self) -> bool {

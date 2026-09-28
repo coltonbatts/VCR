@@ -8,6 +8,41 @@ use anyhow::{anyhow, bail, Context, Result};
 
 use crate::schema::Environment;
 
+/// Makes the RGBA -> Y'CbCr step of an FFmpeg encode explicit and tagged.
+///
+/// VCR frames are 8-bit straight-alpha RGBA whose RGB is sRGB-encoded with BT.709/sRGB
+/// primaries (docs/COLOR_PIPELINE.md). Without these arguments FFmpeg converts with its
+/// BT.601 default matrix and writes no color tags, so BT.709-assuming players shift colors.
+///
+/// - matrix: BT.709, full-range RGB into limited ("tv") range Y'CbCr
+/// - tags: primaries, transfer, matrix = BT.709; range = tv
+/// - transfer: sRGB-encoded values pass through unchanged and are tagged BT.709, the
+///   convention for display-referred graphics delivered as HD video (the curves differ only
+///   in the deep shadows; VCR does not re-encode)
+/// - swscale rounding is accurate and bit-exact so encodes are reproducible across machines
+///
+/// Tags are set both on the frames (`setparams`, which newer FFmpeg encoders read) and as
+/// output options (which older FFmpeg versions read).
+pub fn push_bt709_encode_args(command: &mut Command, pix_fmt: &str) {
+    command
+        .arg("-vf")
+        .arg(format!(
+            "scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int+bitexact,\
+             format={pix_fmt},\
+             setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv"
+        ))
+        .arg("-pix_fmt")
+        .arg(pix_fmt)
+        .arg("-color_primaries")
+        .arg("bt709")
+        .arg("-color_trc")
+        .arg("bt709")
+        .arg("-colorspace")
+        .arg("bt709")
+        .arg("-color_range")
+        .arg("tv");
+}
+
 pub struct FfmpegPipe {
     sender: Option<mpsc::SyncSender<Vec<u8>>>,
     worker: Option<JoinHandle<Result<()>>>,
@@ -73,7 +108,8 @@ fn encoding_worker(
         bail!("Output path contains invalid control characters");
     }
 
-    let mut child = Command::new("ffmpeg")
+    let mut command = Command::new("ffmpeg");
+    command
         .arg("-hide_banner")
         .arg("-loglevel")
         .arg("error")
@@ -92,9 +128,9 @@ fn encoding_worker(
         .arg("-c:v")
         .arg("prores_ks")
         .arg("-profile:v")
-        .arg("4444")
-        .arg("-pix_fmt")
-        .arg("yuva444p10le")
+        .arg("4444");
+    push_bt709_encode_args(&mut command, "yuva444p10le");
+    let mut child = command
         .arg(output_path.as_os_str())
         .stdin(Stdio::piped())
         .stdout(Stdio::null())

@@ -61,8 +61,14 @@ Frames are rasterized to RGBA in software, then encoded with FFmpeg `prores_ks` 
 
 ```bash
 ffmpeg -f rawvideo -pix_fmt rgba -s:v <WxH> -r <fps> -i - \
-  -an -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le <output.mov>
+  -an -c:v prores_ks -profile:v 2 \
+  -vf "scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int+bitexact,format=yuv422p10le,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv" \
+  -pix_fmt yuv422p10le -color_primaries bt709 -color_trc bt709 -colorspace bt709 -color_range tv \
+  <output.mov>
 ```
+
+The color arguments are shared by every VCR encoder (`encoding::push_bt709_encode_args`); see
+the README's "Encode color" section.
 
 ## Options
 

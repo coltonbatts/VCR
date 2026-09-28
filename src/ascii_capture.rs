@@ -175,7 +175,7 @@ pub fn build_ascii_capture_plan(args: &AsciiCaptureArgs) -> Result<AsciiCaptureP
         font_size: args.font_size,
         tmp_dir: args.tmp_dir.clone(),
         parser_mode: "best-effort ANSI parser with sampled latest-frame fallback",
-        ffmpeg_encoder: "ffmpeg -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le",
+        ffmpeg_encoder: "ffmpeg -c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le (BT.709 matrix, tagged bt709/tv)",
         symbol_remap: args.symbol_remap,
         symbol_ramp,
         fit_padding: args.fit_padding,
@@ -1112,9 +1112,9 @@ impl ProRes422Encoder {
             .arg("-c:v")
             .arg("prores_ks")
             .arg("-profile:v")
-            .arg("2")
-            .arg("-pix_fmt")
-            .arg("yuv422p10le")
+            .arg("2");
+        crate::encoding::push_bt709_encode_args(&mut command, "yuv422p10le");
+        command
             .arg(output_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())

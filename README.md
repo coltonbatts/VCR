@@ -234,6 +234,29 @@ cargo test --test cli_contract
 Both backends implement one color pipeline (linear light, premultiplied alpha, sRGB encode at
 output). See `docs/COLOR_PIPELINE.md`.
 
+## Encode Color
+
+Every video VCR writes (`build`, `preview`, `chat render`, `ascii stage`, `ascii capture`)
+converts RGBA to Y'CbCr with an explicit **BT.709 matrix into limited ("tv") range** and
+tags the stream `color_primaries=bt709`, `color_trc=bt709`, `colorspace=bt709`,
+`color_range=tv`. Previously FFmpeg silently used its BT.601 default and wrote no tags, so
+BT.709-assuming players (most HD tools) shifted colors by up to ~12 code values.
+
+Pixels are sRGB-encoded (`docs/COLOR_PIPELINE.md`) and pass through unchanged under the
+BT.709 transfer tag. This is the usual convention for display-referred graphics delivered as
+HD video: sRGB and BT.709 share primaries and white point, and the transfer curves differ
+only in the deep shadows. `environment.color_space` values other than `rec709` are not
+implemented. They render and tag as BT.709 and record a warning in the render metadata.
+
+Check an output with:
+
+```bash
+ffprobe -v error -select_streams v:0 -show_entries stream=color_range,color_space,color_transfer,color_primaries -of default=nw=1 out.mov
+```
+
+`cargo test --test encode_color` checks the tags, and checks that known sRGB swatches (opaque
+and 50% alpha) survive encode and BT.709 decode within 2 code values.
+
 Exit code contract is documented in `docs/EXIT_CODES.md`.
 Param semantics are documented in `docs/PARAMS.md`.
 

@@ -68,4 +68,6 @@ that must have one, so a missing adapter fails instead.
 - Custom shader layers only run on the GPU. The software backend renders them
   transparent, prints a warning, and records it in the metadata `warnings` array. The CLI
   never falls back to software for manifests with shader layers; it errors instead.
-- The output is 8-bit sRGB per channel.
+- The output is 8-bit sRGB per channel. Video encodes use an explicit BT.709 matrix and
+  BT.709 tags (see the README's "Encode Color" section). `environment.color_space` other than
+  `rec709` is not implemented and produces a metadata warning.

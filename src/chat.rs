@@ -1189,9 +1189,8 @@ impl ChatFfmpegWriter {
                     .arg("-c:v")
                     .arg("prores_ks")
                     .arg("-profile:v")
-                    .arg("4444")
-                    .arg("-pix_fmt")
-                    .arg("yuva444p10le");
+                    .arg("4444");
+                crate::encoding::push_bt709_encode_args(&mut command, "yuva444p10le");
             }
             _ => {
                 command
@@ -1200,9 +1199,9 @@ impl ChatFfmpegWriter {
                     .arg("-preset")
                     .arg("medium")
                     .arg("-crf")
-                    .arg("18")
-                    .arg("-pix_fmt")
-                    .arg("yuv420p")
+                    .arg("18");
+                crate::encoding::push_bt709_encode_args(&mut command, "yuv420p");
+                command
                     .arg("-threads")
                     .arg("1")
                     .arg("-movflags")

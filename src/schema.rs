@@ -233,7 +233,7 @@ impl Environment {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ColorSpace {
     #[serde(alias = "rec709", alias = "rec_709")]
