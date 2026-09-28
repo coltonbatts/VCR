@@ -1,3 +1,4 @@
+version: 2  # expressions are authored in seconds (t = seconds)
 environment:
   resolution:
     width: 2560

@@ -196,7 +196,9 @@ layers:
     anchor: top_left
     procedural:
       kind: rounded_rect
-      center: { x: 0.5, y: 0.5 }
+      # Procedural layers are frame-sized; put the rect at the canvas origin so
+      # pos_x/pos_y are the cursor's top-left corner (like the text layers).
+      center: { x: 0.0075, y: 0.03 }
       size: { x: 0.015, y: 0.06 }
       corner_radius: 0.002
       color: { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
