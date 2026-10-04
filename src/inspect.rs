@@ -285,7 +285,9 @@ pub struct PixelStats {
     pub width: u32,
     pub height: u32,
     pub alpha_bbox: Option<Bbox>,
+    /// Contact with the canvas edge, within a thin tolerance band (see `edge_tolerance_px`).
     pub edge_touch: EdgeTouch,
+    pub edge_tolerance_px: [u32; 2],
     /// Fraction of pixels with alpha > 0.
     pub covered_fraction: f64,
     pub has_transparency: bool,
@@ -312,12 +314,16 @@ pub fn pixel_stats(rgba: &[u8], width: u32, height: u32) -> PixelStats {
         }
     }
     let bbox = (covered > 0).then_some(Bbox { x0, y0, x1, y1 });
+    // Content cut by the canvas edge need not light the last column (a glyph stroke gap can sit
+    // exactly on the cut), so "touching" means within a thin band: max(4px, 0.5% of the side).
+    let tol_x = ((f64::from(width) * 0.005).round() as u32).max(4);
+    let tol_y = ((f64::from(height) * 0.005).round() as u32).max(4);
     let edge_touch = bbox
         .map(|b| EdgeTouch {
-            left: b.x0 == 0,
-            right: b.x1 == width - 1,
-            top: b.y0 == 0,
-            bottom: b.y1 == height - 1,
+            left: b.x0 < tol_x,
+            right: b.x1 + tol_x >= width,
+            top: b.y0 < tol_y,
+            bottom: b.y1 + tol_y >= height,
         })
         .unwrap_or_default();
     PixelStats {
@@ -325,6 +331,7 @@ pub fn pixel_stats(rgba: &[u8], width: u32, height: u32) -> PixelStats {
         height,
         alpha_bbox: bbox,
         edge_touch,
+        edge_tolerance_px: [tol_x, tol_y],
         covered_fraction: covered as f64 / (f64::from(width) * f64::from(height)),
         has_transparency: transparent,
     }
@@ -453,6 +460,7 @@ pub fn bounds_diagnostics(
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     // Entering/leaving the canvas is normal during motion; clipping at rest is the defect.
+    let tol = stats.edge_tolerance_px[0].max(stats.edge_tolerance_px[1]);
     let moving = matches!(phase, "entrance" | "exit" | "transition" | "motion");
     let location = || Location::layer(layer_id.to_owned());
     let Some(bbox) = stats.alpha_bbox else {
@@ -477,7 +485,7 @@ pub fn bounds_diagnostics(
                 "inspect",
                 "layout.touches_canvas_edge",
                 format!(
-                    "layer '{layer_id}' content reaches the canvas {} edge at frame {frame}; it is clipped or flush",
+                    "layer '{layer_id}' content is within {tol}px of the canvas {} edge at frame {frame}; it is likely clipped or flush",
                     stats.edge_touch.sides().join("/")
                 ),
             )
@@ -627,10 +635,10 @@ mod tests {
 
     #[test]
     fn pixel_stats_find_bbox_and_edge_touch() {
-        let (w, h) = (10u32, 6u32);
+        let (w, h) = (40u32, 30u32);
         let mut rgba = vec![0u8; (w * h * 4) as usize];
-        for y in 2..6 {
-            for x in 3..7 {
+        for y in 10..30 {
+            for x in 10..20 {
                 let i = ((y * w + x) * 4) as usize;
                 rgba[i + 3] = 255;
             }
@@ -639,13 +647,14 @@ mod tests {
         assert_eq!(
             stats.alpha_bbox,
             Some(Bbox {
-                x0: 3,
-                y0: 2,
-                x1: 6,
-                y1: 5
+                x0: 10,
+                y0: 10,
+                x1: 19,
+                y1: 29
             })
         );
         assert!(stats.edge_touch.bottom && !stats.edge_touch.left && !stats.edge_touch.top);
+        assert_eq!(stats.edge_tolerance_px, [4, 4]);
         assert!(stats.has_transparency);
     }
 
