@@ -34,8 +34,7 @@ VCR is designed to be **Agent-First**. It provides:
 - **Inspectable**: `vcr inspect` samples the timeline (entrance, hold, exit, ending), writes a labelled contact sheet over an alpha checkerboard, and reports exact layer bounds plus clipping/timing diagnostics.
 - **Verifiable**: `vcr verify` compares the encoded `.mov` with the request (resolution, exact frame rate, frame count, codec/profile, alpha, *decoded* transparency) and detects stale, modified or truncated output. Renders publish atomically and write `*.provenance.json`.
 - **Legacy JSON Error Contract**: `VCR_AGENT_MODE=1` still prints machine-readable errors on stderr (now in the contract envelope plus the old keys).
-- **Quickstart**: [docs/AGENT_QUICKSTART.md](docs/AGENT_QUICKSTART.md): discover → normalize → author → validate/preflight → inspect → revise → render → verify.
-- **Explain Preflight**: `vcr explain --json` reports resolved params plus backend compatibility, the recommended backend, unsupported layer IDs/kinds, and blockers before render.
+- **Preflight and quickstart**: `vcr explain --json` (alias `vcr preflight`) tells you before rendering whether *this machine* can render the scene with the chosen backend: the resolved backend, unsupported layers and ignored `post` effects, ffmpeg/GPU availability, font fallback, blockers, and a single `ready` flag. The full eight-step flow is in the [Agent Quickstart](docs/AGENT_QUICKSTART.md).
 - **Scoped determinism**: scene settings are always reproducible; software-backend raster frames are expected identical for the same engine build; encoded file bytes also depend on the ffmpeg build; GPU output is not bit-identical across hardware. Provenance records the conditions.
 - **Structured Manifests**: Declarative YAML makes it easy for LLMs to author and modify complex scenes.
 
