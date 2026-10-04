@@ -1,7 +1,7 @@
 {
     "name": "vcr-threejs-renderer",
     "version": "1.0.0",
-    "description": "ThreeJS headless renderer for VCR 3D scenes",
+    "description": "Experimental headless Three.js sidecar for VCR 3D scenes",
     "main": "render_pyramid.js",
     "type": "module",
     "scripts": {

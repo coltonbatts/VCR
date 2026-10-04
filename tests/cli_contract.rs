@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use image::{Rgba, RgbaImage};
 use serde_json::Value;
 use serde_yaml::Value as YamlValue;
 use tempfile::tempdir;
@@ -182,6 +183,116 @@ layers:
         .expect("resolved_params should be object");
     let keys = resolved.keys().cloned().collect::<Vec<_>>();
     assert_eq!(keys, vec!["alpha".to_owned(), "zeta".to_owned()]);
+
+    let backend = parsed_first["backend_preflight"]
+        .as_object()
+        .expect("backend_preflight should be object");
+    assert_eq!(backend["requested_backend"], "auto");
+    assert_eq!(backend["recommended_backend"], "software");
+    assert_eq!(backend["software_compatible"], Value::Bool(true));
+    assert_eq!(
+        backend["unsupported_software_layers"]
+            .as_array()
+            .expect("unsupported layers should be array")
+            .len(),
+        0
+    );
+    assert_eq!(
+        backend["software_supported_layer_types"]
+            .as_array()
+            .expect("supported layer types should be array")
+            .iter()
+            .map(|value| value.as_str().expect("layer type should be string"))
+            .collect::<Vec<_>>(),
+        vec!["asset", "image", "procedural", "text", "ascii", "sequence"]
+    );
+    assert_eq!(
+        backend["blockers"]
+            .as_array()
+            .expect("blockers should be array")
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn explain_json_reports_software_incompatibility_preflight() {
+    let dir = tempdir().expect("tempdir should create");
+    fs::write(dir.path().join("shader.wgsl"), "// placeholder").expect("shader file should write");
+    fs::write(dir.path().join("clip.mov"), "").expect("video file should write");
+    fs::write(dir.path().join("anim.json"), "{}").expect("lottie file should write");
+
+    let manifest_path = dir.path().join("scene.vcr");
+    write_manifest(
+        &manifest_path,
+        r#"
+version: 1
+environment:
+  resolution: { width: 16, height: 16 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: shader_only
+    shader:
+      fragment: |
+        fn shade(uv: vec2<f32>, uniforms: ShaderUniforms) -> vec4<f32> {
+          return vec4<f32>(uv.x, uv.y, 0.0, 1.0);
+        }
+  - id: wgpu_only
+    wgpu_shader:
+      shader_path: ./shader.wgsl
+      width: 16
+      height: 16
+      time_mode: seconds
+  - id: video_only
+    video:
+      path: ./clip.mov
+  - id: lottie_only
+    lottie:
+      path: ./anim.json
+"#,
+    );
+
+    let manifest_arg = manifest_path.to_string_lossy().to_string();
+    let output = run_vcr(
+        dir.path(),
+        &["explain", &manifest_arg, "--backend", "software", "--json"],
+    );
+    assert!(
+        output.status.success(),
+        "explain --json should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).expect("json should parse");
+    let backend = parsed["backend_preflight"]
+        .as_object()
+        .expect("backend_preflight should be object");
+    assert_eq!(backend["requested_backend"], "software");
+    assert_eq!(backend["recommended_backend"], "gpu");
+    assert_eq!(backend["software_compatible"], Value::Bool(false));
+
+    let unsupported = backend["unsupported_software_layers"]
+        .as_array()
+        .expect("unsupported layers should be array");
+    assert_eq!(unsupported.len(), 4);
+    assert_eq!(unsupported[0]["id"], "shader_only");
+    assert_eq!(unsupported[0]["kind"], "shader");
+    assert_eq!(unsupported[1]["id"], "wgpu_only");
+    assert_eq!(unsupported[1]["kind"], "wgpu_shader");
+    assert_eq!(unsupported[2]["id"], "video_only");
+    assert_eq!(unsupported[2]["kind"], "video");
+    assert_eq!(unsupported[3]["id"], "lottie_only");
+    assert_eq!(unsupported[3]["kind"], "lottie");
+
+    let blockers = backend["blockers"]
+        .as_array()
+        .expect("blockers should be array");
+    assert_eq!(blockers.len(), 1);
+    assert!(blockers[0]
+        .as_str()
+        .expect("blocker should be string")
+        .contains("--backend gpu"));
 }
 
 #[test]
@@ -227,6 +338,76 @@ layers:
     assert!(!stderr.contains("[VCR] Backend:"));
     assert!(!stderr.contains("[VCR] Params"));
     assert!(!stderr.contains("[VCR] timing"));
+}
+
+#[test]
+fn render_metadata_sidecar_includes_agent_context_layer_summaries() {
+    let dir = tempdir().expect("tempdir should create");
+    let manifest_path = dir.path().join("scene.vcr");
+    write_manifest(
+        &manifest_path,
+        r#"
+version: 1
+environment:
+  resolution: { width: 16, height: 16 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: bg
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 1, g: 1, b: 1, a: 1 }
+  - id: fg
+    z_index: 1
+    procedural:
+      kind: solid_color
+      color: { r: 0, g: 0, b: 0, a: 1 }
+"#,
+    );
+
+    let output = run_vcr(
+        dir.path(),
+        &[
+            "--quiet",
+            "render-frame",
+            "scene.vcr",
+            "--frame",
+            "0",
+            "-o",
+            "frame.png",
+            "--backend",
+            "software",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "render-frame should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let meta_path = dir.path().join("frame.png.metadata.json");
+    let raw = fs::read(&meta_path).expect("metadata sidecar should exist");
+    let parsed: Value = serde_json::from_slice(&raw).expect("metadata should parse as JSON");
+
+    let agent = parsed
+        .get("agent_context")
+        .expect("metadata should include agent_context");
+    assert_eq!(
+        agent["manifest_hash"], parsed["resolved_manifest_hash"],
+        "agent_context.manifest_hash should match resolved manifest hash"
+    );
+
+    let layers = agent["layers_rendered"]
+        .as_array()
+        .expect("layers_rendered should be an array");
+    assert_eq!(layers.len(), 2, "expected one summary per manifest layer");
+    assert_eq!(layers[0]["id"], "bg");
+    assert_eq!(layers[1]["id"], "fg");
+    assert!(
+        layers[0].get("final_position").is_some() && layers[0].get("was_visible").is_some(),
+        "layer summary should include position and visibility"
+    );
 }
 
 #[test]
@@ -527,6 +708,122 @@ layers:
 }
 
 #[test]
+fn render_unsupported_software_layers_uses_a_stable_error_contract() {
+    let dir = tempdir().expect("tempdir should create");
+    fs::write(dir.path().join("shader.wgsl"), "// placeholder").expect("shader file should write");
+    fs::write(dir.path().join("clip.mov"), "").expect("video file should write");
+    fs::write(dir.path().join("anim.json"), "{}").expect("lottie file should write");
+
+    let manifest_path = dir.path().join("scene.vcr");
+    write_manifest(
+        &manifest_path,
+        r#"
+version: 1
+environment:
+  resolution: { width: 16, height: 16 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: shader_only
+    shader:
+      fragment: |
+        fn shade(uv: vec2<f32>, uniforms: ShaderUniforms) -> vec4<f32> {
+          return vec4<f32>(uv.x, uv.y, 0.0, 1.0);
+        }
+  - id: wgpu_only
+    wgpu_shader:
+      shader_path: ./shader.wgsl
+      width: 16
+      height: 16
+      time_mode: seconds
+  - id: video_only
+    video:
+      path: ./clip.mov
+  - id: lottie_only
+    lottie:
+      path: ./anim.json
+"#,
+    );
+
+    let manifest_arg = manifest_path.to_string_lossy().to_string();
+
+    let human = Command::new(env!("CARGO_BIN_EXE_vcr"))
+        .current_dir(dir.path())
+        .args([
+            "render",
+            &manifest_arg,
+            "-o",
+            "out.mov",
+            "--backend",
+            "software",
+        ])
+        .output()
+        .expect("command should run");
+    assert_eq!(human.status.code(), Some(2));
+    let human_stderr = String::from_utf8_lossy(&human.stderr);
+    assert!(human_stderr.contains("vcr render: UNSUPPORTED_SOFTWARE_LAYER_TYPES:"));
+    assert!(human_stderr.contains("software mode does not support these layer types"));
+    assert!(human_stderr.contains("shader_only (shader)"));
+    assert!(human_stderr.contains("wgpu_only (wgpu_shader)"));
+    assert!(human_stderr.contains("video_only (video)"));
+    assert!(human_stderr.contains("lottie_only (lottie)"));
+    assert!(human_stderr.contains("re-run with `--backend gpu`"));
+
+    let agent = Command::new(env!("CARGO_BIN_EXE_vcr"))
+        .current_dir(dir.path())
+        .env("VCR_AGENT_MODE", "1")
+        .args([
+            "render",
+            &manifest_arg,
+            "-o",
+            "out.mov",
+            "--backend",
+            "software",
+        ])
+        .output()
+        .expect("command should run");
+    assert_eq!(agent.status.code(), Some(2));
+
+    let stderr = String::from_utf8_lossy(&agent.stderr);
+    let json_start = stderr
+        .find('{')
+        .expect("stderr should contain an envelope json object");
+    let parsed: Value =
+        serde_json::from_str(&stderr[json_start..]).expect("stderr should be envelope json");
+    assert_eq!(parsed["ok"], Value::Bool(false));
+    assert_eq!(
+        parsed["error"]["code"],
+        Value::String("UNSUPPORTED_SOFTWARE_LAYER_TYPES".to_owned())
+    );
+    assert!(
+        parsed["error"]["message"]
+            .as_str()
+            .expect("message should be string")
+            .contains("software mode does not support these layer types"),
+        "expected direct explanation in error message"
+    );
+    assert_eq!(parsed["error"]["details"]["backend"], "software");
+    assert_eq!(
+        parsed["error"]["details"]["unsupported_layers"]
+            .as_array()
+            .expect("unsupported_layers should be an array")
+            .len(),
+        4
+    );
+    assert_eq!(
+        parsed["error"]["details"]["supported_layer_types"]
+            .as_array()
+            .expect("supported_layer_types should be an array")
+            .len(),
+        6
+    );
+    assert_eq!(
+        parsed["error"]["details"]["next_steps"][0],
+        "re-run with --backend gpu"
+    );
+}
+
+#[test]
 fn ascii_capture_help_lists_expected_flags() {
     let dir = tempdir().expect("tempdir should create");
     let output = run_vcr(dir.path(), &["ascii", "capture", "--help"]);
@@ -591,8 +888,9 @@ fn ascii_capture_writes_output_mov_when_tools_are_available() {
     }
 
     let dir = tempdir().expect("tempdir should create");
-    let input = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/welcome_terminal_scene.gif");
-    assert!(input.exists(), "fixture gif should exist");
+    let input = dir.path().join("tiny_source.png");
+    let source_image = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 255]));
+    source_image.save(&input).expect("source image should save");
     let source = format!("chafa:{}", input.display());
 
     let output = run_vcr(

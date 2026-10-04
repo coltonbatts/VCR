@@ -1,5 +1,7 @@
 # PRD: VCR (Video Component Renderer)
 
+**Document status:** Last updated **2026-04-08**. The project is **actively maintained** again after a quiet period; this PRD is the canonical place for vision, scope, and phased delivery. Use it when opening issues or RFC-scale PRs so proposals stay aligned with the product arc.
+
 ## 1. Executive Summary
 
 **VCR** is a local-first, deterministic motion graphics infrastructure written in Rust. It serves as a **unified "one-stop shop"** for generating high-quality motion assets with alpha transparency. By bridging the gap between AI agents and broadcast-quality production, VCR allows developers to orchestrate multiple graphics paradigms—from ASCII art and procedurals to advanced Shaders and ThreeJS simulations—into pixel-perfect, reproducible ProRes 4444 video.
@@ -34,7 +36,7 @@ To become the **universal rendering target for Agentic Motion Design**, where an
 
 ### 5.2 Deterministic Rendering Core
 
-* **Manifest-Driven**: Scened defined in YAML with support for layers, timing, and scalar expressions.
+* **Manifest-Driven**: Scenes defined in YAML with support for layers, timing, and scalar expressions.
 * **Dual-Backend**:
   * **GPU (WGPU)**: High-performance rendering for local previews and production.
   * **Software (Tiny-Skia)**: Bit-exact rendering for CI/CD and verification.
@@ -42,18 +44,34 @@ To become the **universal rendering target for Agentic Motion Design**, where an
 
 ### 5.3 Agent-First Workflow
 
+* **Prompt gate (`vcr prompt`)**: Normalizes natural language or loose YAML into a structured bundle (`standardized_vcr_prompt`, `normalized_spec`, `unknowns_and_fixes`) before manifest authoring—reduces silent invention of missing parameters.
 * **Agent Error Contract**: Machine-readable JSON error payloads (via `VCR_AGENT_MODE=1`) that suggest specific fixes to the AI.
-* **SKILL.md Integration**: A comprehensive reference document designed for LLM context windows.
+* **SKILL.md / AGENTS.md**: Reference documents designed for LLM and automation context windows.
 
-### 5.4 Specialized ASCII Modules
+### 5.4 Agent-Native Interface Layer
+
+Treat AI agents as first-class users of the product, not just authors of manifests.
+
+* **Semantic surfaces**: Every command, layer, and render artifact should expose stable identifiers, explicit roles, and machine-readable state.
+* **Direct structured access**: Prefer CLI JSON, metadata sidecars, and MCP tools over screenshot-driven or log-scraping workflows.
+* **Predictable failure modes**: Ambiguity must surface as a blocking normalization issue or structured error, not as hidden defaults.
+* **Human + agent parity**: Keep the terminal workflow human-friendly, but ensure the same actions are available in structured form for automation.
+
+### 5.5 Tapes-First Operator UX
+
+* **Tape workflow**: Versioned manifests as immutable “tapes,” with CLI helpers for init/list/run.
+* **Deck**: `vcr deck` launches the interactive controller; the Go **VHS Tape Deck** (`vhs-tape-deck/`) provides a Bubble Tea UI for the same mental model.
+
+### 5.6 Specialized ASCII Modules
 
 * **ASCII Stage**: Converts chat transcripts (`.vcrtxt`) into stylized terminal animations.
 * **ASCII Capture**: Bridge for capturing live or library-based ASCII animations into ProRes 4444 video.
 * **Deterministic Physics**: First-class support for Rapier physics sims within the rendering pipeline.
 
-### 5.5 Ecosystem Integrations
+### 5.7 Ecosystem Integrations
 
-* **Figma-VCR Workflow**: Direct conversion from Figma designs to VCR manifests.
+* **Figma-VCR Workflow**: Direct conversion from Figma designs to VCR manifests (optional `workflow` feature).
+* **Three.js sidecar (experimental)**: `threejs_renderer/` — headless Three.js + Puppeteer path for 3D-sourced frames; integration with the main ProRes pipeline remains **Phase 2** work.
 * **Sidecar Metadata**: Every render produces a `.metadata.json` documenting frame hashes, parameters, and source attribution.
 
 ## 6. Technical Requirements
@@ -64,21 +82,34 @@ To become the **universal rendering target for Agentic Motion Design**, where an
 
 ## 7. Roadmap
 
-### Phase 1: Core Stability (Current)
+### Near-term focus (maintenance restart, 2026 H1)
 
-* [x] Deterministic Software Backend.
+Priority is **shipping reliability and contributor clarity**, not scope expansion:
 
-* [x] YAML Schema and Expression Support.
-* [x] Basic CLI (build, preview, lint).
-* [x] Agent Error Contract.
+1. Keep **determinism and CI** green (software backend, contract tests, agent-mode errors).
+2. **Document and harden** the tapes + Deck path so new users can render without memorizing flags.
+3. **Close the loop** on the Three.js sidecar: reproducible setup, documented hand-off into the Rust encoder, and CI smoke where feasible.
+4. **Make agent behavior explicit**: document the structured contract for prompt normalization, metadata, and render planning so agents can operate without guessing.
+
+### Phase 1: Core Stability (largely complete)
+
+* [x] Deterministic software backend (with explicit GPU vs CPU behavior).
+* [x] YAML schema and expression support.
+* [x] CLI: check, lint, render/build, preview, library/packs workflows.
+* [x] Agent error contract (`VCR_AGENT_MODE=1`).
+* [x] Prompt gate (`vcr prompt`) for normalized agent authoring.
+* [x] Tapes-first workflow and Deck entrypoints (`vcr deck`, `vhs-tape-deck/`).
 
 ### Phase 2: Asset & Creative Expansion (Near-term)
 
-* [ ] **Unified Rendering Bridge**: Integrating ThreeJS and WebGL-based sources into the ProRes alpha pipeline.
+* [ ] **Unified rendering bridge**: Wire **Three.js / WebGL** sources into the ProRes alpha pipeline end-to-end (building on `threejs_renderer/`).
 * [ ] **Procedural Expansion**: Shaders, Noise, Particle Systems, and physics-aware layers.
 * [ ] **Temporal Coherence**: Hysteresis and smoothing for unstable mediums (ASCII, dithering).
 * [ ] **Perceptual Glyph Selection**: Advanced metrics for better visual representation in ASCII/Dithered modes.
 * [ ] **Native Alpha Orchestration**: Refined controls for layering multiple high-fidelity sources with transparency.
+* [ ] **Agent-native contract**: Expand `vcr prompt`, `vcr check`, `vcr lint`, and render metadata so every automation step has a stable machine-readable input/output contract.
+* [ ] **Agent-safe state export**: Add or extend metadata fields for layer roles, supported actions, unresolved ambiguities, and last-evaluated layer state.
+* [ ] **Structured planning API**: Expose render planning and preview decisions through MCP/JSON so agents can inspect what VCR will do before building.
 
 ### Phase 3: Advanced Orchestration (Long-term)
 

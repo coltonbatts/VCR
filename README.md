@@ -30,6 +30,7 @@ For people who think code is faster than the Adobe ecosystem.
 VCR is designed to be **Agent-First**. It provides:
 
 - **JSON Error Contract**: Set `VCR_AGENT_MODE=1` to get machine-readable error payloads with suggested fixes.
+- **Explain Preflight**: `vcr explain --json` reports resolved params plus backend compatibility, the recommended backend, unsupported layer IDs/kinds, and blockers before render.
 - **Deterministic Pipeline**: Agents can reason about frames and pixels without worrying about platform-specific variations.
 - **Structured Manifests**: Declarative YAML makes it easy for LLMs to author and modify complex scenes.
 
@@ -45,7 +46,7 @@ VCR follows a **Visual-First** methodology. Because motion graphics are often to
 
 **Built for Silicon Macs** (and anywhere else with Rust). Your M1/M2 can actually do something interesting.
 
-**GPU + automatic CPU fallback.** Fast on real hardware. Still works everywhere.
+**GPU + automatic CPU fallback for supported layer types.** Fast on real hardware. Unsupported `shader`, `wgpu_shader`, `video`, and `lottie` layers fail explicitly instead of rendering transparent output.
 
 ## What You Get
 
@@ -333,8 +334,9 @@ cargo run --release -- render examples/white_on_alpha.vcr -o renders/white_on_al
 
 **CPU fallback (tiny-skia):**
 
-- Slower but works everywhere
+- Slower, but deterministic for supported layer types
 - Triggered automatically with a warning when no GPU is detected
+- Rejects `shader`, `wgpu_shader`, `video`, and `lottie` layers instead of silently dropping them
 - Still significantly faster than many alternatives for simple procedural content
 
 ## Troubleshooting
@@ -359,7 +361,7 @@ ffmpeg -version
 
 ### "No GPU found. Falling back to CPU rendering."
 
-This is normal. VCR will render, just slower. If you're on a system with GPU support, check:
+This is normal for manifests the software backend can render. VCR will render, just slower. If the manifest includes `shader`, `wgpu_shader`, `video`, or `lottie` layers, VCR now fails clearly instead of producing transparent output. If you're on a system with GPU support, check:
 
 - macOS: Should work on M1+ and dedicated GPUs
 - Linux: Ensure your graphics drivers are installed

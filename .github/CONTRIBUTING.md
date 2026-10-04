@@ -1,44 +1,65 @@
 # Contributing to VCR
 
-First off, thank you for considering contributing to VCR! Every little bit helps.
+Thanks for helping move VCR forward. The project picked up active maintenance again in **2026**; this guide is the short path from clone to a merge-ready PR.
 
-## How to Contribute
+## Where things are headed
 
-### Reporting Bugs
+- **Product vision and phases:** [docs/PRD.md](../docs/PRD.md) — read this for roadmap alignment before proposing large features.
+- **Agents and automation:** [AGENTS.md](../AGENTS.md) — prompt gate, pack contact sheets, and validation order.
+- **Human onboarding:** [docs/user_onboarding.md](../docs/user_onboarding.md) and the root [README.md](../README.md).
 
-If you find a bug, please search the issue tracker to see if it has already been reported. If not, open a new issue and include:
+## Reporting bugs
 
-- A clear, descriptive title.
-- Steps to reproduce the issue.
-- Your OS and environment details.
-- Any relevant logs or error messages.
+Search existing issues first. For a new bug report, include:
 
-### Suggesting Enhancements
+- A clear title and what you expected vs what happened.
+- **Reproduction steps** (minimal `.vcr` manifest or CLI flags if possible).
+- Environment: OS, `vcr --version` (or `cargo run -- --version` from source), `rustc --version`, and whether you used GPU or software backend.
+- Relevant logs; with agents, note if `VCR_AGENT_MODE=1` was set.
 
-Feature requests are welcome! Please open an issue and describe the enhancement you'd like to see and why it would be useful.
+## Suggesting enhancements
 
-### Pull Requests
+Feature requests are welcome. Tie suggestions to a **user or agent workflow** (e.g. “trailer pipeline,” “tape deck,” “deterministic CI”). If it’s a major direction change, skim the PRD Phase 2/3 sections first.
 
-1. Fork the repository.
-2. Create a new branch for your changes.
-3. Make your changes and add tests if applicable.
-4. Ensure all tests pass: `cargo test`
-5. Submit a pull request with a clear description of your changes.
+## Pull requests
 
-## Development Setup
+1. Fork the repo and create a focused branch.
+2. Make changes with tests where it matters (parser, determinism, CLI contract).
+3. Run the checks below.
+4. Open a PR with a **short summary** and, if applicable, `Fixes #123`.
 
-VCR is built in Rust. You'll need:
-
-- Rust (stable)
-- FFmpeg (for video output)
-- macOS (recommended for GPU features), though Linux/Windows are supported via software rendering.
+### Validation (from repo root)
 
 ```bash
-git clone https://github.com/coltonbatts/VCR.git
-cd VCR
-cargo build
+cargo test
+cargo clippy --all-targets -- -D warnings
 ```
+
+After a release or `cargo install` build, manifests should pass:
+
+```bash
+vcr check path/to/scene.vcr
+vcr lint path/to/scene.vcr
+```
+
+Optional feature matrices:
+
+```bash
+cargo build --release --features play
+cargo build --release --features workflow
+```
+
+### Other components
+
+- **Tape Deck (Go):** see [vhs-tape-deck/README.md](../vhs-tape-deck/README.md) for build and `go test` in that module.
+- **Three.js sidecar:** `threejs_renderer/` — see `package.json` for scripts (e.g. `npm test`).
+
+### PR hygiene
+
+- Keep diffs scoped; unrelated refactors belong in separate PRs.
+- Update docs when you change CLI behavior, manifest schema, or contributor-facing setup.
+- Visual or motion changes: attach a short clip, contact sheet, or key frames when practical (see [VCR_SOP.md](../VCR_SOP.md) for library elements).
 
 ## Community
 
-Please be respectful and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
+Follow the [Code of Conduct](CODE_OF_CONDUCT.md). For security-sensitive reports, use [SECURITY.md](SECURITY.md).

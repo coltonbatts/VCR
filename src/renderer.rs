@@ -13,6 +13,7 @@ use vello::{AaConfig, RenderParams, Renderer as VelloRenderer, Scene};
 use anyhow::{anyhow, bail, Context, Result};
 use bytemuck::{Pod, Zeroable};
 use image::ImageReader;
+use serde_json::json;
 use tiny_skia::{
     BlendMode, Color, FillRule, FilterQuality, GradientStop, LinearGradient, Paint, PathBuilder,
     Pixmap, PixmapPaint, Point, Rect, SpreadMode, Transform,
@@ -22,6 +23,7 @@ use wgpu::util::DeviceExt;
 use crate::animation_engine::{AnimationLayer, AnimationManager};
 use crate::ascii::PreparedAsciiLayer;
 use crate::ascii_pipeline::AsciiPipeline;
+use crate::error_codes::CodedError;
 use crate::font_assets::{
     ensure_supported_codepoints, read_verified_font_bytes, verify_geist_pixel_bundle,
 };
@@ -653,8 +655,6 @@ enum SoftwareLayerSource {
         pixmap: Pixmap,
     },
     Procedural(ProceduralSource),
-    Shader,
-    WgpuShader,
     Text {
         pixmap: Pixmap,
     },
@@ -664,11 +664,16 @@ enum SoftwareLayerSource {
     Sequence {
         source: crate::schema::SequenceSource,
     },
-    Lottie(LottieSoftware),
 }
 
-struct LottieSoftware {
-    composition: Composition,
+const SOFTWARE_UNSUPPORTED_LAYER_CODE: &str = "UNSUPPORTED_SOFTWARE_LAYER_TYPES";
+pub const SOFTWARE_SUPPORTED_LAYER_TYPES: [&str; 6] =
+    ["asset", "image", "procedural", "text", "ascii", "sequence"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnsupportedSoftwareLayer<'a> {
+    pub id: &'a str,
+    pub kind: &'a str,
 }
 
 impl GpuRenderer {
@@ -1625,6 +1630,10 @@ impl Renderer {
             Ok(gpu) => gpu,
             Err(error) => {
                 let error_message = error.to_string();
+                let unsupported_layers = software_unsupported_layers(layers);
+                if error_message.contains(NO_GPU_ADAPTER_ERR) && !unsupported_layers.is_empty() {
+                    return Err(unsupported_software_layer_error(&unsupported_layers));
+                }
                 if can_use_software_fallback(&error_message, layers) {
                     let software = SoftwareRenderer::new(environment, layers, &scene)
                         .context("failed to initialize software renderer fallback")?;
@@ -1632,11 +1641,6 @@ impl Renderer {
                         backend: RendererBackend::Software(software),
                         backend_reason: error_message,
                     });
-                }
-                if error_message.contains(NO_GPU_ADAPTER_ERR) && has_shader_layers(layers) {
-                    return Err(error.context(
-                        "software fallback is disabled because the manifest contains shader layers",
-                    ));
                 }
                 return Err(error);
             }
@@ -1665,6 +1669,10 @@ impl Renderer {
             Ok(gpu) => gpu,
             Err(error) => {
                 let error_message = error.to_string();
+                let unsupported_layers = software_unsupported_layers(layers);
+                if error_message.contains(NO_GPU_ADAPTER_ERR) && !unsupported_layers.is_empty() {
+                    return Err(unsupported_software_layer_error(&unsupported_layers));
+                }
                 if can_use_software_fallback(&error_message, layers) {
                     let software = SoftwareRenderer::new(environment, layers, &scene)
                         .context("failed to initialize software renderer fallback")?;
@@ -1781,6 +1789,10 @@ impl SoftwareRenderer {
     fn new(environment: &Environment, layers: &[Layer], scene: &RenderSceneData) -> Result<Self> {
         let width = environment.resolution.width;
         let height = environment.resolution.height;
+        let unsupported_layers = software_unsupported_layers(layers);
+        if !unsupported_layers.is_empty() {
+            return Err(unsupported_software_layer_error(&unsupported_layers));
+        }
         let groups_by_id = resolve_groups_by_id(&scene.groups);
         let mut software_layers = Vec::with_capacity(layers.len());
 
@@ -1797,16 +1809,6 @@ impl SoftwareRenderer {
                 Layer::Procedural(procedural_layer) => {
                     SoftwareLayerSource::Procedural(procedural_layer.procedural.clone())
                 }
-                Layer::Shader(_) => {
-                    eprintln!("[warn] custom shader layers require GPU backend; layer rendered as transparent");
-                    SoftwareLayerSource::Shader
-                }
-                Layer::WgpuShader(_) => {
-                    eprintln!(
-                        "[warn] wgpu_shader layers require GPU backend; layer rendered as transparent"
-                    );
-                    SoftwareLayerSource::WgpuShader
-                }
                 Layer::Text(text_layer) => SoftwareLayerSource::Text {
                     pixmap: render_text_to_pixmap(text_layer)?,
                 },
@@ -1816,38 +1818,14 @@ impl SoftwareRenderer {
                 Layer::Sequence(seq_layer) => SoftwareLayerSource::Sequence {
                     source: seq_layer.sequence.clone(),
                 },
-                Layer::Lottie(lottie_layer) => {
-                    let resolved = scene.sandbox.resolve(&lottie_layer.lottie.path)?;
-                    let json_content = std::fs::read_to_string(&resolved).map_err(|e| {
-                        anyhow!(
-                            "failed to read lottie file {:?}: {:?}",
-                            lottie_layer.lottie.path,
-                            e
-                        )
-                    })?;
-                    let composition = Composition::from_str(&json_content)
-                        .map_err(|e| anyhow!("failed to parse lottie animation: {:?}", e))?;
-                    let w = composition.width as u32;
-                    let h = composition.height as u32;
-                    Pixmap::new(w, h).ok_or_else(|| {
-                        anyhow!(
-                            "failed to create pixmap for lottie layer '{}'",
-                            lottie_layer.common.id
-                        )
-                    })?;
-                    SoftwareLayerSource::Lottie(LottieSoftware { composition })
-                }
-                Layer::Video(_) => {
-                    eprintln!("[warn] video layers require GPU backend; layer rendered as transparent in software mode");
-                    SoftwareLayerSource::Shader
+                Layer::Shader(_) | Layer::WgpuShader(_) | Layer::Lottie(_) | Layer::Video(_) => {
+                    unreachable!("software backend pre-validates unsupported layer types")
                 }
             };
 
             let (layer_width, layer_height) = match &source {
                 SoftwareLayerSource::Asset { pixmap } => (pixmap.width(), pixmap.height()),
                 SoftwareLayerSource::Procedural(_) => (width, height),
-                SoftwareLayerSource::Shader => (width, height),
-                SoftwareLayerSource::WgpuShader => (width, height),
                 SoftwareLayerSource::Text { pixmap } => (pixmap.width(), pixmap.height()),
                 SoftwareLayerSource::Ascii { prepared } => {
                     (prepared.pixel_width(), prepared.pixel_height())
@@ -1858,10 +1836,6 @@ impl SoftwareRenderer {
                     let img = load_rgba_image(&frame0_path, &common.id)?;
                     img.dimensions()
                 }
-                SoftwareLayerSource::Lottie(lottie) => (
-                    lottie.composition.width as u32,
-                    lottie.composition.height as u32,
-                ),
             };
 
             software_layers.push(SoftwareLayer {
@@ -1975,12 +1949,6 @@ impl SoftwareRenderer {
                 let procedural = render_procedural_pixmap(source, width, height, &context)?;
                 draw_layer_pixmap(output, procedural.as_ref(), opacity, transform);
             }
-            SoftwareLayerSource::Shader => {
-                // Custom WGSL shaders can't run on CPU — skip
-            }
-            SoftwareLayerSource::WgpuShader => {
-                // wgpu_shader layers can't run on CPU — skip
-            }
             SoftwareLayerSource::Text { pixmap } => {
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
             }
@@ -1992,11 +1960,6 @@ impl SoftwareRenderer {
                 let frame_path = sandbox.resolve(source.frame_path(frame_index))?;
                 let pixmap = load_layer_pixmap(&frame_path, &layer.id)?;
                 draw_layer_pixmap(output, pixmap.as_ref(), opacity, transform);
-            }
-            SoftwareLayerSource::Lottie(_lottie) => {
-                // TODO: Implement software rendering for Lottie via velato RenderSink or vello-cpu
-                // For now, render as transparent (handled by lack of draw call)
-                eprintln!("[warn] Lottie software rendering not yet implemented; layer rendered as transparent");
             }
         }
 
@@ -2969,14 +2932,66 @@ fn shader_layer_needs_update(last_rendered_frame: Option<u32>, frame_index: u32)
     last_rendered_frame != Some(frame_index)
 }
 
-fn has_shader_layers(layers: &[Layer]) -> bool {
-    layers
-        .iter()
-        .any(|layer| matches!(layer, Layer::Shader(_) | Layer::WgpuShader(_)))
+fn can_use_software_fallback(gpu_error_message: &str, layers: &[Layer]) -> bool {
+    gpu_error_message.contains(NO_GPU_ADAPTER_ERR) && software_unsupported_layers(layers).is_empty()
 }
 
-fn can_use_software_fallback(gpu_error_message: &str, layers: &[Layer]) -> bool {
-    gpu_error_message.contains(NO_GPU_ADAPTER_ERR) && !has_shader_layers(layers)
+pub fn software_unsupported_layers(layers: &[Layer]) -> Vec<UnsupportedSoftwareLayer<'_>> {
+    let mut unsupported = Vec::new();
+    for layer in layers {
+        let kind = match layer {
+            Layer::Shader(_) => Some("shader"),
+            Layer::WgpuShader(_) => Some("wgpu_shader"),
+            Layer::Video(_) => Some("video"),
+            Layer::Lottie(_) => Some("lottie"),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            unsupported.push(UnsupportedSoftwareLayer {
+                id: layer.id(),
+                kind,
+            });
+        }
+    }
+    unsupported
+}
+
+fn unsupported_software_layer_error(
+    unsupported_layers: &[UnsupportedSoftwareLayer<'_>],
+) -> anyhow::Error {
+    let message = software_unsupported_layer_message(unsupported_layers);
+    anyhow!(
+        CodedError::usage(SOFTWARE_UNSUPPORTED_LAYER_CODE, message).with_details(json!({
+            "backend": "software",
+            "unsupported_layers": unsupported_layers
+                .iter()
+                .map(|layer| json!({
+                    "id": layer.id,
+                    "kind": layer.kind,
+                }))
+                .collect::<Vec<_>>(),
+            "supported_layer_types": SOFTWARE_SUPPORTED_LAYER_TYPES,
+            "next_steps": [
+                "re-run with --backend gpu",
+                "remove or replace unsupported layers"
+            ],
+        }))
+    )
+}
+
+fn software_unsupported_layer_message(
+    unsupported_layers: &[UnsupportedSoftwareLayer<'_>],
+) -> String {
+    let unsupported = unsupported_layers
+        .iter()
+        .map(|layer| format!("{} ({})", layer.id, layer.kind))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "software mode does not support these layer types: {}; supported software layers are {}; re-run with `--backend gpu` or remove/replace unsupported layers",
+        unsupported,
+        SOFTWARE_SUPPORTED_LAYER_TYPES.join(", ")
+    )
 }
 
 fn copy_tight_rows(
@@ -3417,14 +3432,8 @@ fn unpremultiply_rgba_in_place(bytes: &mut [u8]) {
     }
 }
 fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
-    let font_file: &'static str = match layer.text.font_family.to_lowercase().as_str() {
-        "geistpixel-line" | "line" => "GeistPixel-Line.ttf",
-        "geistpixel-square" | "square" => "GeistPixel-Square.ttf",
-        "geistpixel-grid" | "grid" => "GeistPixel-Grid.ttf",
-        "geistpixel-circle" | "circle" => "GeistPixel-Circle.ttf",
-        "geistpixel-triangle" | "triangle" => "GeistPixel-Triangle.ttf",
-        _ => "GeistPixel-Line.ttf",
-    };
+    let font_file: &'static str = crate::font_assets::resolve_font_family(&layer.text.font_family)
+        .unwrap_or("GeistPixel-Line.ttf");
 
     let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     verify_geist_pixel_bundle(manifest_root)?;
@@ -4353,6 +4362,7 @@ mod tests {
     use super::{
         align_to, can_use_software_fallback, checked_bytes_per_row, copy_tight_rows,
         shader_layer_needs_update, SoftwareRenderer, PROCEDURAL_SHADER,
+        SOFTWARE_SUPPORTED_LAYER_TYPES, SOFTWARE_UNSUPPORTED_LAYER_CODE,
     };
     use super::{Renderer, NO_GPU_ADAPTER_ERR};
     use crate::schema::Manifest;
@@ -4407,7 +4417,7 @@ mod tests {
     }
 
     #[test]
-    fn software_fallback_is_rejected_for_no_gpu_error_when_manifest_has_shader_layers() {
+    fn software_fallback_is_rejected_for_no_gpu_error_when_manifest_has_unsupported_layers() {
         let manifest: Manifest = serde_yaml::from_str(
             r#"
 version: 1
@@ -4422,6 +4432,18 @@ layers:
         fn shade(uv: vec2<f32>, uniforms: ShaderUniforms) -> vec4<f32> {
           return vec4<f32>(uv.x, uv.y, 0.0, 1.0);
         }
+  - id: wgpu-only
+    wgpu_shader:
+      shader_path: ./shader.wgsl
+      width: 8
+      height: 8
+      time_mode: seconds
+  - id: video-only
+    video:
+      path: ./clip.mov
+  - id: lottie-only
+    lottie:
+      path: ./anim.json
 "#,
         )
         .expect("manifest should parse");
@@ -4430,6 +4452,119 @@ layers:
             "failed: no suitable GPU adapter found",
             &manifest.layers
         ));
+    }
+
+    #[test]
+    fn software_renderer_rejects_each_unsupported_layer_type_with_coded_error() {
+        let cases = [
+            (
+                "shader-only",
+                r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: shader-only
+    shader:
+      fragment: |
+        fn shade(uv: vec2<f32>, uniforms: ShaderUniforms) -> vec4<f32> {
+          return vec4<f32>(uv.x, uv.y, 0.0, 1.0);
+        }
+"#,
+                "shader",
+            ),
+            (
+                "wgpu-only",
+                r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: wgpu-only
+    wgpu_shader:
+      shader_path: ./shader.wgsl
+      width: 8
+      height: 8
+      time_mode: seconds
+"#,
+                "wgpu_shader",
+            ),
+            (
+                "video-only",
+                r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: video-only
+    video:
+      path: ./clip.mov
+"#,
+                "video",
+            ),
+            (
+                "lottie-only",
+                r#"
+version: 1
+environment:
+  resolution: { width: 8, height: 8 }
+  fps: 24
+  duration: { frames: 1 }
+layers:
+  - id: lottie-only
+    lottie:
+      path: ./anim.json
+"#,
+                "lottie",
+            ),
+        ];
+
+        for (layer_id, manifest_yaml, kind) in cases {
+            let manifest: Manifest =
+                serde_yaml::from_str(manifest_yaml).expect("manifest should parse");
+
+            let scene = RenderSceneData::from_manifest(&manifest);
+            let error = match Renderer::new_software(&manifest.environment, &manifest.layers, scene)
+            {
+                Ok(_) => panic!("software renderer should reject unsupported layer types"),
+                Err(error) => error,
+            };
+
+            let coded = crate::error_codes::find_coded_error(&error)
+                .expect("software unsupported error should be coded");
+            assert_eq!(coded.code, SOFTWARE_UNSUPPORTED_LAYER_CODE);
+            assert!(
+                coded
+                    .message
+                    .contains("software mode does not support these layer types"),
+                "{}",
+                coded.message
+            );
+            assert!(
+                coded.message.contains("re-run with `--backend gpu`"),
+                "{}",
+                coded.message
+            );
+
+            let envelope = coded.envelope();
+            let details = envelope.error.details.expect("expected structured details");
+            assert_eq!(details["backend"], "software");
+            assert_eq!(details["unsupported_layers"][0]["id"], layer_id);
+            assert_eq!(details["unsupported_layers"][0]["kind"], kind);
+            assert_eq!(
+                details["supported_layer_types"]
+                    .as_array()
+                    .expect("supported_layer_types should be an array")
+                    .len(),
+                SOFTWARE_SUPPORTED_LAYER_TYPES.len()
+            );
+        }
     }
 
     #[test]
@@ -4587,15 +4722,17 @@ layers:
             scene,
         )) {
             Ok(renderer) => renderer,
-            Err(error)
-                if error.to_string().contains(NO_GPU_ADAPTER_ERR)
-                    || error.to_string().contains(
-                        "software fallback is disabled because the manifest contains shader layers",
-                    ) =>
-            {
-                return;
+            Err(error) => {
+                if let Some(coded) = crate::error_codes::find_coded_error(&error) {
+                    if coded.code == SOFTWARE_UNSUPPORTED_LAYER_CODE {
+                        return;
+                    }
+                }
+                if error.to_string().contains(NO_GPU_ADAPTER_ERR) {
+                    return;
+                }
+                panic!("renderer initialization failed: {error:#}");
             }
-            Err(error) => panic!("renderer initialization failed: {error:#}"),
         };
 
         let rgba = renderer

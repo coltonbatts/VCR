@@ -27,8 +27,9 @@ If applicable, add screenshots to help explain your problem.
 **Environment (please complete the following information):**
 
 - OS: [e.g. macOS]
-- Version: [e.g. v0.1.1]
-- Rust Version: [e.g. 1.75]
+- VCR version: [e.g. output of `vcr --version` or `cargo run -- --version`]
+- Rust version: [e.g. `rustc --version`]
+- Backend: [GPU / software / unsure]
 
 **Additional context**
-Add any other context about the problem here.
+Add any other context about the problem here. For agent/automation issues, note whether `VCR_AGENT_MODE=1` was used and attach JSON error output if available.

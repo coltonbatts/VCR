@@ -23,7 +23,7 @@ Runs are reproducible and logged to JSON run records.
 ## Install / Build
 
 ```bash
-cd /Users/coltonbatts/Desktop/VCR/vhs-tape-deck
+cd vhs-tape-deck
 go mod tidy
 go build -o tape-deck ./cmd/tape-deck
 ```
@@ -56,11 +56,13 @@ go build -o tape-deck ./cmd/tape-deck
 
 ## Config Location
 
-Default config path is OS-specific:
+Default config path is shared with `vcr tape` and is OS-specific:
 
-- macOS: `~/Library/Application Support/vhs-tape-deck/config.yaml`
-- Linux: `~/.config/vhs-tape-deck/config.yaml`
-- Windows: `%AppData%/vhs-tape-deck/config.yaml`
+- macOS: `~/Library/Application Support/vcr/tapes.yaml`
+- Linux: `~/.config/vcr/tapes.yaml`
+- Windows: `%AppData%/vcr/tapes.yaml`
+
+Use `--config` if you want the Tape Deck to point at a different file.
 
 ## Config Schema
 

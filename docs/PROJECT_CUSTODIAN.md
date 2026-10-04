@@ -247,7 +247,7 @@ VCR/
 
 ## What's Complete ✅
 
-1. **Core rendering pipeline** - GPU + CPU fallback, deterministic output
+1. **Core rendering pipeline** - GPU + CPU fallback for supported layers; unsupported software layers fail explicitly
 2. **Manifest language** - Full YAML spec with expressions, params, validation
 3. **CLI interface** - 16+ commands with robust error handling
 4. **ASCII subsystem** - Styling, transitions, camera moves, presets
@@ -402,7 +402,7 @@ All in `.skills/` with their own `SKILL.md` files:
 | **Dependencies** | ✅ Managed | Cargo dependencies locked; no deprecated packages |
 | **Code Quality** | ✅ High | Few TODO comments (only 2 in src/) |
 | **Performance** | 🟡 Monitored | Benchmark exists; determinism tracked |
-| **GPU Support** | 🟡 Limited | Metal on macOS; software fallback elsewhere |
+| **GPU Support** | 🟡 Limited | Metal on macOS; software fallback elsewhere for supported layers only |
 | **Examples** | ✅ Rich | 28 working examples across difficulty levels |
 | **Error Handling** | ✅ Mature | Agent-mode JSON errors + exit code contract |
 | **Feature Completeness** | 🟡 70% | Core done; Figma workflow & ASCII streaming in progress |

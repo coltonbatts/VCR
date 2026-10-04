@@ -43,6 +43,20 @@ func TestApplyDefaults(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigPathUsesVcrTapesYAML(t *testing.T) {
+	t.Parallel()
+
+	path, err := DefaultConfigPath()
+	if err != nil {
+		t.Fatalf("DefaultConfigPath: %v", err)
+	}
+
+	expectedSuffix := filepath.Join(DefaultAppDirName, DefaultConfigName)
+	if !strings.HasSuffix(path, expectedSuffix) {
+		t.Fatalf("expected config path suffix %q, got %q", expectedSuffix, path)
+	}
+}
+
 func TestLoadAndValidateDuplicateTapeID(t *testing.T) {
 	t.Parallel()
 

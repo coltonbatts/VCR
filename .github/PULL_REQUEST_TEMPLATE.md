@@ -2,7 +2,7 @@
 
 ## Description
 
-Provide a brief summary of the changes in this PR.
+Provide a brief summary of the changes in this PR. For roadmap-sized work, note how it relates to [docs/PRD.md](../docs/PRD.md) (phase or near-term focus).
 
 ## Related Issue
 

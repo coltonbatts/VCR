@@ -10,20 +10,25 @@ VCR is a deterministic video renderer: YAML scene manifests → reproducible fra
 
 - **Scope**: Parse manifest → evaluate expressions → render frames → emit RGBA.
 - **Location**: `src/renderer.rs`, `src/timeline.rs`, `src/schema.rs`, `src/post_process.rs`, `src/ascii*.rs`
-- **Backends**: GPU (wgpu/Metal) or software (tiny-skia). Determinism tests use software only.
+- **Backends**: GPU (wgpu/Metal) or software (tiny-skia). Determinism tests use software only. The software backend supports asset/image/procedural/text/ascii/sequence layers; `shader`, `wgpu_shader`, `video`, and `lottie` layers fail with `UNSUPPORTED_SOFTWARE_LAYER_TYPES` instead of being silently dropped.
 - **Pipeline**: Manifest → validated schema → layer evaluation per frame → compositing → optional post (levels, ASCII).
 
 ### 2.2 CLI
 
 - **Scope**: Subcommands, flags, exit codes, machine-readable output.
 - **Location**: `src/main.rs`
-- **Contract**: Stable flags, documented exit codes, `--json` for params/explain.
+- **Contract**: Stable flags, documented exit codes, `--json` for params/explain. `vcr explain --json` includes resolved params plus backend preflight details: requested/recommended backend, software-supported layer types, unsupported layer IDs/kinds, and blockers.
 
 ### 2.3 Optional Workflow / Integration Layers
 
 - **Scope**: Figma → VCR, agent workflows, external APIs.
 - **Location**: `src/workflow/`, `src/bin/figma-vcr-workflow.rs`
 - **Dependency**: Requires `FIGMA_TOKEN`, optional `ANTHROPIC_API_KEY`. Core render does **not** use these.
+
+### 2.4 Sidecars
+
+- **Tape Deck**: `vhs-tape-deck/` is the supported Go TUI sidecar for repeatable tape runs. It shares the same default config path as `vcr tape`, and CI runs its test suite.
+- **Three.js renderer**: `threejs_renderer/` is an optional experimental Node sidecar for 3D rendering experiments. It is not part of the core render path.
 
 ## 3. In Scope vs Out of Scope
 

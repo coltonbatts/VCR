@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Preflight** (`vcr explain --json`, alias `vcr preflight`): resolved backend, ffmpeg/ffprobe/font/GPU probes, layers and manifest features the software backend cannot honor, font-fallback detection, a single `ready` flag, `--strict`. Output is in the `vcr.agent/1` envelope; legacy top-level keys are preserved.
+- **Behavior change:** the software backend now refuses manifests with `post:` / enabled `ascii_post:` (`UNSUPPORTED_SOFTWARE_FEATURES`) instead of silently ignoring them, including when `auto` falls back to software. `vcr doctor` also checks `ffprobe`.
+- SKILL.md no longer claims shader layers fall back to transparent or that `post:` is skipped on software.
+
 - **Agent contract `vcr.agent/1`** (see `docs/AGENT_CONTRACT.md`): one JSON envelope with stable error codes, locations and recovery for `check`, `lint`, `dump`, `doctor` and `prompt` via `--json` (stdout is exactly one line). Argument-parse errors are structured when `--json` is passed. `prompt --json` separates specification defaults (`defaults_applied`) from unspecified creative inputs and reports blockers as `status: blocked`. New exit code 6 (`prompt --strict`). `VCR_AGENT_MODE=1` errors now use the envelope plus the legacy keys.
 
 ## v0.1.2 (2026-02-16)

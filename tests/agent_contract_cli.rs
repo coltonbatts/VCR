@@ -26,6 +26,23 @@ layers:
       color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
 "#;
 
+fn have(tool: &str) -> bool {
+    Command::new(tool)
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn need_ffmpeg() -> bool {
+    if have("ffmpeg") && have("ffprobe") {
+        true
+    } else {
+        eprintln!("skipping: ffmpeg/ffprobe not installed");
+        false
+    }
+}
+
 fn vcr(dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_vcr"))
         .current_dir(dir)
@@ -318,4 +335,116 @@ fn legacy_agent_mode_errors_use_the_envelope_and_keep_old_keys() {
         .expect("argument errors are structured in agent mode");
     assert_eq!(c["error"]["code"], "usage.invalid_argument");
     assert_eq!(coded.status.code(), Some(2));
+}
+
+#[test]
+fn preflight_flags_software_incompatibility_post_and_font_fallback() {
+    let dir = TempDir::new().unwrap();
+    write(
+        dir.path(),
+        "p.vcr",
+        r#"version: 1
+environment:
+  resolution: { width: 64, height: 36 }
+  fps: 10
+  duration: { frames: 2 }
+layers:
+  - id: t
+    text:
+      content: "HI"
+      font_family: "Inter"
+      font_size: 20
+post:
+  - shader: sobel
+    strength: 1.0
+"#,
+    );
+    let out = vcr(
+        dir.path(),
+        &["--backend", "software", "explain", "--json", "p.vcr"],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "explain describes; it does not fail by default"
+    );
+    let d = doc(&out);
+    // legacy keys preserved
+    assert!(d["backend_preflight"]["software_compatible"] == false);
+    assert!(d["manifest_hash"].is_string());
+    let b = &d["result"]["backend_preflight"];
+    assert_eq!(b["ready"], false);
+    assert_eq!(b["resolved_backend"], "software");
+    let codes: Vec<&str> = b["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["code"].as_str().unwrap())
+        .collect();
+    assert!(codes.contains(&"backend.software_ignores_feature"));
+    assert!(codes.contains(&"text.font_family_fallback"));
+    let font = b["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["code"] == "text.font_family_fallback")
+        .unwrap();
+    assert_eq!(font["severity"], "warning");
+    assert_eq!(font["location"]["layer"], "t");
+    assert_eq!(font["observed"], "Inter");
+
+    // --strict turns a not-ready preflight into a failed result
+    let strict = vcr(
+        dir.path(),
+        &[
+            "--backend",
+            "software",
+            "explain",
+            "--json",
+            "--strict",
+            "p.vcr",
+        ],
+    );
+    assert_eq!(strict.status.code(), Some(3));
+    assert_eq!(doc(&strict)["status"], "failed");
+
+    // and the render itself refuses, with the same facts
+    if need_ffmpeg() {
+        let render = vcr(
+            dir.path(),
+            &[
+                "--backend",
+                "software",
+                "render",
+                "--json",
+                "p.vcr",
+                "-o",
+                "p.mov",
+            ],
+        );
+        assert_eq!(render.status.code(), Some(2));
+        let r = doc(&render);
+        assert_eq!(r["error"]["code"], "UNSUPPORTED_SOFTWARE_FEATURES");
+        assert_eq!(r["error"]["category"], "usage");
+        assert!(
+            !dir.path().join("p.mov").exists(),
+            "no output may be published"
+        );
+    }
+}
+
+#[test]
+fn requesting_gpu_without_adapter_is_a_preflight_blocker() {
+    let dir = TempDir::new().unwrap();
+    write(dir.path(), "a.vcr", SMALL_ALPHA);
+    let d = doc(&vcr(
+        dir.path(),
+        &["--backend", "gpu", "explain", "--json", "a.vcr"],
+    ));
+    let b = &d["result"]["backend_preflight"];
+    if b["gpu_available"] == false {
+        assert!(b["resolved_backend"].is_null());
+        assert_eq!(b["ready"], false);
+        assert_eq!(b["checks"][0]["code"], "backend.gpu_unavailable");
+    }
 }
