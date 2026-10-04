@@ -3852,6 +3852,7 @@ fn run_build(
     // or interrupted render never leaves a half-written file at `output_path`, and sidecars that
     // described the previous artifact are removed up front so an old file cannot pass as new.
     vcr::provenance::invalidate_sidecars(output_path);
+    vcr::provenance::sweep_stale_partials(output_path);
     if let Some(parent) = output_path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create output directory {}", parent.display()))?;

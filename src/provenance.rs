@@ -90,6 +90,42 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Remove hidden partial files left by an interrupted render of the same output (killed by a
+/// timeout, crash or power loss: no destructor ran). Only files idle for over a minute are
+/// removed, so a concurrent render that is still writing is never touched.
+pub fn sweep_stale_partials(output: &Path) {
+    let stem = output
+        .file_stem()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = output
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let dir = match output.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let prefix = format!(".{stem}.partial-");
+    let Ok(entries) = fs::read_dir(&dir) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !(name.starts_with(&prefix) && name.ends_with(&ext)) {
+            continue;
+        }
+        let idle = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .map(|age| age.as_secs() > 60)
+            .unwrap_or(false);
+        if idle {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Delete sidecars that describe a previous artifact at `output`, before replacing it. A render
 /// that then fails leaves an old file with *no* provenance rather than a stale "complete" record.
 pub fn invalidate_sidecars(output: &Path) {

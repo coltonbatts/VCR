@@ -1,801 +1,602 @@
 #!/usr/bin/env python3
-"""VCR MCP Server — Expose VCR rendering capabilities as MCP tools."""
+"""VCR MCP server: typed access to the installed VCR engine, for agents.
 
-import asyncio
+Design rules (see docs/AGENT_CONTRACT.md):
+- Every tool forwards the engine's own `--json` document (contract `vcr.agent/1`). Normalization,
+  validation, preflight, rendering and verification are the engine's; this adapter adds only an
+  `adapter` block (selected executable, identity, warnings, argv, elapsed time).
+- No tool invents scene settings. Missing duration etc. comes back as a `blocked` document.
+- The calling agent authors and revises manifests itself. The optional LLM synthesis tools at the
+  bottom are conveniences that obey the same normalization/validation gates.
+- Project, manifest and output context are explicit; outputs are relative to the project root.
+"""
+
+from __future__ import annotations
+
+import hashlib
 import json
 import logging
 import os
 import re
-import shutil
 import sqlite3
-import subprocess
-import tempfile
 from pathlib import Path
+from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+import engine as eng
+
 log = logging.getLogger("vcr-mcp")
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True)
+WRITES = ToolAnnotations(readOnlyHint=False, destructiveHint=False)
 
 mcp = FastMCP("vcr")
 
 VCR_HOME = Path.home() / ".vcr"
 BRAIN_DB = VCR_HOME / "brain.db"
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-RENDERS_DIR = PROJECT_ROOT / "renders"
-
-# ── LLM configuration (env vars) ─────────────────────────────────────────────
 VCR_LLM_ENDPOINT = os.environ.get("VCR_LLM_ENDPOINT", "http://127.0.0.1:1234/v1").rstrip("/")
 VCR_LLM_MODEL = os.environ.get("VCR_LLM_MODEL", "")
 VCR_LLM_API_KEY = os.environ.get("VCR_LLM_API_KEY", "")
 
-SYSTEM_PROMPT = """\
-You are the VCR Engine Brain. You only output valid VCR YAML manifests.
-A VCR manifest MUST follow this structure:
-
-version: 1
-environment:
-  resolution: {width: 1280, height: 720}
-  fps: 24
-  duration: 5.0
-layers:
-  - id: background
-    procedural:
-      kind: solid_color
-      color: {r: 0.0, g: 0.0, b: 0.0, a: 1.0}
-  - id: sample_text
-    text:
-      content: "HELLO"
-      font_size: 120
-      font_family: "GeistPixel-Line"
-      color: {r: 1.0, g: 1.0, b: 1.0, a: 1.0}
-    position: {x: 640, y: 360}
-    anchor: center
-
-Rules:
-1. No conversational text.
-2. Use "procedural" with "kind: solid_color" for backgrounds.
-3. Colors (r, g, b, a) are 0.0 to 1.0.
-4. Use ONLY font_family: "GeistPixel-Line".
-5. Resolution and position are integers."""
-
-# Load SKILL.md for the synthesizer system prompt (comprehensive manifest reference)
-_SKILL_MD_PATH = PROJECT_ROOT / "SKILL.md"
-_SKILL_MD = ""
-if _SKILL_MD_PATH.exists():
-    _SKILL_MD = _SKILL_MD_PATH.read_text()
-
-SYNTHESIZER_SYSTEM_PROMPT = f"""\
-You are a VCR manifest synthesizer. You output ONLY valid VCR YAML — no prose, no markdown
-fences, no explanation. The YAML must pass `vcr check` without errors.
-
-You will receive a render plan (JSON) describing what to produce. Generate a manifest that
-exactly satisfies the plan's resolution, fps, duration, alpha, and backend requirements.
-
-If alpha is true, do NOT add a solid_color background layer — leave the background transparent.
-If alpha is false, add a solid_color background as the first layer.
-
-STRICT RULES:
-- version must be 1
-- All layer ids must be unique non-empty strings
-- Colors are {{r: 0.0-1.0, g: 0.0-1.0, b: 0.0-1.0, a: 0.0-1.0}}
-- Fonts: GeistPixel-Line, GeistPixel-Square, GeistPixel-Grid, GeistPixel-Circle, GeistPixel-Triangle
-- Procedural kinds: solid_color, gradient, circle, rounded_rect, ring, line, triangle, polygon
-- Expressions use `t` (frame number float). Functions: sin, cos, abs, floor, ceil, round, fract,
-  clamp, lerp, smoothstep, step, easeinout, saw, tri, random, noise1d, glitch, env
-- Post-processing (levels, sobel, passthrough) requires GPU backend
-- Shader layers require GPU backend
-- Image paths must be relative
-- No unknown fields (deny_unknown_fields is active)
-
-{_SKILL_MD[:8000] if _SKILL_MD else ""}
-Output the YAML now. Nothing else."""
+Doc = dict[str, Any]
+BACKENDS = ("auto", "software", "gpu")
 
 
-def _find_vcr_binary() -> str:
-    """Locate the vcr binary — prefer PATH, fall back to local debug build."""
-    if shutil.which("vcr"):
-        return "vcr"
-    local = PROJECT_ROOT / "target" / "debug" / "vcr"
-    if local.exists():
-        return str(local)
-    local_release = PROJECT_ROOT / "target" / "release" / "vcr"
-    if local_release.exists():
-        return str(local_release)
-    raise FileNotFoundError(
-        "vcr binary not found. Run `cargo build` in the VCR project root or add vcr to PATH."
-    )
+# ── shared plumbing ──────────────────────────────────────────────────────────
 
 
-def _run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=str(PROJECT_ROOT),
-    )
+def _root(project_root: str | None) -> Path:
+    return Path(project_root).resolve() if project_root else eng.DEFAULT_PROJECT_ROOT
 
 
-def _resolve_manifest_path(manifest_path: str) -> Path:
-    """Resolve manifest path to absolute Path. Paths are relative to PROJECT_ROOT."""
-    p = Path(manifest_path)
-    if not p.is_absolute():
-        p = PROJECT_ROOT / p
-    p = p.resolve()
-    if not p.exists():
-        raise FileNotFoundError(
-            f"Manifest not found: {manifest_path}\n"
-            f"Resolved to: {p}\n"
-            f"Paths are relative to project root: {PROJECT_ROOT}"
-        )
-    if not p.is_file():
-        raise FileNotFoundError(f"Not a file: {p}")
-    return p
-
-
-def _resolve_output_path(output: str) -> Path:
-    """Resolve output path relative to PROJECT_ROOT."""
-    p = Path(output)
-    if not p.is_absolute():
-        p = PROJECT_ROOT / p
-    return p.resolve()
-
-
-# ── Tools ────────────────────────────────────────────────────────────────────
-
-
-@mcp.tool(annotations=READ_ONLY)
-def vcr_doctor() -> str:
-    """Check VCR system health: binary availability, FFmpeg, GPU support."""
+def _engine(project_root: Path, engine_path: str | None, operation: str) -> tuple[eng.Engine | None, Doc | None]:
     try:
-        vcr = _find_vcr_binary()
-    except FileNotFoundError as e:
-        return (
-            f"FAIL: {e}\n\n"
-            "Run `cargo build` in the VCR project root, or add the vcr binary to PATH."
-        )
+        return eng.select_engine(project_root, engine_path), None
+    except eng.EngineUnavailable as exc:
+        exc.envelope["operation"] = operation
+        return None, exc.envelope
 
-    result = _run([vcr, "doctor"], timeout=30)
-    output = (result.stdout + result.stderr).strip()
-    status = "HEALTHY" if result.returncode == 0 else "ISSUES DETECTED"
-    return f"[{status}]\n{output}"
+
+def _bad(operation: str, code: str, message: str, **kw: Any) -> Doc:
+    return eng.error_envelope(operation, code, kw.pop("category", "usage"), message, exit_code=kw.pop("exit_code", 2), **kw)
+
+
+def _backend_args(backend: str) -> list[str] | None:
+    return ["--backend", backend] if backend in BACKENDS else None
+
+
+def _call(
+    operation: str,
+    args: list[str],
+    *,
+    project_root: str | None,
+    engine_path: str | None,
+    backend: str | None = None,
+    timeout: float = 120.0,
+) -> Doc:
+    root = _root(project_root)
+    engine, failure = _engine(root, engine_path, operation)
+    if failure:
+        return failure
+    assert engine is not None
+    global_args: list[str] = []
+    if backend is not None:
+        if backend not in BACKENDS:
+            return _bad(operation, "usage.invalid_argument", f"backend must be one of {BACKENDS}, got '{backend}'", adapter=engine.adapter_block())
+        global_args = ["--backend", backend]
+    return eng.run_engine(engine, operation, [*global_args, *args], cwd=root, timeout=timeout)
+
+
+def _manifest_arg(
+    operation: str,
+    project_root: Path,
+    manifest_path: str | None,
+    manifest_yaml: str | None,
+    save_as: str | None,
+) -> tuple[str | None, Doc | None]:
+    """Resolve to a project-relative manifest path. Inline YAML is saved to a real, stable path (not
+    a temp file) because asset paths resolve relative to the manifest's directory."""
+    try:
+        if manifest_yaml is not None:
+            if manifest_path:
+                return None, _bad(operation, "usage.invalid_argument", "pass manifest_path or manifest_yaml, not both")
+            rel = save_as or f".vcr_mcp/{hashlib.sha256(manifest_yaml.encode()).hexdigest()[:12]}.vcr"
+            target = eng.resolve_in_project(project_root, rel, kind="save_as")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(manifest_yaml)
+            return str(target.relative_to(project_root)), None
+        if not manifest_path:
+            return None, _bad(operation, "usage.invalid_argument", "manifest_path or manifest_yaml is required")
+        target = eng.resolve_in_project(project_root, manifest_path, must_exist=True, kind="manifest_path")
+        return str(target.relative_to(project_root)), None
+    except eng.PathRefused as exc:
+        return None, _bad(operation, "usage.invalid_argument", str(exc), recovery=["Use a path inside project_root."])
+
+
+def _output_arg(operation: str, output: str | None, default_name: str) -> tuple[str | None, Doc | None]:
+    rel = output or f"renders/{default_name}"
+    if os.path.isabs(rel) or ".." in Path(rel).parts:
+        return None, _bad(operation, "usage.invalid_argument", f"output '{rel}' must be relative to project_root and must not contain '..'")
+    return rel, None
+
+
+# ── discovery ────────────────────────────────────────────────────────────────
 
 
 @mcp.tool(annotations=READ_ONLY)
-def validate_vcr_manifest(manifest_yaml: str, run_lint: bool = True) -> str:
-    """Validate a VCR YAML manifest: schema (vcr check) and optionally unreachable layers (vcr lint).
+def vcr_capabilities(
+    include_schema: bool = False,
+    project_root: str | None = None,
+    engine_path: str | None = None,
+) -> Doc:
+    """Discover what the installed engine can do and what is usable on this machine.
 
-    Runs vcr check first for schema validation. If run_lint is True, also runs vcr lint
-    to detect layers that never become visible across the timeline.
-
-    Args:
-        manifest_yaml: The full YAML content of a .vcr manifest to validate.
-        run_lint: If True, also run vcr lint for unreachable-layer analysis. Default: True.
+    Returns engine/build identity, contract and manifest versions, supported layer types and
+    backend requirements, codecs/profiles, fonts, expression functions, time units (expressions and
+    keyframes use FRAMES; layer start_time/end_time use SECONDS), and runtime probes (ffmpeg, GPU).
+    Pass include_schema=true for the manifest JSON Schema generated from the engine's own types.
+    Call this first; do not rely on documentation for fields, fonts, codecs or hardware.
     """
-    try:
-        vcr = _find_vcr_binary()
-    except FileNotFoundError as e:
-        return f"ERROR: {e}\n\nRun `vcr doctor` or `cargo build` in the VCR project root."
-
-    with tempfile.NamedTemporaryFile(
-        suffix=".vcr", mode="w", delete=False, dir=str(PROJECT_ROOT)
-    ) as f:
-        f.write(manifest_yaml)
-        tmp_path = f.name
-
-    try:
-        # 1. Schema validation (vcr check) — fast, required for any render
-        check_result = _run([vcr, "check", tmp_path], timeout=30)
-        check_out = (check_result.stdout + check_result.stderr).strip()
-        if check_result.returncode != 0:
-            return (
-                f"SCHEMA VALIDATION FAILED (vcr check):\n{check_out}\n\n"
-                "Fix schema errors (typos, unknown fields, invalid values) and retry."
-            )
-
-        # 2. Unreachable layer analysis (vcr lint) — optional, samples frames
-        if run_lint:
-            lint_result = _run([vcr, "lint", tmp_path], timeout=60)
-            lint_out = (lint_result.stdout + lint_result.stderr).strip()
-            if lint_result.returncode != 0:
-                return (
-                    f"SCHEMA OK (vcr check passed)\n\n"
-                    f"LINT WARNINGS (vcr lint — unreachable layers):\n{lint_out}\n\n"
-                    "Unreachable layers never become visible. Consider removing them or fixing timing/opacity."
-                )
-
-        return "OK: Manifest is valid. Schema (vcr check) passed." + (
-            " Lint (vcr lint) passed." if run_lint else ""
-        )
-    finally:
-        os.unlink(tmp_path)
+    args = ["capabilities"] + (["--schema"] if include_schema else [])
+    return _call("capabilities", args, project_root=project_root, engine_path=engine_path, timeout=60)
 
 
 @mcp.tool(annotations=READ_ONLY)
-def lint_vcr_manifest(manifest_yaml: str) -> str:
-    """Validate a VCR YAML manifest (alias for validate_vcr_manifest). Prefer validate_vcr_manifest."""
-    return validate_vcr_manifest(manifest_yaml, run_lint=True)
-
-
-@mcp.tool()
-def vcr_render_frame(
-    manifest_path: str,
-    frame: int = 0,
-    output: str | None = None,
-    backend: str = "software",
-) -> str:
-    """Render a single frame from a VCR manifest to PNG. Fast preview without full video encode.
-
-    Use this to quickly verify a manifest renders correctly before running a full build.
-    Output is written to renders/ by default.
-
-    Args:
-        manifest_path: Path to the .vcr manifest (relative to project root).
-        frame: Frame index to render (0-based). Default: 0.
-        output: Output PNG path (relative). Default: renders/<manifest_stem>_f<frame>.png.
-        backend: Render backend: "software", "gpu", "auto". Default: software.
-    """
-    if backend not in ("software", "gpu", "auto"):
-        return f"ERROR: backend must be 'software', 'gpu', or 'auto', got '{backend}'"
-
-    if frame < 0:
-        return "ERROR: frame must be >= 0"
-
-    try:
-        vcr = _find_vcr_binary()
-        manifest_abs = _resolve_manifest_path(manifest_path)
-    except FileNotFoundError as e:
-        return f"ERROR: {e}\n\nRun `vcr doctor` to verify the VCR binary."
-
-    if not output:
-        RENDERS_DIR.mkdir(parents=True, exist_ok=True)
-        stem = manifest_abs.stem
-        output = f"renders/{stem}_f{frame}.png"
-    output_abs = _resolve_output_path(output)
-    output_abs.parent.mkdir(parents=True, exist_ok=True)
-
-    result = _run(
-        [vcr, "render-frame", str(manifest_abs), "--frame", str(frame), "-o", str(output_abs), "--backend", backend],
-        timeout=60,
-    )
-    out = (result.stdout + result.stderr).strip()
-    if result.returncode != 0:
-        return f"RENDER FRAME FAILED:\n{out}\n\nRun `vcr doctor` to verify dependencies."
-
-    return json.dumps({
-        "status": "OK",
-        "output": str(output_abs),
-        "manifest": manifest_path,
-        "frame": frame,
-        "backend": backend,
-    }, indent=2)
+def vcr_doctor(project_root: str | None = None, engine_path: str | None = None) -> Doc:
+    """Check runtime dependencies (ffmpeg, ffprobe, fonts, GPU). status=failed lists blockers."""
+    return _call("doctor", ["doctor"], project_root=project_root, engine_path=engine_path, timeout=60)
 
 
 @mcp.tool(annotations=READ_ONLY)
-def vcr_list_examples() -> str:
-    """List available VCR example manifests in the examples/ directory.
-
-    Returns paths and descriptions for reference when creating or modifying manifests.
-    Use these as starting points or to understand VCR capabilities.
-    """
-    examples_dir = PROJECT_ROOT / "examples"
-    if not examples_dir.exists():
-        return json.dumps({"examples": [], "note": "examples/ directory not found"}, indent=2)
-
-    files = sorted(examples_dir.glob("*.vcr"))
-    examples = []
-    for f in files:
-        rel = str(f.relative_to(PROJECT_ROOT))
-        # Try to extract a one-line comment from the file
+def vcr_list_examples(project_root: str | None = None) -> Doc:
+    """List example manifests (examples/**/*.vcr) with their first comment line."""
+    root = _root(project_root)
+    out = []
+    for f in sorted((root / "examples").rglob("*.vcr")):
         desc = ""
         try:
-            first_lines = f.read_text()[:500]
-            for line in first_lines.splitlines():
-                line = line.strip()
-                if line.startswith("#") and "Render:" not in line and "Preview:" not in line:
-                    desc = line.lstrip("#").strip()
-                    break
-        except Exception:
+            for line in f.read_text()[:600].splitlines():
+                t = line.strip()
+                if t.startswith("#") and not t.startswith("# ===") and "Render:" not in t:
+                    desc = t.lstrip("#").strip()
+                    if desc:
+                        break
+        except OSError:
             pass
-        examples.append({"path": rel, "name": f.stem, "description": desc or "(no description)"})
-
-    return json.dumps({
-        "examples": examples,
-        "count": len(examples),
-        "usage": "Use vcr_render_frame or vcr_execute_plan with these paths, e.g. examples/demo_scene.vcr",
-    }, indent=2)
+        out.append({"path": str(f.relative_to(root)), "description": desc})
+    return {"contract": "vcr.agent/1", "operation": "list_examples", "ok": True, "status": "ok", "source": "adapter", "result": {"examples": out, "count": len(out)}}
 
 
-def _extract_yaml(content: str) -> str:
-    """Extract YAML manifest from LLM response text."""
-    # Prefer the version: marker
-    if "version:" in content:
-        idx = content.index("version:")
-        yaml_text = content[idx:]
-        if "```" in yaml_text:
-            yaml_text = yaml_text.split("```")[0]
-        return yaml_text.strip()
-    # Fallback: code-block extraction
-    m = re.search(r"```(?:yaml)?\n?(.*?)```", content, re.DOTALL)
-    if m:
-        return m.group(1).strip()
-    return content.strip()
+# ── normalize ────────────────────────────────────────────────────────────────
 
 
-async def _resolve_model(client: httpx.AsyncClient) -> str:
-    """Return the model ID to use, auto-detecting from /models if needed."""
-    if VCR_LLM_MODEL:
-        return VCR_LLM_MODEL
-    try:
-        resp = await client.get(f"{VCR_LLM_ENDPOINT}/models", timeout=10)
-        resp.raise_for_status()
-        data = resp.json().get("data", [])
-        if data:
-            return data[0]["id"]
-    except Exception as exc:
-        log.debug("Model auto-detect failed: %s", exc)
-    return "local-model"
+@mcp.tool(annotations=READ_ONLY)
+def vcr_normalize_brief(
+    brief_text: str | None = None,
+    brief_path: str | None = None,
+    output_path: str | None = None,
+    strict: bool = False,
+    project_root: str | None = None,
+    engine_path: str | None = None,
+) -> Doc:
+    """Run the engine's prompt gate on a brief (natural language or YAML). Required before authoring.
 
-
-@mcp.tool()
-async def render_video_from_prompt(
-    prompt: str, context_ids: list[str] | None = None
-) -> str:
-    """Generate a broadcast-quality .mov video from a natural language prompt.
-
-    Uses VCR's agentic pipeline: queries the Intelligence Tree for creative
-    context, generates a manifest via LLM, then renders with the GPU engine.
-
-    Configure the LLM provider via environment variables:
-      VCR_LLM_ENDPOINT  — Base URL (OpenAI-compatible, default http://127.0.0.1:1234/v1)
-      VCR_LLM_MODEL     — Model ID (auto-detected from /models if empty)
-      VCR_LLM_API_KEY   — Bearer token (omit for local models)
-
-    Args:
-        prompt: Natural language description of the video to create.
-        context_ids: Optional list of Intelligence Tree node IDs for additional creative context.
+    Returns normalized_spec, defaults_applied (specification defaults only), unknowns/blockers,
+    and creative_inputs (text/palette/typeface/assets the brief does NOT specify; never invented).
+    status=="blocked" means unresolved requirements: resolve them with the requester before
+    authoring a manifest. Equivalent to `vcr prompt --json`.
     """
-    status_log: list[str] = []
-
-    # 1. Gather context from brain.db
-    context_str = ""
-    if BRAIN_DB.exists():
-        try:
-            conn = sqlite3.connect(str(BRAIN_DB))
-            if context_ids:
-                placeholders = ",".join("?" for _ in context_ids)
-                rows = conn.execute(
-                    f"SELECT content FROM context_nodes WHERE id IN ({placeholders})",
-                    context_ids,
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT content FROM context_nodes LIMIT 20"
-                ).fetchall()
-            conn.close()
-            context_str = "\n".join(r[0] for r in rows)
-        except Exception as e:
-            context_str = f"(brain.db read failed: {e})"
-
-    status_log.append("Reading Intelligence Tree...")
-
-    # 2. Query LLM via OpenAI-compatible API
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    if VCR_LLM_API_KEY:
-        headers["Authorization"] = f"Bearer {VCR_LLM_API_KEY}"
-
-    async with httpx.AsyncClient() as client:
-        # Resolve model
-        status_log.append("Syncing with LLM provider...")
-        try:
-            model = await _resolve_model(client)
-        except Exception:
-            model = "local-model"
-
-        user_message = (
-            f"Creative Context from Intelligence Tree:\n{context_str}\n\n"
-            f"User Request: {prompt}\n\nGenerate the YAML manifest now:"
-        )
-
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": 0.0,
-        }
-
-        status_log.append(f"Thinking... (model: {model})")
-        try:
-            resp = await client.post(
-                f"{VCR_LLM_ENDPOINT}/chat/completions",
-                json=payload,
-                headers=headers,
-                timeout=90,
-            )
-            resp.raise_for_status()
-        except httpx.ConnectError:
-            return (
-                f"ERROR: Could not connect to LLM at {VCR_LLM_ENDPOINT}.\n\n"
-                "Ensure your LLM provider is running (e.g. LM Studio on 127.0.0.1:1234). "
-                "Set VCR_LLM_ENDPOINT, VCR_LLM_MODEL, and optionally VCR_LLM_API_KEY."
-            )
-        except httpx.HTTPStatusError as exc:
-            return f"ERROR: LLM returned HTTP {exc.response.status_code}: {exc.response.text[:500]}"
-        except httpx.TimeoutException:
-            return "ERROR: LLM request timed out after 90 seconds."
-
-    ai_resp = resp.json()
-    choices = ai_resp.get("choices", [])
-    if not choices:
-        return "ERROR: LLM returned empty response (no choices)."
-
-    content = choices[0].get("message", {}).get("content", "")
-    yaml_content = _extract_yaml(content)
-
-    if not yaml_content:
-        return "ERROR: Could not extract YAML manifest from LLM response."
-
-    # 3. Write manifest, lint, build
-    try:
-        vcr = _find_vcr_binary()
-    except FileNotFoundError as e:
-        return f"ERROR: {e}"
-
-    RENDERS_DIR.mkdir(parents=True, exist_ok=True)
-
-    manifest_path = str(PROJECT_ROOT / "agent_manifest.yaml")
-    with open(manifest_path, "w") as f:
-        f.write(yaml_content)
-
-    # Schema validation (vcr check) — required before build
-    check_result = _run([vcr, "check", manifest_path], timeout=30)
-    if check_result.returncode != 0:
-        check_out = (check_result.stdout + check_result.stderr).strip()
-        return (
-            f"SCHEMA VALIDATION FAILED (manifest rejected):\n{check_out}\n\n"
-            f"Generated YAML:\n{yaml_content}\n\n"
-            "Fix schema errors and retry, or use validate_vcr_manifest to debug."
-        )
-
-    status_log.append("Manifest validated. Starting GPU render...")
-
-    # Build
-    output_path = str(RENDERS_DIR / "agentic_result.mov")
-    proc = await asyncio.create_subprocess_exec(
-        vcr, "build", manifest_path, "-o", output_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(PROJECT_ROOT),
-    )
-
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
-    except asyncio.TimeoutError:
-        proc.kill()
-        return "ERROR: Render timed out after 180 seconds."
-
-    # Parse build progress from stderr
-    for line in (stderr or b"").decode().splitlines():
-        line = line.strip()
-        if "rendered frame" in line:
-            status_log.append(line)
-
-    if proc.returncode != 0:
-        build_err = (stdout or b"").decode() + (stderr or b"").decode()
-        return f"RENDER FAILED (exit {proc.returncode}):\n{build_err.strip()}"
-
-    abs_path = str(Path(output_path).resolve())
-    return f"RENDER COMPLETE\nOutput: {abs_path}\n\nLog:\n" + "\n".join(status_log)
+    args = ["prompt"]
+    if (brief_text is None) == (brief_path is None):
+        return _bad("prompt", "usage.invalid_argument", "provide exactly one of brief_text or brief_path")
+    if brief_text is not None:
+        args += ["--text", brief_text]
+    else:
+        args += ["--in", brief_path or ""]
+    if output_path:
+        out, bad = _output_arg("prompt", output_path, "")
+        if bad:
+            return bad
+        args += ["-o", out or ""]
+    if strict:
+        args.append("--strict")
+    return _call("prompt", args, project_root=project_root, engine_path=engine_path, timeout=30)
 
 
 @mcp.tool(annotations=READ_ONLY)
 def vcr_render_plan(
-    prompt: str,
-    resolution: str | None = None,
-    fps: int | None = None,
-    duration: float | None = None,
-    alpha: bool | None = None,
-    backend: str | None = None,
+    brief_text: str,
     manifest_path: str | None = None,
-) -> str:
-    """Plan a VCR render from a natural language video description.
+    project_root: str | None = None,
+    engine_path: str | None = None,
+) -> Doc:
+    """Plan a render from a brief WITHOUT executing anything.
 
-    Returns a structured render plan with CLI commands — does NOT execute them.
-    The calling agent decides whether to run the commands.
-
-    This tool enforces the VCR capability contract:
-    - 2D only (no 3D). Procedural shapes, text, ASCII, custom WGSL shaders.
-    - ProRes 4444 (alpha) or 422HQ output.
-    - Fonts: GeistPixel-Line, Square, Grid, Circle, Triangle only.
-    - Post-processing (levels, sobel, passthrough) requires GPU backend.
-    - Deterministic output on software backend.
-    - No audio, no network, no video editing.
-
-    If a manifest_path is provided, validates it with `vcr check` and includes
-    the result. Otherwise, the plan specifies what manifest is needed.
-
-    Args:
-        prompt: Natural language description of the video to create.
-        resolution: Override resolution (e.g. "1920x1080"). Default: 1920x1080.
-        fps: Override frames per second. Default: 24.
-        duration: Override duration in seconds. Default: 5.0.
-        alpha: Whether to produce alpha channel. Default: false unless implied.
-        backend: Force backend: "software", "gpu", or "auto". Default: software.
-        manifest_path: Optional path to existing .vcr manifest to validate and use.
+    Normalizes the brief with the engine (no adapter-side defaults). If blocked, returns the
+    blockers; otherwise returns the normalized spec and the exact ordered CLI/MCP steps for the
+    rest of the workflow. Put resolution/fps/duration/alpha in the brief; they are not overridable
+    here because the engine owns those defaults.
     """
-    # Apply defaults
-    res = resolution or "1920x1080"
-    fps_val = fps or 24
-    dur = duration or 5.0
-    alpha_val = alpha if alpha is not None else False
-    backend_val = backend or "software"
-
-    if backend_val not in ("software", "gpu", "auto"):
-        return f"ERROR: backend must be 'software', 'gpu', or 'auto', got '{backend_val}'"
-
-    # Determine ProRes profile
-    prores = "4444" if alpha_val else "422hq"
-
-    # Determine output filename from prompt
-    slug = re.sub(r"[^a-z0-9]+", "_", prompt.lower().strip())[:40].strip("_")
-    output_path = f"renders/{slug}.mov"
-
-    # Build plan
-    plan = {
-        "intent_summary": prompt,
-        "render_plan": {
-            "resolution": res,
-            "fps": fps_val,
-            "duration": dur,
-            "backend": backend_val,
-            "alpha": alpha_val,
-            "prores_profile": prores,
-            "determinism_mode": "on" if backend_val == "software" else "off",
-        },
-        "cli_commands": [],
-        "expected_outputs": [output_path],
-        "validation_steps": [
-            f"test -f {output_path}",
-            f"ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,pix_fmt {output_path}",
+    doc = vcr_normalize_brief(brief_text=brief_text, project_root=project_root, engine_path=engine_path)
+    if doc.get("status") != "ok":
+        return doc
+    spec = doc["result"]["normalized_spec"]
+    manifest = manifest_path or "<MANIFEST.vcr>"
+    out = spec["output"]["path"].lstrip("./")
+    backend = "software"
+    doc["result"]["plan"] = {
+        "output": spec["output"]["path"],
+        "steps": [
+            "author the manifest from normalized_spec (do not choose unspecified text, brand or assets)",
+            f"vcr_validate manifest_path={manifest}  (check -> lint -> preflight)",
+            f"vcr_inspect manifest_path={manifest}  (sampled frames, contact sheet, bounds/timing diagnostics)",
+            f"vcr_render manifest_path={manifest} output={out} backend={backend}",
+            f"vcr_verify output_path={out} manifest_path={manifest}  (set expect_transparency=required for alpha deliverables)",
         ],
+        "alpha": spec["output"]["alpha"],
+        "note": "backend 'software' is the reproducible default; use gpu only for GPU-only layers (shader/video/lottie) or post effects",
     }
-
-    # If manifest provided, validate it
-    if manifest_path:
-        try:
-            vcr = _find_vcr_binary()
-            manifest_abs = _resolve_manifest_path(manifest_path)
-        except FileNotFoundError as e:
-            return f"ERROR: {e}"
-
-        check_result = _run([vcr, "check", str(manifest_abs)], timeout=30)
-        check_output = (check_result.stdout + check_result.stderr).strip()
-
-        if check_result.returncode != 0:
-            plan["manifest_validation"] = f"FAILED: {check_output}"
-            return json.dumps(plan, indent=2)
-
-        plan["manifest_validation"] = "PASSED"
-        plan["cli_commands"] = [
-            f"vcr check {manifest_path}",
-            f"vcr build {manifest_path} -o {output_path} --backend {backend_val}",
-        ]
-    else:
-        plan["required_assets"] = f"A .vcr manifest matching this request. Write it, then validate with: vcr check <file>"
-        plan["cli_commands"] = [
-            "vcr check <MANIFEST_PATH>",
-            f"vcr build <MANIFEST_PATH> -o {output_path} --backend {backend_val}",
-        ]
-
-    if alpha_val:
-        plan["validation_steps"].append(
-            "Expect pix_fmt=yuva444p10le (alpha present)"
-        )
-
-    return json.dumps(plan, indent=2)
+    return doc
 
 
-@mcp.tool()
-async def vcr_synthesize_manifest(
-    prompt: str,
-    resolution: str = "1920x1080",
-    fps: int = 24,
-    duration: float = 5.0,
-    alpha: bool = False,
-    backend: str = "software",
-    output_manifest: str | None = None,
-) -> str:
-    """Generate a valid VCR YAML manifest from a natural language description.
+# ── validate / preflight ─────────────────────────────────────────────────────
 
-    Writes the manifest to disk and validates it with `vcr check`. Returns the
-    manifest YAML and validation result. Does NOT render — use vcr_execute_plan
-    or vcr build separately.
 
-    Args:
-        prompt: Natural language description of the video to create.
-        resolution: Resolution as "WIDTHxHEIGHT". Default: 1920x1080.
-        fps: Frames per second. Default: 24.
-        duration: Duration in seconds. Default: 5.0.
-        alpha: Produce transparent background. Default: false.
-        backend: Target backend: "software", "gpu", "auto". Default: software.
-        output_manifest: Where to write the .vcr file. Default: auto-generated.
+@mcp.tool(annotations=READ_ONLY)
+def vcr_validate(
+    manifest_path: str | None = None,
+    manifest_yaml: str | None = None,
+    save_as: str | None = None,
+    overrides: dict[str, Any] | None = None,
+    backend: str = "auto",
+    project_root: str | None = None,
+    engine_path: str | None = None,
+) -> Doc:
+    """Validate a manifest in three separate stages and report the first failing one.
+
+    1. check: structural/semantic validity.  2. lint: likely visibility/timing problems.
+    3. preflight (explain): can the requested backend render this scene on THIS machine
+    (unsupported layers, ignored post effects, missing ffmpeg/fonts, font fallback)?
+    Stages after a failing `check` are skipped. Provide manifest_path, or manifest_yaml (saved to
+    save_as, default .vcr_mcp/<hash>.vcr; asset paths resolve relative to that file).
     """
-    if backend not in ("software", "gpu", "auto"):
-        return f"ERROR: backend must be 'software', 'gpu', or 'auto', got '{backend}'"
-
-    # Parse resolution
-    m = re.match(r"(\d+)x(\d+)", resolution)
-    if not m:
-        return f"ERROR: resolution must be WIDTHxHEIGHT, got '{resolution}'"
-    width, height = int(m.group(1)), int(m.group(2))
-
-    # Build the render plan context for the LLM
-    render_plan = json.dumps({
-        "prompt": prompt,
-        "resolution": {"width": width, "height": height},
-        "fps": fps,
-        "duration": duration,
-        "alpha": alpha,
-        "backend": backend,
-        "prores_profile": "4444" if alpha else "422hq",
-    })
-
-    # Call LLM to generate manifest
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    if VCR_LLM_API_KEY:
-        headers["Authorization"] = f"Bearer {VCR_LLM_API_KEY}"
-
-    async with httpx.AsyncClient() as client:
-        try:
-            model = await _resolve_model(client)
-        except Exception:
-            model = "local-model"
-
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": SYNTHESIZER_SYSTEM_PROMPT},
-                {"role": "user", "content": render_plan},
-            ],
-            "temperature": 0.0,
-        }
-
-        try:
-            resp = await client.post(
-                f"{VCR_LLM_ENDPOINT}/chat/completions",
-                json=payload,
-                headers=headers,
-                timeout=90,
-            )
-            resp.raise_for_status()
-        except httpx.ConnectError:
-            return (
-                f"ERROR: Could not connect to LLM at {VCR_LLM_ENDPOINT}.\n\n"
-                "Ensure your LLM provider is running. Set VCR_LLM_ENDPOINT, VCR_LLM_MODEL, "
-                "and optionally VCR_LLM_API_KEY."
-            )
-        except httpx.HTTPStatusError as exc:
-            return f"ERROR: LLM HTTP {exc.response.status_code}: {exc.response.text[:500]}"
-        except httpx.TimeoutException:
-            return "ERROR: LLM request timed out."
-
-    choices = resp.json().get("choices", [])
-    if not choices:
-        return "ERROR: LLM returned empty response."
-
-    content = choices[0].get("message", {}).get("content", "")
-    yaml_content = _extract_yaml(content)
-    if not yaml_content:
-        return "ERROR: Could not extract YAML from LLM response."
-
-    # Write manifest
-    slug = re.sub(r"[^a-z0-9]+", "_", prompt.lower().strip())[:40].strip("_")
-    manifest_file = output_manifest or f"{slug}.vcr"
-    manifest_abs = str(PROJECT_ROOT / manifest_file)
-
-    with open(manifest_abs, "w") as f:
-        f.write(yaml_content)
-
-    # Validate
-    try:
-        vcr = _find_vcr_binary()
-    except FileNotFoundError as e:
-        return f"ERROR: {e}\n\nManifest written to: {manifest_file}\n\n{yaml_content}"
-
-    check = _run([vcr, "check", manifest_abs], timeout=30)
-    check_output = (check.stdout + check.stderr).strip()
-
-    result = {
-        "manifest_path": manifest_file,
-        "validation": "PASSED" if check.returncode == 0 else f"FAILED: {check_output}",
-        "yaml": yaml_content,
+    root = _root(project_root)
+    rel, bad = _manifest_arg("validate", root, manifest_path, manifest_yaml, save_as)
+    if bad:
+        return bad
+    assert rel is not None
+    sets = eng.set_args(overrides)
+    common = dict(project_root=project_root, engine_path=engine_path)
+    stages: dict[str, Any] = {}
+    check = _call("check", ["check", rel, *sets], timeout=60, **common)
+    stages["check"] = check
+    first_fail = None if check.get("status") == "ok" else "check"
+    if first_fail is None:
+        lint = _call("lint", ["lint", rel, *sets], timeout=120, **common)
+        stages["lint"] = lint
+        if lint.get("status") != "ok":
+            first_fail = "lint"
+        pre = _call("explain", ["explain", rel, *sets], backend=backend, timeout=60, **common)
+        stages["preflight"] = pre
+        ready = (pre.get("result") or {}).get("backend_preflight", {}).get("ready")
+        if pre.get("status") != "ok" or ready is False:
+            first_fail = first_fail or "preflight"
+    else:
+        stages["lint"] = {"status": "skipped", "reason": "check failed"}
+        stages["preflight"] = {"status": "skipped", "reason": "check failed"}
+    ok = first_fail is None
+    return {
+        "contract": "vcr.agent/1",
+        "operation": "validate",
+        "ok": ok,
+        "status": "ok" if ok else "failed",
+        "source": "adapter",
+        "manifest": rel,
+        "first_failing_stage": first_fail,
+        "ready_to_render": ok,
+        "stages": stages,
+        "note": "lint findings (e.g. an unreachable layer) block ready_to_render; fix or consciously accept them. preflight.ready=false means the backend cannot honor the scene.",
     }
 
-    if check.returncode != 0:
-        result["hint"] = "Fix the errors above and re-run vcr check, or call this tool again with a refined prompt."
 
-    return json.dumps(result, indent=2)
+@mcp.tool(annotations=READ_ONLY)
+def validate_vcr_manifest(manifest_yaml: str, run_lint: bool = True, save_as: str | None = None, project_root: str | None = None, engine_path: str | None = None) -> Doc:
+    """Back-compat alias of vcr_validate for inline YAML (run_lint is ignored; all stages run)."""
+    return vcr_validate(manifest_yaml=manifest_yaml, save_as=save_as, project_root=project_root, engine_path=engine_path)
 
 
-@mcp.tool()
-async def vcr_execute_plan(
+@mcp.tool(annotations=READ_ONLY)
+def lint_vcr_manifest(manifest_yaml: str, save_as: str | None = None, project_root: str | None = None, engine_path: str | None = None) -> Doc:
+    """Back-compat alias of vcr_validate."""
+    return vcr_validate(manifest_yaml=manifest_yaml, save_as=save_as, project_root=project_root, engine_path=engine_path)
+
+
+# ── inspect / revise ─────────────────────────────────────────────────────────
+
+
+@mcp.tool(annotations=WRITES)
+def vcr_inspect(
+    manifest_path: str | None = None,
+    manifest_yaml: str | None = None,
+    save_as: str | None = None,
+    overrides: dict[str, Any] | None = None,
+    samples: int = 12,
+    output_dir: str | None = None,
+    safe_margin: float = 0.05,
+    backend: str = "software",
+    timeout_seconds: float = 300,
+    project_root: str | None = None,
+    engine_path: str | None = None,
+) -> Doc:
+    """Sample the timeline and return evidence for visual review plus mechanical diagnostics.
+
+    Writes sample PNGs, contact_sheet.png and inspection.json under output_dir (default
+    renders/<stem>_inspect). Result: exact frame indices/times, motion phases (entrance/hold/exit/
+    ending), evaluated layer state per sample, exact per-layer pixel bounds, and diagnostics
+    (clipping at the canvas edge, safe-area, cut-off animation, empty frames). Diagnostics are
+    labelled exact/approximate. They do NOT judge design quality: look at the contact sheet.
+    Revise by editing the layer with the reported stable `id`, or by changing declared params via
+    `overrides`, then inspect again.
+    """
+    root = _root(project_root)
+    rel, bad = _manifest_arg("inspect", root, manifest_path, manifest_yaml, save_as)
+    if bad:
+        return bad
+    assert rel is not None
+    args = ["inspect", rel, "--samples", str(samples), "--safe-margin", str(safe_margin), *eng.set_args(overrides)]
+    if output_dir:
+        out, bad = _output_arg("inspect", output_dir, "")
+        if bad:
+            return bad
+        args += ["-o", out or ""]
+    return _call("inspect", args, project_root=project_root, engine_path=engine_path, backend=backend, timeout=timeout_seconds)
+
+
+@mcp.tool(annotations=WRITES)
+def vcr_render_frame(
+    manifest_path: str,
+    frame: int = 0,
+    output: str | None = None,
+    overrides: dict[str, Any] | None = None,
+    backend: str = "software",
+    project_root: str | None = None,
+    engine_path: str | None = None,
+) -> Doc:
+    """Render one full-resolution frame to PNG (exact frame index; metadata sidecar included)."""
+    if frame < 0:
+        return _bad("render-frame", "usage.invalid_argument", "frame must be >= 0")
+    root = _root(project_root)
+    rel, bad = _manifest_arg("render-frame", root, manifest_path, None, None)
+    if bad:
+        return bad
+    assert rel is not None
+    out, bad = _output_arg("render-frame", output, f"{Path(rel).stem}_f{frame}.png")
+    if bad:
+        return bad
+    args = ["render-frame", rel, "--frame", str(frame), "-o", out or "", *eng.set_args(overrides)]
+    return _call("render-frame", args, project_root=project_root, engine_path=engine_path, backend=backend, timeout=120)
+
+
+# ── render / verify ──────────────────────────────────────────────────────────
+
+
+@mcp.tool(annotations=WRITES)
+def vcr_render(
+    manifest_path: str,
+    output: str | None = None,
+    overrides: dict[str, Any] | None = None,
+    backend: str = "software",
+    verify: bool = True,
+    expect_transparency: str | None = None,
+    timeout_seconds: float = 900,
+    project_root: str | None = None,
+    engine_path: str | None = None,
+) -> Doc:
+    """Golden-path render (ProRes 4444, alpha-preserving) then, by default, verify the encoded file.
+
+    The engine publishes atomically (hidden partial file, conformance check, rename) and writes
+    <output>.metadata.json (scene record) and <output>.provenance.json (execution record).
+    A timeout terminates the whole process tree and publishes nothing. Returns both documents;
+    a successful render is not "done" until `verify.status == "ok"`.
+    For alpha deliverables pass expect_transparency="required" so decoded pixels are checked.
+    """
+    root = _root(project_root)
+    rel, bad = _manifest_arg("render", root, manifest_path, None, None)
+    if bad:
+        return bad
+    assert rel is not None
+    out, bad = _output_arg("render", output, f"{Path(rel).stem}.mov")
+    if bad:
+        return bad
+    render = _call("render", ["render", rel, "-o", out or "", *eng.set_args(overrides)], project_root=project_root, engine_path=engine_path, backend=backend, timeout=timeout_seconds)
+    result: Doc = {"contract": "vcr.agent/1", "operation": "render+verify", "source": "adapter", "render": render, "verify": None}
+    if render.get("status") != "ok" or not verify:
+        result.update(ok=False if render.get("status") != "ok" else True, status=render.get("status"))
+        return result
+    result["verify"] = vcr_verify(
+        output_path=out or "", manifest_path=rel, overrides=overrides, expect_transparency=expect_transparency,
+        project_root=project_root, engine_path=engine_path,
+    )
+    ok = result["verify"].get("status") == "ok"
+    result.update(ok=ok, status="ok" if ok else "failed")
+    return result
+
+
+@mcp.tool(annotations=READ_ONLY)
+def vcr_verify(
+    output_path: str,
+    manifest_path: str | None = None,
+    overrides: dict[str, Any] | None = None,
+    expect_width: int | None = None,
+    expect_height: int | None = None,
+    expect_fps: int | None = None,
+    expect_frames: int | None = None,
+    expect_container: str | None = None,
+    expect_codec: str | None = None,
+    expect_profile: str | None = None,
+    expect_alpha_capable: bool | None = None,
+    expect_transparency: str | None = None,
+    decode_frames: str | None = None,
+    require_provenance: bool = False,
+    project_root: str | None = None,
+    engine_path: str | None = None,
+) -> Doc:
+    """Verify the encoded media against explicit expectations (ffprobe + decoded pixels).
+
+    Checks resolution, exact frame rate rational, packet-count frame count, duration, container,
+    codec/profile, alpha capability, and (expect_transparency=required|none|any) transparency
+    measured on decoded RGBA, never inferred from pix_fmt. With manifest_path it also derives
+    expectations from the scene and detects stale output; with provenance it detects modified or
+    incomplete files. `result.producer` is the engine that made the file; top-level `engine` is
+    only the verifier. Reports what it checked and its limits.
+    """
+    root = _root(project_root)
+    try:
+        eng.resolve_in_project(root, output_path, must_exist=True, kind="output_path")
+        if manifest_path:
+            eng.resolve_in_project(root, manifest_path, must_exist=True, kind="manifest_path")
+    except eng.PathRefused as exc:
+        return _bad("verify", "usage.invalid_argument", str(exc))
+    args = ["verify", output_path]
+    if manifest_path:
+        args += ["--manifest", manifest_path, *eng.set_args(overrides)]
+    for flag, value in (
+        ("--expect-width", expect_width), ("--expect-height", expect_height), ("--expect-fps", expect_fps),
+        ("--expect-frames", expect_frames), ("--expect-container", expect_container), ("--expect-codec", expect_codec),
+        ("--expect-profile", expect_profile), ("--expect-transparency", expect_transparency), ("--decode-frames", decode_frames),
+    ):
+        if value is not None:
+            args += [flag, str(value)]
+    if expect_alpha_capable is not None:
+        args += ["--expect-alpha-capable", "true" if expect_alpha_capable else "false"]
+    if require_provenance:
+        args.append("--require-provenance")
+    return _call("verify", args, project_root=project_root, engine_path=engine_path, timeout=300)
+
+
+@mcp.tool(annotations=WRITES)
+def vcr_execute_plan(
     manifest_path: str,
     output: str | None = None,
     backend: str = "software",
-) -> str:
-    """Validate and render a VCR manifest to ProRes video.
+    overrides: dict[str, Any] | None = None,
+    expect_transparency: str | None = None,
+    project_root: str | None = None,
+    engine_path: str | None = None,
+) -> Doc:
+    """Back-compat: validate (check/lint/preflight) then render and verify. Stops at the first failing stage."""
+    validation = vcr_validate(manifest_path=manifest_path, overrides=overrides, backend=backend, project_root=project_root, engine_path=engine_path)
+    if not validation["ready_to_render"]:
+        return {"contract": "vcr.agent/1", "operation": "execute_plan", "ok": False, "status": "failed", "source": "adapter", "stopped_at": validation["first_failing_stage"], "validation": validation}
+    done = vcr_render(manifest_path, output, overrides, backend, True, expect_transparency, project_root=project_root, engine_path=engine_path)
+    done["validation"] = validation
+    done["operation"] = "execute_plan"
+    return done
 
-    Runs vcr check, then vcr build. Returns the output path or error details.
-    This is the final step after vcr_render_plan and vcr_synthesize_manifest.
 
-    Args:
-        manifest_path: Path to the .vcr manifest (relative to project root).
-        output: Output .mov path (relative). Default: renders/<manifest_name>.mov.
-        backend: Render backend: "software", "gpu", "auto". Default: software.
+# ── optional LLM synthesis (obeys the same gates) ────────────────────────────
+
+SYNTH_PROMPT = """You write VCR YAML manifests. Output ONLY the YAML (no prose, no fences).
+Follow the normalized spec exactly (resolution, fps, duration, alpha). Do not invent text, brand
+colors or assets that the brief does not specify: use obvious placeholders and say so in a comment.
+Procedural geometry is normalized 0..1. Expressions use `t` = FRAME index; start_time/end_time are seconds.
+Use only fonts, layers and functions from the capabilities document provided."""
+
+
+def _extract_yaml(content: str) -> str:
+    if "version:" in content:
+        text = content[content.index("version:"):]
+        return text.split("```")[0].strip()
+    m = re.search(r"```(?:yaml)?\n?(.*?)```", content, re.DOTALL)
+    return (m.group(1) if m else content).strip()
+
+
+async def _llm_manifest(spec: Doc, capabilities: Doc, brief: str) -> str | Doc:
+    headers = {"Content-Type": "application/json"}
+    if VCR_LLM_API_KEY:
+        headers["Authorization"] = f"Bearer {VCR_LLM_API_KEY}"
+    user = json.dumps({"brief": brief, "normalized_spec": spec, "capabilities": {k: capabilities.get("result", {}).get(k) for k in ("layers", "procedural_kinds", "time", "expression", "fonts", "encoding")}})
+    async with httpx.AsyncClient() as client:
+        model = VCR_LLM_MODEL
+        if not model:
+            try:
+                r = await client.get(f"{VCR_LLM_ENDPOINT}/models", timeout=10)
+                model = (r.json().get("data") or [{}])[0].get("id", "local-model")
+            except Exception:
+                model = "local-model"
+        try:
+            resp = await client.post(
+                f"{VCR_LLM_ENDPOINT}/chat/completions",
+                json={"model": model, "temperature": 0.0, "messages": [{"role": "system", "content": SYNTH_PROMPT}, {"role": "user", "content": user}]},
+                headers=headers, timeout=120,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            return _bad("synthesize", "dependency.llm_unavailable", f"LLM request failed: {exc}", category="dependency", exit_code=4, retryable=True,
+                        recovery=["Set VCR_LLM_ENDPOINT / VCR_LLM_MODEL / VCR_LLM_API_KEY, or author the manifest yourself and use vcr_validate."])
+    choices = resp.json().get("choices") or []
+    return _extract_yaml(choices[0]["message"]["content"]) if choices else _bad("synthesize", "dependency.llm_unavailable", "LLM returned no choices", category="dependency", exit_code=4)
+
+
+@mcp.tool(annotations=WRITES)
+async def vcr_synthesize_manifest(
+    brief_text: str,
+    output_manifest: str | None = None,
+    project_root: str | None = None,
+    engine_path: str | None = None,
+) -> Doc:
+    """OPTIONAL: draft a manifest with a configured LLM, then run it through the engine gates.
+
+    Calls the engine's prompt gate first and stops if blocked (no LLM call, no invented settings).
+    The draft is saved, then validated with check/lint/preflight. Prefer authoring the manifest
+    yourself; this exists for harnesses without a strong model.
     """
-    if backend not in ("software", "gpu", "auto"):
-        return f"ERROR: backend must be 'software', 'gpu', or 'auto', got '{backend}'"
+    norm = vcr_normalize_brief(brief_text=brief_text, project_root=project_root, engine_path=engine_path)
+    if norm.get("status") != "ok":
+        return norm
+    caps = vcr_capabilities(project_root=project_root, engine_path=engine_path)
+    drafted = await _llm_manifest(norm["result"]["normalized_spec"], caps, brief_text)
+    if isinstance(drafted, dict):
+        return drafted
+    slug = re.sub(r"[^a-z0-9]+", "_", brief_text.lower())[:40].strip("_") or "draft"
+    validation = vcr_validate(manifest_yaml=drafted, save_as=output_manifest or f".vcr_mcp/{slug}.vcr", project_root=project_root, engine_path=engine_path)
+    return {"contract": "vcr.agent/1", "operation": "synthesize", "ok": validation["ok"], "status": validation["status"], "source": "adapter", "normalized": norm, "manifest": validation["manifest"], "yaml": drafted, "validation": validation}
 
-    try:
-        vcr = _find_vcr_binary()
-        manifest_abs = _resolve_manifest_path(manifest_path)
-    except FileNotFoundError as e:
-        return f"ERROR: {e}\n\nRun `vcr doctor` to verify the VCR binary and dependencies."
 
-    # Validate first
-    check = _run([vcr, "check", str(manifest_abs)], timeout=30)
-    if check.returncode != 0:
-        check_out = (check.stdout + check.stderr).strip()
-        return (
-            f"VALIDATION FAILED:\n{check_out}\n\n"
-            "Fix the manifest and retry. Use validate_vcr_manifest to debug schema errors."
-        )
+@mcp.tool(annotations=WRITES)
+async def render_video_from_prompt(
+    prompt: str,
+    context_ids: list[str] | None = None,
+    project_root: str | None = None,
+    engine_path: str | None = None,
+) -> Doc:
+    """OPTIONAL one-shot: normalize -> LLM draft -> check/lint/preflight -> render -> verify.
 
-    # Determine output path (relative to project root for display)
-    if not output:
-        RENDERS_DIR.mkdir(parents=True, exist_ok=True)
-        stem = manifest_abs.stem
-        output = f"renders/{stem}.mov"
-    output_abs = _resolve_output_path(output)
-    output_abs.parent.mkdir(parents=True, exist_ok=True)
-
-    # Render
-    proc = await asyncio.create_subprocess_exec(
-        vcr, "build", str(manifest_abs), "-o", str(output_abs), "--backend", backend,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(PROJECT_ROOT),
-    )
-
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-    except asyncio.TimeoutError:
-        proc.kill()
-        return "ERROR: Render timed out after 300 seconds."
-
-    if proc.returncode != 0:
-        err = (stdout or b"").decode() + (stderr or b"").decode()
-        return (
-            f"RENDER FAILED (exit {proc.returncode}):\n{err.strip()}\n\n"
-            "Run `vcr doctor` to verify FFmpeg and GPU dependencies."
-        )
-
-    return json.dumps({
-        "status": "RENDER COMPLETE",
-        "output": str(output_abs),
-        "manifest": manifest_path,
-        "backend": backend,
-        "commands_executed": [
-            f"vcr check {manifest_path}",
-            f"vcr build {manifest_path} -o {output} --backend {backend}",
-        ],
-    }, indent=2)
+    Stops at the first failing stage and reports it; never renders a blocked or invalid scene.
+    `context_ids` pulls extra creative notes from ~/.vcr/brain.db if present.
+    """
+    context = ""
+    if BRAIN_DB.exists():
+        try:
+            conn = sqlite3.connect(str(BRAIN_DB))
+            rows = (
+                conn.execute(f"SELECT content FROM context_nodes WHERE id IN ({','.join('?' for _ in context_ids)})", context_ids).fetchall()
+                if context_ids else conn.execute("SELECT content FROM context_nodes LIMIT 20").fetchall()
+            )
+            conn.close()
+            context = "\n".join(r[0] for r in rows)
+        except Exception as exc:  # optional context only
+            log.debug("brain.db unavailable: %s", exc)
+    brief = f"{prompt}\n\nContext:\n{context}" if context else prompt
+    drafted = await vcr_synthesize_manifest(brief, project_root=project_root, engine_path=engine_path)
+    if not drafted.get("ok"):
+        return drafted
+    rendered = vcr_render(drafted["manifest"], None, None, "software", True, None, project_root=project_root, engine_path=engine_path)
+    rendered["synthesis"] = drafted
+    return rendered
 
 
 if __name__ == "__main__":
