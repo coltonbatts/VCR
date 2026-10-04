@@ -1,0 +1,33 @@
+# Request for the reusable lower-third system (instance 1: baseline).
+# Content below is FIXTURE material for engine proof. It is not approved brand identity.
+project:
+  name: lower_third_system
+  version: 1
+intent:
+  summary: "Reusable alpha lower third: accent bar plus two text lines, slide-in entrance, hold, fade/slide exit."
+  creative_status: "placeholder copy and neutral palette for engine proof; human approval required before any production use"
+input:
+  text_lines:
+    - role: name
+      content: "SAMPLE NAME"
+    - role: title
+      content: "SAMPLE TITLE"
+scene:
+  style_directives:
+    layout: "bottom-left, inside 5% safe margins"
+render:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 60
+  duration_seconds: 5.0
+output:
+  type: video
+  path: ./renders/lower_third/lt_v1_baseline.mov
+  container: mov
+  codec: prores_4444
+  alpha: true
+ascii:
+  font: "GeistPixel-Line"
+determinism:
+  seed: 0

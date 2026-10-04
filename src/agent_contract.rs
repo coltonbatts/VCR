@@ -321,6 +321,9 @@ pub struct Envelope {
     pub artifacts: Vec<ArtifactRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorBody>,
+    /// Process exit code override (not serialized); defaults derive from `status`/`error`.
+    #[serde(skip)]
+    pub exit_override: Option<u8>,
 }
 
 impl Envelope {
@@ -335,7 +338,13 @@ impl Envelope {
             diagnostics: Vec::new(),
             artifacts: Vec::new(),
             error: None,
+            exit_override: None,
         }
+    }
+
+    pub fn with_exit(mut self, code: u8) -> Self {
+        self.exit_override = Some(code);
+        self
     }
 
     pub fn ok(operation: &str, result: impl Serialize) -> Self {
@@ -371,6 +380,9 @@ impl Envelope {
     }
 
     pub fn exit_code(&self) -> u8 {
+        if let Some(code) = self.exit_override {
+            return code;
+        }
         match (&self.error, self.status) {
             (Some(error), _) => error.exit_code,
             (None, status) => status.exit_code(),
@@ -564,6 +576,16 @@ fn classify(error: &Error, text: &str) -> Class {
     {
         return class("asset.missing", "asset", EXIT_MANIFEST, false);
     }
+    if any(
+        text,
+        &[
+            "could not read",
+            "could not decode",
+            "did not report a video stream",
+        ],
+    ) {
+        return class("artifact.unreadable", "artifact", EXIT_MANIFEST, false);
+    }
     if any(text, &["output conformance check failed"]) {
         return class("artifact.nonconformant", "artifact", EXIT_MANIFEST, false);
     }
@@ -622,12 +644,18 @@ pub fn exit_code_for_error(error: &Error) -> u8 {
 pub fn classify_error(operation: &str, error: &Error) -> ErrorBody {
     let text = chain_text(error);
     let class = classify(error, &text);
-    let head = error.to_string();
-    let message = error
-        .chain()
-        .map(|cause| cause.to_string())
-        .collect::<Vec<_>>()
-        .join(": ");
+    let coded = find_coded_error(error);
+    let head = coded
+        .map(|c| c.message.clone())
+        .unwrap_or_else(|| error.to_string());
+    let message = match coded {
+        Some(c) => c.message.clone(),
+        None => error
+            .chain()
+            .map(|cause| cause.to_string())
+            .collect::<Vec<_>>()
+            .join(": "),
+    };
     let summary = head
         .lines()
         .next()
@@ -675,7 +703,7 @@ pub fn classify_error(operation: &str, error: &Error) -> ErrorBody {
 
     if let Some(path) = capture(
         &raw_chain,
-        r"failed to (?:decode|read|parse) manifest (\S+?)[.:\s]",
+        r"failed to (?:decode|read|parse) manifest (\S+?)(?:\.\s|:\s|\s|$)",
     ) {
         location.file = Some(path);
     }
@@ -801,11 +829,23 @@ mod tests {
         assert_eq!(body.code, "manifest.schema_invalid");
         assert_eq!(body.exit_code, EXIT_MANIFEST);
         let location = body.location.expect("location");
+        assert_eq!(location.file.as_deref(), Some("unk.vcr"));
         assert_eq!(location.field.as_deref(), Some("bogus_field"));
         assert_eq!(location.line, Some(8));
         assert_eq!(location.column, Some(5));
         assert_eq!(body.expected, Some(json!(["id", "name"])));
         assert!(!body.retryable);
+    }
+
+    #[test]
+    fn coded_error_message_does_not_repeat_its_code() {
+        let error = anyhow::Error::new(crate::error_codes::CodedError::usage(
+            "usage.invalid_argument",
+            "bad flag",
+        ));
+        let body = classify_error("check", &error);
+        assert_eq!(body.code, "usage.invalid_argument");
+        assert_eq!(body.message, "bad flag");
     }
 
     #[test]

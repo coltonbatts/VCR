@@ -12,6 +12,8 @@ use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod agent_cli;
+
 use vcr::agent_errors::{
     suggest_fix_for_lint_error, suggest_fix_for_validation_error, AgentErrorReport, AgentErrorType,
     ErrorContext,
@@ -36,7 +38,7 @@ use vcr::asset_catalog::{
 };
 use vcr::chat::{render_chat_video, ChatRenderArgs};
 use vcr::encoding::{FfmpegMode, FfmpegPipe};
-use vcr::error_codes::{find_coded_error, CodedErrorKind};
+use vcr::error_codes::find_coded_error;
 use vcr::font_assets::verify_geist_pixel_bundle;
 use vcr::library::{
     add_asset, list_items, load_registry, verify_registry, LibraryAddRequest, LibraryItemType,
@@ -223,6 +225,48 @@ enum Commands {
         output_file: PathBuf,
         #[arg(long = "json")]
         json: bool,
+        #[arg(
+            long = "manifest",
+            value_name = "MANIFEST",
+            help = "Derive expectations (resolution, fps, frame count) from this manifest and detect stale output"
+        )]
+        manifest: Option<PathBuf>,
+        #[arg(long = "set", value_name = "NAME=VALUE", action = clap::ArgAction::Append, help = "Param overrides used with --manifest")]
+        set: Vec<String>,
+        #[arg(long = "expect-width")]
+        expect_width: Option<u32>,
+        #[arg(long = "expect-height")]
+        expect_height: Option<u32>,
+        #[arg(long = "expect-fps")]
+        expect_fps: Option<u32>,
+        #[arg(long = "expect-frames")]
+        expect_frames: Option<u32>,
+        #[arg(long = "expect-container", help = "e.g. mov")]
+        expect_container: Option<String>,
+        #[arg(long = "expect-codec", help = "e.g. prores")]
+        expect_codec: Option<String>,
+        #[arg(
+            long = "expect-profile",
+            help = "ffprobe profile token, e.g. 4444 or HQ"
+        )]
+        expect_profile: Option<String>,
+        #[arg(long = "expect-alpha-capable")]
+        expect_alpha_capable: Option<bool>,
+        #[arg(
+            long = "expect-transparency",
+            help = "required|none|any: measured on decoded pixels"
+        )]
+        expect_transparency: Option<String>,
+        #[arg(
+            long = "decode-frames",
+            help = "Decode at most N evenly spread frames for the transparency check (default: all)"
+        )]
+        decode_frames: Option<String>,
+        #[arg(
+            long = "require-provenance",
+            help = "Fail when no <file>.provenance.json exists"
+        )]
+        require_provenance: bool,
     },
     #[command(about = "Render a manifest to ProRes .mov video")]
     Build {
@@ -242,6 +286,11 @@ enum Commands {
             help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
         )]
         set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
     },
     #[command(about = "Validate a manifest without rendering")]
     Check {
@@ -253,6 +302,11 @@ enum Commands {
             help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
         )]
         set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
     },
     #[command(about = "Check for unreachable layers and warnings")]
     Lint {
@@ -264,6 +318,11 @@ enum Commands {
             help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
         )]
         set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
     },
     #[command(about = "Print resolved layer state at a given frame")]
     Dump {
@@ -279,6 +338,11 @@ enum Commands {
             help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
         )]
         set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
     },
     #[command(about = "List declared params and their defaults")]
     Params {
@@ -289,9 +353,17 @@ enum Commands {
         )]
         json: bool,
     },
-    #[command(about = "Show how expressions and layers resolve")]
+    #[command(
+        about = "Show how expressions and layers resolve; with --json also the backend preflight",
+        alias = "preflight"
+    )]
     Explain {
         manifest: PathBuf,
+        #[arg(
+            long = "strict",
+            help = "With --json: exit 3 when preflight reports blockers"
+        )]
+        strict: bool,
         #[arg(
             long = "set",
             value_name = "NAME=VALUE",
@@ -349,6 +421,11 @@ enum Commands {
             help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
         )]
         set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
     },
     #[command(about = "Render a range of frames to PNG sequence")]
     RenderFrames {
@@ -415,6 +492,16 @@ enum Commands {
             help = "Write translated YAML output to a file (default: stdout)"
         )]
         output: Option<PathBuf>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
+        #[arg(
+            long = "strict",
+            help = "Exit 6 when normalization has unresolved blockers (default: exit 0, status is in the output)"
+        )]
+        strict: bool,
     },
     #[command(about = "Chat transcript rendering commands")]
     Chat {
@@ -477,7 +564,65 @@ enum Commands {
         command: LibraryCommands,
     },
     #[command(about = "Check system dependencies (FFmpeg, GPU)")]
-    Doctor,
+    Doctor {
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
+    },
+    #[command(
+        about = "Describe what this installed engine can do and what is usable on this machine"
+    )]
+    Capabilities {
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
+        #[arg(
+            long = "schema",
+            help = "Include the manifest JSON Schema (generated from the engine's types)"
+        )]
+        schema: bool,
+    },
+    #[command(
+        about = "Sample the timeline, render evidence frames and a contact sheet, and report layer state, bounds and timing diagnostics"
+    )]
+    Inspect {
+        manifest: PathBuf,
+        #[arg(
+            long = "samples",
+            default_value_t = 12,
+            help = "Maximum sampled frames"
+        )]
+        samples: usize,
+        #[arg(
+            short = 'o',
+            long = "output-dir",
+            help = "Directory for sample PNGs, contact_sheet.png and inspection.json (default: renders/<manifest>_inspect)"
+        )]
+        output_dir: Option<PathBuf>,
+        #[arg(
+            long = "preview-width",
+            default_value_t = 960,
+            help = "Width of written sample images; measurements are always taken at full resolution"
+        )]
+        preview_width: u32,
+        #[arg(
+            long = "safe-margin",
+            default_value_t = 0.05,
+            help = "Safe-area margin as a fraction of each edge"
+        )]
+        safe_margin: f64,
+        #[arg(long = "set", value_name = "NAME=VALUE", action = clap::ArgAction::Append, help = "Override a manifest param at runtime.")]
+        set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
+    },
     #[command(about = "Generate frame-hash determinism report")]
     DeterminismReport {
         manifest: PathBuf,
@@ -887,6 +1032,27 @@ fn resolve_ascii_stage_options(
 }
 
 impl Commands {
+    /// Whether this invocation asked for a machine-readable document.
+    fn json_requested(&self) -> bool {
+        match self {
+            Self::Render { json, .. }
+            | Self::Verify { json, .. }
+            | Self::Check { json, .. }
+            | Self::Lint { json, .. }
+            | Self::Dump { json, .. }
+            | Self::Params { json, .. }
+            | Self::Explain { json, .. }
+            | Self::RenderFrame { json, .. }
+            | Self::Prompt { json, .. }
+            | Self::Doctor { json }
+            | Self::Capabilities { json, .. }
+            | Self::Inspect { json, .. }
+            | Self::DeterminismReport { json, .. } => *json,
+            Self::Build { json, .. } => *json,
+            _ => false,
+        }
+    }
+
     fn name(&self) -> &'static str {
         match self {
             Self::Render { .. } => "render",
@@ -911,7 +1077,9 @@ impl Commands {
             Self::Add { .. } => "add",
             Self::Assets { .. } => "assets",
             Self::Library { .. } => "library",
-            Self::Doctor => "doctor",
+            Self::Doctor { .. } => "doctor",
+            Self::Capabilities { .. } => "capabilities",
+            Self::Inspect { .. } => "inspect",
             Self::DeterminismReport { .. } => "determinism-report",
             Self::Verify { .. } => "verify",
         }
@@ -925,6 +1093,7 @@ enum VcrExitCode {
     ManifestValidation = 3,
     MissingDependency = 4,
     Io = 5,
+    Blocked = 6,
 }
 
 impl VcrExitCode {
@@ -948,19 +1117,80 @@ fn main() -> ExitCode {
         println!("vcr version {}", version_string());
         return VcrExitCode::Success.to_exit_code();
     }
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => return handle_parse_error(error),
+    };
     let command_name = cli.command.name();
+    let json_mode = cli.command.json_requested();
+    agent_cli::set_json_mode(json_mode);
     match run_cli(cli) {
         Ok(()) => VcrExitCode::Success.to_exit_code(),
         Err(error) => {
             if let Some(exit) = error.downcast_ref::<DeckProcessExit>() {
                 return ExitCode::from(exit.propagated_code() as u8);
             }
+            if let Some(early) = error.downcast_ref::<agent_cli::EarlyExit>() {
+                // The operation already printed its (non-ok) result document.
+                return ExitCode::from(early.0);
+            }
             let exit_code = classify_exit_code(&error);
-            print_cli_error(command_name, &error);
+            if json_mode {
+                let envelope = vcr::agent_contract::Envelope::from_error(command_name, &error);
+                println!("{}", envelope.to_json_line());
+                eprintln!("vcr {command_name}: {}", clean_message(error.to_string()));
+            } else {
+                print_cli_error(command_name, &error);
+            }
             exit_code.to_exit_code()
         }
     }
+}
+
+/// Argument-parsing failures get the same structured contract as every other failure when the
+/// caller asked for JSON (`--json` anywhere in argv, or `VCR_AGENT_MODE`).
+fn handle_parse_error(error: clap::Error) -> ExitCode {
+    use clap::error::ErrorKind;
+    if matches!(
+        error.kind(),
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+    ) {
+        error.exit();
+    }
+    let wants_json = std::env::args().any(|a| a == "--json");
+    let agent_mode = std::env::var("VCR_AGENT_MODE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !(wants_json || agent_mode) {
+        error.exit();
+    }
+    let operation = std::env::args()
+        .skip(1)
+        .find(|a| !a.starts_with('-'))
+        .unwrap_or_else(|| "cli".to_owned());
+    let rendered = error.render().to_string();
+    let message = rendered
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let anyhow_error = anyhow::Error::new(vcr::error_codes::CodedError::usage(
+        "usage.invalid_argument",
+        message,
+    ));
+    let mut envelope = vcr::agent_contract::Envelope::from_error(&operation, &anyhow_error);
+    if let Some(body) = envelope.error.as_mut() {
+        body.recovery.push(format!(
+            "Run `vcr {operation} --help`, or `vcr capabilities --json` for the command list."
+        ));
+    }
+    if wants_json {
+        println!("{}", envelope.to_json_line());
+    } else {
+        eprintln!("{}", envelope.to_json_line());
+    }
+    VcrExitCode::Usage.to_exit_code()
 }
 
 fn print_help_with_quick_start() -> Result<()> {
@@ -1001,7 +1231,41 @@ fn run_cli(cli: Cli) -> Result<()> {
                 quiet,
             )
         }
-        Commands::Verify { output_file, json } => run_verify(&output_file, json),
+        Commands::Verify {
+            output_file,
+            json,
+            manifest,
+            set,
+            expect_width,
+            expect_height,
+            expect_fps,
+            expect_frames,
+            expect_container,
+            expect_codec,
+            expect_profile,
+            expect_alpha_capable,
+            expect_transparency,
+            decode_frames,
+            require_provenance,
+        } => agent_cli::verify(
+            &output_file,
+            &agent_cli::VerifyArgs {
+                manifest,
+                set,
+                expect_width,
+                expect_height,
+                expect_fps,
+                expect_frames,
+                expect_container,
+                expect_codec,
+                expect_profile,
+                expect_alpha_capable,
+                expect_transparency,
+                decode_frames,
+                require_provenance,
+            },
+            json,
+        ),
         Commands::Build {
             manifest,
             output,
@@ -1009,6 +1273,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             end_frame,
             frames,
             set,
+            json,
         } => {
             let output = resolve_output_path(&manifest, output, "mov", None, quiet)?;
             let frame_window = FrameWindowArgs {
@@ -1016,7 +1281,8 @@ fn run_cli(cli: Cli) -> Result<()> {
                 end_frame,
                 frames,
             };
-            run_build(
+            let started = Instant::now();
+            let result = run_build(
                 &manifest,
                 &output,
                 frame_window,
@@ -1025,24 +1291,62 @@ fn run_cli(cli: Cli) -> Result<()> {
                 ascii_overrides,
                 cli.backend,
                 ffmpeg_mode,
-                quiet,
-            )
-            .map(|_| ())
+                quiet || json,
+            )?;
+            if json {
+                let envelope = agent_cli::build_envelope(
+                    "build",
+                    &manifest,
+                    &output,
+                    &result,
+                    started.elapsed().as_millis() as u64,
+                );
+                return agent_cli::finish(envelope);
+            }
+            Ok(())
         }
-        Commands::Check { manifest, set } => run_check(&manifest, &set, quiet),
-        Commands::Lint { manifest, set } => run_lint(&manifest, &set, quiet),
+        Commands::Check {
+            manifest,
+            set,
+            json,
+        } => {
+            if json {
+                agent_cli::check(&manifest, &set)
+            } else {
+                run_check(&manifest, &set, quiet)
+            }
+        }
+        Commands::Lint {
+            manifest,
+            set,
+            json,
+        } => {
+            if json {
+                agent_cli::lint_json(&manifest, &set)
+            } else {
+                run_lint(&manifest, &set, quiet)
+            }
+        }
         Commands::Dump {
             manifest,
             frame,
             time,
             set,
-        } => run_dump(&manifest, frame, time, &set, quiet),
+            json,
+        } => {
+            if json {
+                agent_cli::dump_json(&manifest, frame, time, &set)
+            } else {
+                run_dump(&manifest, frame, time, &set, quiet)
+            }
+        }
         Commands::Params { manifest, json } => run_params(&manifest, json),
         Commands::Explain {
             manifest,
+            strict,
             set,
             json,
-        } => run_explain(&manifest, &set, json, cli.backend),
+        } => run_explain(&manifest, &set, json, strict, cli.backend),
         Commands::Preview {
             manifest,
             output,
@@ -1120,6 +1424,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             frame,
             output,
             set,
+            json,
         } => {
             let output = resolve_output_path(
                 &manifest,
@@ -1135,8 +1440,33 @@ fn run_cli(cli: Cli) -> Result<()> {
                 &set,
                 ascii_overrides.as_ref(),
                 cli.backend,
-                quiet,
-            )
+                quiet || json,
+            )?;
+            if json {
+                let meta = metadata_sidecar_for_file(&output);
+                let manifest_loaded = load_manifest_with_overrides(&manifest, &set)?;
+                let fps = manifest_loaded.environment.fps;
+                let envelope = vcr::agent_contract::Envelope::ok(
+                    "render-frame",
+                    serde_json::json!({
+                        "manifest": manifest.display().to_string(),
+                        "manifest_hash": manifest_loaded.manifest_hash,
+                        "frame": frame,
+                        "time_seconds": f64::from(frame) / f64::from(fps),
+                        "time_rational": format!("{frame}/{fps}"),
+                        "width": manifest_loaded.environment.resolution.width,
+                        "height": manifest_loaded.environment.resolution.height,
+                    }),
+                )
+                .with_artifacts(vec![
+                    vcr::agent_contract::ArtifactRef::new("frame", &output)
+                        .with_digest(&output)
+                        .at_frame(frame, f64::from(frame) / f64::from(fps)),
+                    vcr::agent_contract::ArtifactRef::new("metadata", &meta).with_digest(&meta),
+                ]);
+                return agent_cli::finish(envelope);
+            }
+            Ok(())
         }
         Commands::RenderFrames {
             manifest,
@@ -1203,7 +1533,29 @@ fn run_cli(cli: Cli) -> Result<()> {
             text,
             input,
             output,
-        } => run_prompt_translate(text.as_deref(), input.as_deref(), output.as_deref()),
+            json,
+            strict,
+        } => {
+            if json {
+                agent_cli::prompt_json(text.as_deref(), input.as_deref(), output.as_deref(), strict)
+            } else {
+                run_prompt_translate(text.as_deref(), input.as_deref(), output.as_deref())?;
+                if strict {
+                    let raw = match (text.as_deref(), input.as_deref()) {
+                        (Some(t), _) => t.to_owned(),
+                        (None, Some(p)) => fs::read_to_string(p).unwrap_or_default(),
+                        _ => String::new(),
+                    };
+                    if !translate_to_standard_prompt(&raw)?
+                        .unknowns_and_fixes
+                        .is_empty()
+                    {
+                        return Err(anyhow::Error::new(agent_cli::EarlyExit(6)));
+                    }
+                }
+                Ok(())
+            }
+        }
         Commands::Chat { command } => match command {
             ChatCommands::Render {
                 input,
@@ -1357,7 +1709,56 @@ fn run_cli(cli: Cli) -> Result<()> {
                 run_library_list(tag.as_deref(), item_type.map(Into::into))
             }
         },
-        Commands::Doctor => run_doctor(),
+        Commands::Doctor { json } => {
+            if json {
+                agent_cli::doctor_json()
+            } else {
+                run_doctor()
+            }
+        }
+        Commands::Capabilities { json, schema } => agent_cli::capabilities(schema, json),
+        Commands::Inspect {
+            manifest,
+            samples,
+            output_dir,
+            preview_width,
+            safe_margin,
+            set,
+            json,
+        } => {
+            let dir = match output_dir {
+                Some(dir) => {
+                    if dir.is_absolute()
+                        || dir
+                            .components()
+                            .any(|c| matches!(c, std::path::Component::ParentDir))
+                    {
+                        bail!(
+                            "Absolute or '..' output paths are restricted for security. Got: {}",
+                            dir.display()
+                        );
+                    }
+                    dir
+                }
+                None => {
+                    let stem = manifest.file_stem().unwrap_or_default().to_string_lossy();
+                    PathBuf::from("renders").join(format!("{stem}_inspect"))
+                }
+            };
+            agent_cli::inspect(
+                &manifest,
+                &set,
+                &agent_cli::InspectArgs {
+                    samples,
+                    output_dir: dir,
+                    preview_width,
+                    safe_margin,
+                },
+                cli.backend,
+                ascii_overrides.as_ref(),
+                json,
+            )
+        }
         Commands::DeterminismReport {
             manifest,
             frame,
@@ -1890,77 +2291,13 @@ fn clean_message(value: String) -> String {
 }
 
 fn classify_exit_code(error: &anyhow::Error) -> VcrExitCode {
-    if let Some(coded) = find_coded_error(error) {
-        return match coded.kind {
-            CodedErrorKind::Usage => VcrExitCode::Usage,
-        };
+    match vcr::agent_contract::exit_code_for_error(error) {
+        2 => VcrExitCode::Usage,
+        4 => VcrExitCode::MissingDependency,
+        5 => VcrExitCode::Io,
+        6 => VcrExitCode::Blocked,
+        _ => VcrExitCode::ManifestValidation,
     }
-    if is_missing_dependency_error(error) {
-        return VcrExitCode::MissingDependency;
-    }
-    if is_usage_error(error) {
-        return VcrExitCode::Usage;
-    }
-    if is_io_error(error) {
-        return VcrExitCode::Io;
-    }
-    VcrExitCode::ManifestValidation
-}
-
-fn is_missing_dependency_error(error: &anyhow::Error) -> bool {
-    has_error_message_fragment(error, "ffmpeg was not found on path")
-        || has_error_message_fragment(error, "ffprobe was not found on path")
-        || has_error_message_fragment(error, "curl was not found on path")
-        || has_error_message_fragment(error, "chafa was not found on path")
-        || has_error_message_fragment(error, "missing dependency")
-        || has_error_message_fragment(error, "geist pixel font")
-        || has_error_message_fragment(error, "invalid geist pixel bundle")
-        || has_error_message_fragment(error, "font_asset_hash_mismatch")
-}
-
-fn is_usage_error(error: &anyhow::Error) -> bool {
-    has_error_message_fragment(error, "invalid --set")
-        || has_error_message_fragment(error, "invalid_aspect_preset")
-        || has_error_message_fragment(error, "expected name=value")
-        || has_error_message_fragment(error, "use either --frame or --time")
-        || has_error_message_fragment(error, "use either --end-frame or --frames")
-        || has_error_message_fragment(error, "--time must be")
-        || has_error_message_fragment(error, "--frames must be > 0")
-        || has_error_message_fragment(error, "--interval-ms must be > 0")
-        || has_error_message_fragment(error, "preview --scale must be in")
-        || has_error_message_fragment(error, "invalid .vcrchat format")
-        || has_error_message_fragment(error, "invalid .vcrtxt format")
-        || has_error_message_fragment(error, "empty input script")
-        || has_error_message_fragment(error, "empty input transcript")
-        || has_error_message_fragment(error, "unknown --theme")
-        || has_error_message_fragment(error, "invalid --size")
-        || has_error_message_fragment(error, "invalid --source")
-        || has_error_message_fragment(error, "unsupported ascii-live stream")
-        || has_error_message_fragment(error, "invalid --export-dir")
-        || has_error_message_fragment(error, "--fps must be > 0")
-        || has_error_message_fragment(error, "--duration must be > 0")
-        || has_error_message_fragment(error, "--font-size must be > 0")
-        || has_error_message_fragment(error, "--speed must be > 0")
-        || has_error_message_fragment(error, "start frame")
-        || has_error_message_fragment(error, "out of bounds")
-}
-
-fn is_io_error(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
-        || has_error_message_fragment(error, "failed to read")
-        || has_error_message_fragment(error, "failed to write")
-        || has_error_message_fragment(error, "failed waiting")
-        || has_error_message_fragment(error, "failed to create")
-}
-
-fn has_error_message_fragment(error: &anyhow::Error, fragment: &str) -> bool {
-    let needle = fragment.to_ascii_lowercase();
-    error
-        .chain()
-        .map(|cause| cause.to_string().to_ascii_lowercase())
-        .any(|message| message.contains(&needle))
 }
 
 fn resolve_output_path(
@@ -2066,6 +2403,21 @@ fn run_doctor() -> Result<()> {
             println!("MISSING (required for 'build' and 'preview' video output)");
             all_ok = false;
             missing_dependencies.push("ffmpeg");
+        }
+    }
+
+    print!("- FFprobe: ");
+    match std::process::Command::new("ffprobe")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        Ok(status) if status.success() => println!("OK"),
+        _ => {
+            println!("MISSING (required to verify encoded output)");
+            all_ok = false;
+            missing_dependencies.push("ffprobe");
         }
     }
 
@@ -2994,8 +3346,7 @@ fn run_check(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result
     Ok(())
 }
 
-fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<()> {
-    let manifest = load_manifest_with_overrides(manifest_path, set_values)?;
+fn collect_lint_issues(manifest: &Manifest) -> Result<Vec<agent_cli::LintIssue>> {
     let total_frames = manifest.environment.total_frames();
     let sample_count = total_frames.min(240).clamp(1, 240);
     let sample_step = (total_frames / sample_count).max(1);
@@ -3008,7 +3359,7 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
 
     let mut frame = 0_u32;
     while frame < total_frames {
-        let states = evaluate_manifest_layers_at_frame(&manifest, frame)?;
+        let states = evaluate_manifest_layers_at_frame(manifest, frame)?;
         for state in states {
             if state.visible && state.opacity > 0.0 {
                 visible.insert(state.id, true);
@@ -3017,7 +3368,7 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
         frame = frame.saturating_add(sample_step);
     }
     if total_frames > 1 {
-        let last_states = evaluate_manifest_layers_at_frame(&manifest, total_frames - 1)?;
+        let last_states = evaluate_manifest_layers_at_frame(manifest, total_frames - 1)?;
         for state in last_states {
             if state.visible && state.opacity > 0.0 {
                 visible.insert(state.id, true);
@@ -3050,13 +3401,14 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
                 };
 
                 if is_full_frame {
-                    issues.push((
-                        bottom.id().to_owned(),
-                        format!(
+                    issues.push(agent_cli::LintIssue {
+                        layer: bottom.id().to_owned(),
+                        code: "lint.alpha_blocked",
+                        message: format!(
                             "Layer '{}' is opaque and likely blocks the alpha channel. Consider reducing its opacity if transparency is required for ProRes 4444.",
                             bottom.id()
                         ),
-                    ));
+                    });
                 }
             }
         }
@@ -3065,12 +3417,24 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
     for layer in &manifest.layers {
         let id = layer.id();
         if !visible.get(id).copied().unwrap_or(false) {
-            issues.push((
-                id.to_owned(),
-                format!("Layer '{id}' appears unreachable (never visible across sampled frames)."),
-            ));
+            issues.push(agent_cli::LintIssue {
+                layer: id.to_owned(),
+                code: "lint.unreachable_layer",
+                message: format!(
+                    "Layer '{id}' appears unreachable (never visible across sampled frames)."
+                ),
+            });
         }
     }
+    Ok(issues)
+}
+
+fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<()> {
+    let manifest = load_manifest_with_overrides(manifest_path, set_values)?;
+    let issues: Vec<(String, String)> = collect_lint_issues(&manifest)?
+        .into_iter()
+        .map(|issue| (issue.layer, issue.message))
+        .collect();
 
     if issues.is_empty() {
         print_active_params(&manifest, quiet);
@@ -3235,10 +3599,12 @@ fn run_explain(
     manifest_path: &Path,
     set_values: &[String],
     json: bool,
+    strict: bool,
     requested_backend: BackendArg,
 ) -> Result<()> {
     let manifest = load_manifest_with_overrides(manifest_path, set_values)?;
     if json {
+        let report = agent_cli::preflight_report(&manifest, requested_backend, None);
         let unsupported_software_layers = software_unsupported_layers(&manifest.layers)
             .into_iter()
             .map(|layer| ExplainUnsupportedLayerJson {
@@ -3246,13 +3612,13 @@ fn run_explain(
                 kind: layer.kind.to_owned(),
             })
             .collect::<Vec<_>>();
-        let software_compatible = unsupported_software_layers.is_empty();
+        let software_compatible = report.incompatibilities.is_empty();
         let recommended_backend = if software_compatible {
             "software"
         } else {
             "gpu"
         };
-        let blockers = if software_compatible {
+        let mut blockers = if unsupported_software_layers.is_empty() {
             Vec::new()
         } else {
             vec![format!(
@@ -3260,6 +3626,11 @@ fn run_explain(
                 unsupported_software_layers.len()
             )]
         };
+        for check in report.checks.iter().filter(|c| c.is_blocking()) {
+            if !check.code.starts_with("backend.software_unsupported_layer") {
+                blockers.push(check.message.clone());
+            }
+        }
         let payload = ExplainJsonOutput {
             manifest: manifest_path.display().to_string(),
             manifest_hash: manifest.manifest_hash.clone(),
@@ -3278,13 +3649,27 @@ fn run_explain(
                 software_supported_layer_types: &SOFTWARE_SUPPORTED_LAYER_TYPES,
                 unsupported_software_layers,
                 blockers,
+                resolved_backend: report.plan.resolved,
+                gpu_available: report.plan.gpu_available,
+                ready: report.ready,
+                incompatibilities: report.incompatibilities.clone(),
+                runtime: report.runtime.clone(),
+                checks: report.checks.clone(),
             },
         };
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&payload).context("failed to encode explain json")?
-        );
-        return Ok(());
+        let status = if strict && !report.ready {
+            vcr::agent_contract::Status::Failed
+        } else {
+            vcr::agent_contract::Status::Ok
+        };
+        let envelope = vcr::agent_contract::Envelope::new("explain", status)
+            .with_result(&payload)
+            .with_diagnostics(report.checks.clone());
+        println!("{}", envelope.to_json_line_with_legacy(&payload));
+        return match envelope.exit_code() {
+            0 => Ok(()),
+            code => Err(anyhow::Error::new(agent_cli::EarlyExit(code))),
+        };
     }
 
     println!("Explain {}", manifest_path.display());
@@ -3336,24 +3721,73 @@ fn run_explain(
     Ok(())
 }
 
+const UNSUPPORTED_SOFTWARE_FEATURES_CODE: &str = "UNSUPPORTED_SOFTWARE_FEATURES";
+
+/// The software renderer does not implement `post:` / `ascii_post`; it would silently drop them.
+/// Refuse instead, so a successful render always means the manifest was honored.
+fn ensure_software_honors_scene(scene: &RenderSceneData) -> Result<()> {
+    let mut features = Vec::new();
+    if !scene.post.is_empty() {
+        features.push("post");
+    }
+    if scene.ascii_post.as_ref().is_some_and(|post| post.enabled) {
+        features.push("ascii_post");
+    }
+    if features.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow::Error::new(
+        vcr::error_codes::CodedError::usage(
+            UNSUPPORTED_SOFTWARE_FEATURES_CODE,
+            format!(
+                "software mode does not implement manifest feature(s): {}; they would be silently ignored. re-run with `--backend gpu` or remove them",
+                features.join(", ")
+            ),
+        )
+        .with_details(serde_json::json!({
+            "backend": "software",
+            "unsupported_features": features,
+            "next_steps": ["re-run with --backend gpu on a machine with a GPU adapter", "remove the unsupported features after confirming with the requester"],
+        })),
+    ))
+}
+
 fn create_renderer(
     environment: &Environment,
     layers: &[vcr::schema::Layer],
     scene: RenderSceneData,
     backend: BackendArg,
 ) -> Result<Renderer> {
-    match backend {
-        BackendArg::Software => Renderer::new_software(environment, layers, scene),
+    let needs_check = !scene.post.is_empty() || scene.ascii_post.is_some();
+    let check_scene = needs_check.then(|| RenderSceneData {
+        post: scene.post.clone(),
+        ascii_post: scene.ascii_post.clone(),
+        ..RenderSceneData::default()
+    });
+    let renderer = match backend {
+        BackendArg::Software => {
+            if let Some(check) = &check_scene {
+                ensure_software_honors_scene(check)?;
+            }
+            Renderer::new_software(environment, layers, scene)?
+        }
         BackendArg::Gpu | BackendArg::Auto => {
-            pollster::block_on(Renderer::new_with_scene(environment, layers, scene))
+            pollster::block_on(Renderer::new_with_scene(environment, layers, scene))?
+        }
+    };
+    if !renderer.is_gpu_backend() {
+        if let Some(check) = &check_scene {
+            ensure_software_honors_scene(check)?;
         }
     }
+    Ok(renderer)
 }
 
 pub struct BuildResult {
     pub backend_name: String,
     pub frame_count: u32,
     pub frame_hash: String,
+    pub verification: serde_json::Value,
 }
 
 fn run_build(
@@ -3414,7 +3848,17 @@ fn run_build(
             renderer.backend_reason()
         ),
     );
-    let ffmpeg = FfmpegPipe::spawn_with_mode(&manifest.environment, output_path, ffmpeg_mode)?;
+    // Atomic publication: encode to a hidden sibling, verify it, then rename into place. A failed
+    // or interrupted render never leaves a half-written file at `output_path`, and sidecars that
+    // described the previous artifact are removed up front so an old file cannot pass as new.
+    vcr::provenance::invalidate_sidecars(output_path);
+    if let Some(parent) = output_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create output directory {}", parent.display()))?;
+    }
+    let partial_path = vcr::provenance::partial_path_for(output_path);
+    let mut partial_guard = vcr::provenance::PartialGuard::new(partial_path.clone());
+    let ffmpeg = FfmpegPipe::spawn_with_mode(&manifest.environment, &partial_path, ffmpeg_mode)?;
     let mut render_elapsed = Duration::ZERO;
     let mut encode_elapsed = Duration::ZERO;
     let mut frame_hasher = Sha256::new();
@@ -3431,7 +3875,11 @@ fn run_build(
 
         if frame_index % manifest.environment.fps == 0 {
             if !quiet {
-                println!("rendered frame {}/{}", offset + 1, window.count);
+                agent_cli::human_line(format_args!(
+                    "rendered frame {}/{}",
+                    offset + 1,
+                    window.count
+                ));
             }
         }
     }
@@ -3439,8 +3887,46 @@ fn run_build(
     let frame_hash = format!("{:x}", frame_hasher.finalize());
 
     ffmpeg.finish()?;
-    verify_encoded_output_conformance(output_path, &manifest.environment, quiet)?;
-    println!("Wrote {}", output_path.display());
+    verify_encoded_output_conformance(&partial_path, &manifest.environment, quiet)?;
+
+    // Requested-vs-encoded contract, checked on the unpublished file.
+    let profile = manifest.environment.encoding.prores_profile;
+    let expectations = vcr::media_verify::Expectations {
+        width: Some(manifest.environment.resolution.width),
+        height: Some(manifest.environment.resolution.height),
+        fps: Some(manifest.environment.fps),
+        frame_count: Some(window.count),
+        container: Some("mov".to_owned()),
+        codec: Some("prores".to_owned()),
+        profile: Some(profile.to_ffmpeg_profile().to_owned()),
+        alpha_capable: Some(profile.supports_alpha()),
+        transparency: vcr::media_verify::TransparencyExpectation::Any,
+    };
+    let media = vcr::media_verify::verify_media(&partial_path, &expectations, Some(8))?;
+    if !media.passed {
+        let failed = media
+            .checks
+            .iter()
+            .filter(|c| c.status == vcr::media_verify::CheckStatus::Fail)
+            .map(|c| {
+                format!(
+                    "{}: expected {:?}, observed {:?}",
+                    c.id, c.expected, c.observed
+                )
+            })
+            .collect::<Vec<_>>();
+        bail!(
+            "output conformance check failed for {}:\n- {}",
+            output_path.display(),
+            failed.join("\n- ")
+        );
+    }
+
+    fs::rename(&partial_path, output_path)
+        .with_context(|| format!("failed to write {}", output_path.display()))?;
+    partial_guard.disarm();
+    agent_cli::human_line(format_args!("Wrote {}", output_path.display()));
+
     let metadata_path = metadata_sidecar_for_file(output_path);
     let agent_frame = (window.count > 0).then(|| window.start_frame + window.count - 1);
     emit_render_metadata(
@@ -3452,7 +3938,72 @@ fn run_build(
         window,
         agent_frame,
     )?;
-    println!("Wrote {}", metadata_path.display());
+    agent_cli::human_line(format_args!("Wrote {}", metadata_path.display()));
+
+    // Execution record, written last: its presence with a matching output hash marks completion.
+    let output_sha = vcr::agent_contract::sha256_file(output_path)
+        .with_context(|| format!("failed to hash {}", output_path.display()))?;
+    let decoded_sha = vcr::provenance::decoded_frames_sha256(output_path).ok();
+    let manifest_file_sha = vcr::agent_contract::sha256_file(manifest_path).ok();
+    let verification_doc = serde_json::json!({
+        "expectations": {
+            "width": expectations.width, "height": expectations.height, "fps": expectations.fps,
+            "frame_count": expectations.frame_count, "container": expectations.container,
+            "codec": expectations.codec, "profile": expectations.profile,
+            "alpha_capable": expectations.alpha_capable,
+        },
+        "media": media,
+        "note": "produced at render time on the unpublished file; run `vcr verify` for a fresh, full-frame check",
+    });
+    let provenance_doc = vcr::provenance::Provenance {
+        schema: vcr::provenance::PROVENANCE_SCHEMA,
+        status: "complete",
+        engine: vcr::agent_contract::EngineIdentity::current(),
+        toolchain: BTreeMap::from([
+            ("ffmpeg", vcr::provenance::ffmpeg_version_line()),
+            ("ffmpeg_mode", Some(format!("{ffmpeg_mode:?}"))),
+        ]),
+        backend: serde_json::json!({
+            "name": renderer.backend_name(),
+            "reason": renderer.backend_reason(),
+            "requested": backend_label(backend),
+        }),
+        manifest: serde_json::json!({
+            "path": manifest_path.display().to_string(),
+            "file_sha256": manifest_file_sha,
+            "resolved_manifest_hash": manifest.manifest_hash,
+            "params": manifest.resolved_params,
+            "overrides": manifest.applied_param_overrides,
+            "seed": manifest.seed,
+        }),
+        inputs: vcr::provenance::collect_inputs(&manifest),
+        window: serde_json::json!({
+            "start_frame": window.start_frame, "frame_count": window.count,
+            "fps": manifest.environment.fps,
+            "width": manifest.environment.resolution.width,
+            "height": manifest.environment.resolution.height,
+            "encoding_profile": profile.to_ffmpeg_profile(),
+        }),
+        output: serde_json::json!({
+            "path": output_path.display().to_string(),
+            "sha256": output_sha,
+            "bytes": fs::metadata(output_path).map(|m| m.len()).ok(),
+        }),
+        hashes: serde_json::json!({
+            "raster_frames_sha256": frame_hash,
+            "decoded_frames_sha256": decoded_sha,
+            "output_file_sha256": output_sha,
+        }),
+        determinism: vcr::provenance::determinism_statement(renderer.backend_name(), manifest.seed),
+        verification: verification_doc.clone(),
+        sidecars: serde_json::json!({ "metadata": metadata_path.display().to_string() }),
+    };
+    let provenance_path = vcr::provenance::provenance_path_for(output_path);
+    let payload =
+        serde_json::to_string_pretty(&provenance_doc).context("failed to encode provenance")?;
+    vcr::provenance::atomic_write(&provenance_path, format!("{payload}\n").as_bytes())?;
+    agent_cli::human_line(format_args!("Wrote {}", provenance_path.display()));
+
     print_timing_summary(
         quiet,
         RenderTimingSummary {
@@ -3466,25 +4017,8 @@ fn run_build(
         backend_name: renderer.backend_name().to_string(),
         frame_count: window.count,
         frame_hash,
+        verification: verification_doc,
     })
-}
-
-#[derive(Serialize)]
-pub struct RenderJsonOutput {
-    pub manifest: PathBuf,
-    pub backend: String,
-    pub frame_count: u32,
-    pub frame_hash: String,
-    pub output_hash: String,
-    pub duration_ms: u64,
-}
-
-#[derive(Serialize)]
-pub struct VerifyJsonOutput {
-    pub file_path: PathBuf,
-    pub hash: String,
-    pub tool_version: String,
-    pub backend: Option<String>,
 }
 
 fn run_render(
@@ -3516,48 +4050,21 @@ fn run_render(
     )?;
 
     if json {
-        let mut hasher = Sha256::new();
-        let mut file = std::fs::File::open(output_path)?;
-        std::io::copy(&mut file, &mut hasher)?;
-        let output_hash = format!("{:x}", hasher.finalize());
-
-        let output = RenderJsonOutput {
+        let elapsed = start_time.elapsed().as_millis() as u64;
+        let envelope =
+            agent_cli::build_envelope("render", manifest_path, output_path, &build_result, elapsed);
+        let output_hash = vcr::agent_contract::sha256_file(output_path)?;
+        let legacy = agent_cli::RenderLegacy {
             manifest: manifest_path.to_path_buf(),
             backend: build_result.backend_name,
             frame_count: build_result.frame_count,
             frame_hash: build_result.frame_hash,
             output_hash,
-            duration_ms: start_time.elapsed().as_millis() as u64,
+            duration_ms: elapsed,
         };
-        println!("{}", serde_json::to_string(&output).unwrap());
+        return agent_cli::finish_render(envelope, legacy);
     } else if determinism_report {
         run_determinism_report(manifest_path, 0, set_values, false)?;
-    }
-    Ok(())
-}
-
-fn run_verify(output_file: &Path, json: bool) -> Result<()> {
-    if !output_file.exists() {
-        bail!("file not found: {}", output_file.display());
-    }
-    let mut hasher = Sha256::new();
-    let mut file = std::fs::File::open(output_file)?;
-    std::io::copy(&mut file, &mut hasher)?;
-    let hash = format!("{:x}", hasher.finalize());
-    let version = version_string();
-
-    if json {
-        let output = VerifyJsonOutput {
-            file_path: output_file.to_path_buf(),
-            hash: hash.clone(),
-            tool_version: version.clone(),
-            backend: None,
-        };
-        println!("{}", serde_json::to_string(&output).unwrap());
-    } else {
-        println!("Path: {}", output_file.display());
-        println!("Hash: {}", hash);
-        println!("Version: {}", version);
     }
     Ok(())
 }
@@ -3605,7 +4112,7 @@ fn run_preview(
     if let Some(overrides) = ascii_overrides {
         scene = scene.with_ascii_overrides(overrides.clone());
     }
-    let mut renderer = create_renderer(&preview_environment, &manifest.layers, scene, backend)?;
+    let mut renderer = create_renderer(&manifest.environment, &manifest.layers, scene, backend)?;
     let layout_elapsed = layout_start.elapsed();
 
     progress_log(
@@ -3657,6 +4164,13 @@ fn run_preview(
         for frame_index in window.frame_indices() {
             let render_start = Instant::now();
             let rgba = renderer.render_frame_rgba(frame_index)?;
+            let rgba = vcr::inspect::downscale_rgba(
+                rgba,
+                manifest.environment.resolution.width,
+                manifest.environment.resolution.height,
+                preview_environment.resolution.width,
+                preview_environment.resolution.height,
+            );
             render_elapsed += render_start.elapsed();
 
             let encode_start = Instant::now();
@@ -3681,6 +4195,13 @@ fn run_preview(
         for frame_index in window.frame_indices() {
             let render_start = Instant::now();
             let rgba = renderer.render_frame_rgba(frame_index)?;
+            let rgba = vcr::inspect::downscale_rgba(
+                rgba,
+                manifest.environment.resolution.width,
+                manifest.environment.resolution.height,
+                preview_environment.resolution.width,
+                preview_environment.resolution.height,
+            );
             render_elapsed += render_start.elapsed();
 
             let encode_start = Instant::now();
@@ -3689,7 +4210,7 @@ fn run_preview(
         }
 
         ffmpeg.finish()?;
-        println!("Wrote {}", output_path.display());
+        agent_cli::human_line(format_args!("Wrote {}", output_path.display()));
     }
 
     let agent_frame = (window.count > 0).then(|| window.start_frame + window.count - 1);
@@ -3702,7 +4223,7 @@ fn run_preview(
         window,
         agent_frame,
     )?;
-    println!("Wrote {}", metadata_path.display());
+    agent_cli::human_line(format_args!("Wrote {}", metadata_path.display()));
 
     print_timing_summary(
         quiet,
@@ -3754,7 +4275,7 @@ fn run_preview_sample_frames(
     if let Some(overrides) = ascii_overrides {
         scene = scene.with_ascii_overrides(overrides.clone());
     }
-    let mut renderer = create_renderer(&preview_environment, &manifest.layers, scene, backend)?;
+    let mut renderer = create_renderer(&manifest.environment, &manifest.layers, scene, backend)?;
     let layout_elapsed = layout_start.elapsed();
 
     progress_log(
@@ -3783,6 +4304,13 @@ fn run_preview_sample_frames(
     for frame_index in &frame_indices {
         let render_start = Instant::now();
         let rgba = renderer.render_frame_rgba(*frame_index)?;
+        let rgba = vcr::inspect::downscale_rgba(
+            rgba,
+            manifest.environment.resolution.width,
+            manifest.environment.resolution.height,
+            preview_environment.resolution.width,
+            preview_environment.resolution.height,
+        );
         render_elapsed += render_start.elapsed();
 
         let encode_start = Instant::now();
@@ -3817,7 +4345,7 @@ fn run_preview_sample_frames(
         window,
         agent_frame,
     )?;
-    println!("Wrote {}", metadata_path.display());
+    agent_cli::human_line(format_args!("Wrote {}", metadata_path.display()));
 
     print_timing_summary(
         quiet,
@@ -3963,7 +4491,7 @@ fn run_render_frame(
     )?;
     let encode_elapsed = encode_start.elapsed();
 
-    println!("Wrote {}", output_path.display());
+    agent_cli::human_line(format_args!("Wrote {}", output_path.display()));
     let window = FrameWindow {
         start_frame: frame_index,
         count: 1,
@@ -3978,7 +4506,7 @@ fn run_render_frame(
         window,
         Some(frame_index),
     )?;
-    println!("Wrote {}", metadata_path.display());
+    agent_cli::human_line(format_args!("Wrote {}", metadata_path.display()));
     print_timing_summary(
         quiet,
         RenderTimingSummary {
@@ -4068,7 +4596,7 @@ fn run_render_frames(
         window,
         agent_frame,
     )?;
-    println!("Wrote {}", metadata_path.display());
+    agent_cli::human_line(format_args!("Wrote {}", metadata_path.display()));
     print_timing_summary(
         quiet,
         RenderTimingSummary {
@@ -4283,6 +4811,15 @@ struct ExplainBackendPreflightJson {
     software_supported_layer_types: &'static [&'static str],
     unsupported_software_layers: Vec<ExplainUnsupportedLayerJson>,
     blockers: Vec<String>,
+    /// What `requested_backend` resolves to on this machine (`null` = cannot run here).
+    resolved_backend: Option<&'static str>,
+    gpu_available: bool,
+    /// True when nothing prevents rendering this manifest with the requested backend here.
+    ready: bool,
+    /// Layers and manifest features (`post`, `ascii_post`) the software backend cannot honor.
+    incompatibilities: Vec<vcr::preflight::SoftwareIncompatibility>,
+    runtime: vcr::preflight::RuntimeProbe,
+    checks: Vec<vcr::agent_contract::Diagnostic>,
 }
 
 #[derive(Debug, Serialize)]

@@ -8,7 +8,7 @@ use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
 pub type Parameters = BTreeMap<String, f32>;
 pub type ModulatorMap = BTreeMap<String, ModulatorDefinition>;
 
-const DEFAULT_MANIFEST_VERSION: u32 = 1;
+pub const DEFAULT_MANIFEST_VERSION: u32 = 1;
 const DEFAULT_ENV_ATTACK: f32 = 12.0;
 const DEFAULT_ENV_DECAY: f32 = 24.0;
 const MAX_RESOLUTION: u32 = 8192;
@@ -854,6 +854,24 @@ struct LayerWire {
     sequence: Option<SequenceSource>,
     #[serde(default)]
     lottie: Option<LottieSource>,
+}
+
+impl Layer {
+    /// Stable kind label used by discovery, preflight and inspection output.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Layer::Asset(_) => "asset",
+            Layer::Image(_) => "image",
+            Layer::Video(_) => "video",
+            Layer::Procedural(_) => "procedural",
+            Layer::Shader(_) => "shader",
+            Layer::WgpuShader(_) => "wgpu_shader",
+            Layer::Text(_) => "text",
+            Layer::Ascii(_) => "ascii",
+            Layer::Sequence(_) => "sequence",
+            Layer::Lottie(_) => "lottie",
+        }
+    }
 }
 
 impl schemars::JsonSchema for Layer {
@@ -2481,6 +2499,54 @@ pub fn validate_manifest_manifest_level(manifest: &Manifest) -> Result<()> {
     Ok(())
 }
 
+/// Expression functions: `(name, accepted argument counts, summary)`. Authoritative for
+/// discovery (`vcr capabilities`); `expression_function_table_matches_evaluator` fails if the
+/// evaluator below gains or loses a function without this table being updated.
+pub const EXPRESSION_FUNCTIONS: &[(&str, &str, &str)] = &[
+    ("clamp", "3", "clamp(x, min, max)"),
+    ("lerp", "3", "lerp(a, b, t) linear interpolation"),
+    (
+        "smoothstep",
+        "3",
+        "smoothstep(edge0, edge1, x) hermite 0..1",
+    ),
+    (
+        "easeinout",
+        "1",
+        "easeinout(x) smooth ease of x clamped to 0..1",
+    ),
+    ("step", "2", "step(edge, x) -> 1 when x >= edge else 0"),
+    ("fract", "1", "fractional part"),
+    ("floor", "1", "floor"),
+    ("ceil", "1", "ceil"),
+    ("round", "1", "round"),
+    ("saw", "1-2", "saw(x[, frequency]) sawtooth 0..1"),
+    ("tri", "1-2", "tri(x[, frequency]) triangle 0..1"),
+    (
+        "random",
+        "1",
+        "random(n) deterministic hash noise 0..1 using manifest seed",
+    ),
+    (
+        "glitch",
+        "1-2",
+        "glitch(t[, intensity]) seeded sparse bursts",
+    ),
+    ("sin", "1", "sine (radians)"),
+    ("cos", "1", "cosine (radians)"),
+    ("abs", "1", "absolute value"),
+    (
+        "noise1d",
+        "1-2",
+        "noise1d(x[, seed_offset]) smooth seeded noise -1..1",
+    ),
+    (
+        "env",
+        "1 or 3",
+        "env(time[, attack, decay]) attack/decay envelope",
+    ),
+];
+
 fn evaluate_function(
     name: &str,
     args: &[ExpressionNode],
@@ -3540,5 +3606,36 @@ ascii_post:
             .unwrap()
             .validate()
             .expect("disabled ascii_post should skip validation");
+    }
+}
+
+#[cfg(test)]
+mod expression_table_tests {
+    use super::EXPRESSION_FUNCTIONS;
+
+    #[test]
+    fn expression_function_table_matches_evaluator() {
+        let source = include_str!("schema.rs");
+        let start = source.find("fn evaluate_function(").expect("evaluator");
+        let end = source[start..].find("fn expect_arity").expect("end") + start;
+        let body = &source[start..end];
+        let mut in_code: Vec<String> = body
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                let rest = line.strip_prefix('"')?;
+                let (name, tail) = rest.split_once('"')?;
+                tail.trim_start()
+                    .starts_with("=> {")
+                    .then(|| name.to_owned())
+            })
+            .collect();
+        in_code.sort();
+        let mut in_table: Vec<String> = EXPRESSION_FUNCTIONS
+            .iter()
+            .map(|(name, _, _)| (*name).to_owned())
+            .collect();
+        in_table.sort();
+        assert_eq!(in_code, in_table, "update EXPRESSION_FUNCTIONS");
     }
 }

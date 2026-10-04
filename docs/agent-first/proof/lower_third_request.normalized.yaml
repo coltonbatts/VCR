@@ -1,0 +1,89 @@
+standardized_vcr_prompt: |-
+  ROLE
+  You are the VCR render engine. Execute deterministically from explicit parameters and fail fast on invalid or missing critical inputs.
+
+  TASK
+  Render with these explicit parameters:
+  - Resolution: 1920x1080
+  - Render FPS: 60
+  - Output FPS: 60
+  - Duration: 5.000s
+  - Frames: 300
+  - Output Type: video
+  - Output Path: ./renders/lower_third/lt_v1_baseline.mov
+  - Container: mov
+  - Codec: prores_4444
+  - Alpha: true
+  - Determinism Seed: 0
+  - No blocking validation errors were found in timing fields.
+
+  INSTRUCTIONS
+  - Determinism is required. Use the fixed seed and avoid time-varying randomness.
+  - If exactly one of duration or frame count is provided, derive the other using fps and integer rounding for frames.
+  - If render fps differs from output fps, apply frame sampling with interpolation disabled unless explicitly overridden.
+  - Validate asset paths, fonts, and output compatibility before rendering.
+  - Do not synthesize unsupported features; surface them as validation issues.
+
+  CONTEXT
+  - Source mode: yaml
+  - Original input snapshot: # Request for the reusable lower-third system (instance 1: baseline). # Content below is FIXTURE material for engine proof. It is not approved brand identity. project:   name: lower_third_system   version: 1 intent:   summary: "Reusable alpha lower third: accent bar plus two text lines, slide-in entrance, hold, fade/slide exit."   creative_status: "placeholder copy and neutral palette for engine proof; human approval required before any production use" input:   text_lines:     - role: name       content: "SAMPLE NAME"     - role: title       content: "SAMPLE TITLE" scene:   style_directives:     layout: "bottom-left, inside 5% safe margins" render:   resolution:     width: 1920     height: 1080   fps: 60   duration_seconds: 5.0 output:   type: video   path: ./renders/lower_third/lt_v1_baseline.mov   container: mov   codec: prores_4444   alpha: true ascii:   font: "GeistPixel-Line" determinism:   seed: 0
+  - Normalization produced 0 unresolved issue(s).
+
+  OUTPUT FORMAT
+  - Primary artifact path: ./renders/lower_third/lt_v1_baseline.mov
+  - Emit run metadata with resolution, fps, duration_seconds, frames, codec, alpha, seed, and frame conversion policy.
+normalized_spec:
+  project:
+    name: lower_third_system
+    version: 1
+  intent:
+    creative_status: placeholder copy and neutral palette for engine proof; human approval required before any production use
+    summary: 'Reusable alpha lower third: accent bar plus two text lines, slide-in entrance, hold, fade/slide exit.'
+  input:
+    text_lines:
+    - role: name
+      content: SAMPLE NAME
+    - role: title
+      content: SAMPLE TITLE
+  scene:
+    style_directives:
+      layout: bottom-left, inside 5% safe margins
+  ascii:
+    font: GeistPixel-Line
+  render:
+    resolution:
+      width: 1920
+      height: 1080
+    fps: 60
+    duration_seconds: 5.0
+    frames: 300
+  output:
+    type: video
+    path: ./renders/lower_third/lt_v1_baseline.mov
+    container: mov
+    codec: prores_4444
+    alpha: true
+    fps: 60
+    frame_rate_conversion:
+      policy: frame_sampling
+      interpolation: false
+  determinism:
+    enabled: true
+    seed: 0
+  notes: null
+unknowns_and_fixes: []
+assumptions_applied:
+- Defaulted output fps to render fps because `output.fps` was missing.
+- Computed frames as round(duration_seconds*fps) (5.000*60).
+acceptance_checks:
+- Spec serializes to valid YAML with expected top-level keys.
+- assert render.resolution.width == 1920 && render.resolution.height == 1080
+- assert render.fps == 60
+- assert output.fps == 60
+- assert determinism.seed == 0
+- assert output.path == "./renders/lower_third/lt_v1_baseline.mov" && output.codec == "prores_4444"
+- assert frames == round(duration_seconds * fps) (300 == round(5.000 * 60))
+- assert all referenced asset and font paths exist before render execution.
+defaults_applied:
+- field: output.fps
+  value: 60
