@@ -76,7 +76,7 @@ jobs:
       - name: MCP adapter tests
         # Uses the checkout's target/debug/vcr built by the step above (engine selection prefers it).
         run: |
-          python3 -m pip install --quiet "mcp[cli]>=1.0.0" httpx pyyaml
+          python3 -m pip install --quiet "mcp[cli]>=1.0.0,<2" httpx pyyaml
           cargo build --bin vcr
           python3 -m unittest discover -s scripts/vcr-mcp-server/tests -v
 
