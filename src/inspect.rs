@@ -111,11 +111,10 @@ pub fn build_timeline(manifest: &Manifest) -> Result<Timeline> {
     let first_hold = runs
         .iter()
         .position(|r| r.kind == RunKind::Still && r.end_frame - r.start_frame >= 1);
-    let count = runs.len();
     let last_moving = runs.iter().rposition(|r| r.kind == RunKind::Moving);
-    for index in 0..count {
-        let moving_run = runs[index].kind == RunKind::Moving;
-        runs[index].phase = match (moving_run, first_hold, last_moving) {
+    for (index, run) in runs.iter_mut().enumerate() {
+        let moving_run = run.kind == RunKind::Moving;
+        run.phase = match (moving_run, first_hold, last_moving) {
             (false, Some(hold), Some(lm)) if index > lm && index != hold => "ending",
             (false, Some(hold), _) if index == hold => "hold",
             (false, _, _) => "hold",

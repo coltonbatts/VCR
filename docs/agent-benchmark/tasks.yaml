@@ -1,0 +1,259 @@
+# VCR agent benchmark: task definitions (suite version 1).
+#
+# Defined BEFORE any agent run. Do not edit a task after results exist; add a new suite version.
+# Workspace for every task: a fresh copy of the repo checkout with a built engine, the task's
+# `fixtures` copied into `workdir/`, and `assets/` copied to `workdir/assets_pool/` (unless noted).
+# The agent receives only `brief`, the paths named in `supplied`, and the repo docs.
+#
+# Gate types (scored by scripts/agent_bench/score.py):
+#   file_exists  verify  inspect_clean  text_preserved  answer_json  variants_distinct
+#   any_of (at least one child gate passes)   all_of
+suite_version: 1
+defaults:
+  engine: "target/release/vcr"
+  backend: software
+  allowed_intervention:
+    creative: "Human may answer questions about creative direction, approve a substitution, or supply missing creative inputs the brief leaves unspecified."
+    operational_forbidden: "Human may NOT install tools, fix paths/permissions, retry commands, debug the engine, edit manifests, or interpret errors for the agent. Any such action is recorded as an operational intervention and the task does not count as autonomous."
+  repair_attempt: "One repair attempt = one edit of the manifest/params/command followed by re-running a validating stage (check, lint, preflight, inspect, render or verify) after a failure or diagnostic."
+
+tasks:
+  - id: T01_alpha_lower_third
+    title: Alpha lower third
+    brief: >
+      Make a 3 second lower third at 1280x720, 30 fps, with a transparent background, exported as
+      ProRes 4444 to renders/t01_lower_third.mov. Two lines of text: "ALEX RIVERA" and "Head of Design"
+      (these exact words). Bottom-left, inside a 5% safe margin. Slide/fade in at the start, hold,
+      then exit before the end. Use a neutral palette of your choosing and say what you chose.
+    supplied: []
+    expected_outputs:
+      - renders/t01_lower_third.mov
+    gates:
+      - { type: file_exists, path: renders/t01_lower_third.mov }
+      - type: verify
+        path: renders/t01_lower_third.mov
+        expect: { width: 1280, height: 720, fps: 30, frames: 90, container: mov, codec: prores, profile: "4444", alpha_capable: true, transparency: required }
+        require_provenance: true
+      - { type: inspect_clean, manifest: "@renders/t01_lower_third.mov", forbid: [layout.touches_canvas_edge, layer.renders_nothing, timing.nothing_visible, timing.motion_on_last_frame], phases: [hold] }
+      - { type: text_preserved, manifest: "@renders/t01_lower_third.mov", strings: ["ALEX RIVERA", "Head of Design"] }
+    visual_rubric: lower_third
+    notes: "Palette is the agent's call and must be reported; it is not scored for brand fit."
+
+  - id: T02_title_sequence
+    title: Title sequence
+    brief: >
+      Make a 4 second 1280x720 30 fps title sequence on a solid dark background, opaque, exported to
+      renders/t02_titles.mov (ProRes 4444 is fine). Show three titles in order, one at a time, each
+      fading in and out: "ACT ONE", "ACT TWO", "ACT THREE". Each title must be fully readable and
+      centered horizontally.
+    supplied: []
+    expected_outputs: [renders/t02_titles.mov]
+    gates:
+      - type: verify
+        path: renders/t02_titles.mov
+        expect: { width: 1280, height: 720, fps: 30, frames: 120, container: mov, codec: prores, transparency: none }
+        require_provenance: true
+      - { type: inspect_clean, manifest: "@renders/t02_titles.mov", forbid: [layout.touches_canvas_edge, layer.renders_nothing, timing.nothing_visible], phases: [hold] }
+      - { type: text_preserved, manifest: "@renders/t02_titles.mov", strings: ["ACT ONE", "ACT TWO", "ACT THREE"] }
+    visual_rubric: titles
+
+  - id: T03_branded_intro
+    title: Branded intro with supplied logo
+    brief: >
+      Make a 3 second 1280x720 30 fps intro: the supplied logo mark (assets_pool/logo_mark.png) scales
+      or fades in at the center over a dark opaque background, then the words "NORTHWIND" appear below
+      it. Export to renders/t03_intro.mov. Do not redraw or recolor the logo.
+    supplied: [assets_pool/logo_mark.png]
+    expected_outputs: [renders/t03_intro.mov]
+    gates:
+      - type: verify
+        path: renders/t03_intro.mov
+        expect: { width: 1280, height: 720, fps: 30, frames: 90, container: mov, codec: prores, transparency: none }
+        require_provenance: true
+      - { type: inspect_clean, manifest: "@renders/t03_intro.mov", forbid: [layout.touches_canvas_edge, layer.renders_nothing], phases: [hold] }
+      - { type: text_preserved, manifest: "@renders/t03_intro.mov", strings: ["NORTHWIND"] }
+      - { type: manifest_contains, manifest: "@renders/t03_intro.mov", substrings: ["logo_mark.png"] }
+    visual_rubric: intro
+
+  - id: T04_supplied_image_scene
+    title: Supplied image scene
+    brief: >
+      Use the supplied photo (assets_pool/photo_placeholder.png, 1280x720) as a full-frame background
+      for a 2 second 1280x720 30 fps clip. Add the caption "Harbor at dawn" in the lower third of the
+      frame, readable against the image. Export to renders/t04_photo.mov.
+    supplied: [assets_pool/photo_placeholder.png]
+    expected_outputs: [renders/t04_photo.mov]
+    gates:
+      - type: verify
+        path: renders/t04_photo.mov
+        expect: { width: 1280, height: 720, fps: 30, frames: 60, container: mov, codec: prores, transparency: none }
+        require_provenance: true
+      - { type: inspect_clean, manifest: "@renders/t04_photo.mov", forbid: [layout.touches_canvas_edge, layer.renders_nothing], phases: [hold], ignore_layers: [photo, background, backdrop, bg] }
+      - { type: text_preserved, manifest: "@renders/t04_photo.mov", strings: ["Harbor at dawn"] }
+      - { type: manifest_contains, manifest: "@renders/t04_photo.mov", substrings: ["photo_placeholder.png"] }
+    visual_rubric: photo_caption
+
+  - id: T05_aspect_adaptation
+    fixtures: aspect_adaptation
+    title: Aspect-ratio adaptation
+    brief: >
+      workdir/source_16x9.vcr is a 1280x720 title card. Produce a vertical 720x1280 version and a
+      square 720x720 version of the same card, with the same words, nothing clipped, keeping the same
+      30 fps and 3 s. Export renders/t05_vertical.mov and renders/t05_square.mov. Do not change the
+      wording (re-breaking lines is fine).
+    supplied: [source_16x9.vcr]
+    expected_outputs: [renders/t05_vertical.mov, renders/t05_square.mov]
+    gates:
+      - type: verify
+        path: renders/t05_vertical.mov
+        expect: { width: 720, height: 1280, fps: 30, frames: 90, container: mov, codec: prores }
+        require_provenance: true
+      - type: verify
+        path: renders/t05_square.mov
+        expect: { width: 720, height: 720, fps: 30, frames: 90, container: mov, codec: prores }
+        require_provenance: true
+      - { type: inspect_clean, manifest: "@renders/t05_vertical.mov", forbid: [layout.touches_canvas_edge, layer.renders_nothing], phases: [hold] }
+      - { type: inspect_clean, manifest: "@renders/t05_square.mov", forbid: [layout.touches_canvas_edge, layer.renders_nothing], phases: [hold] }
+      # Words must survive in each output's own manifest (re-breaking lines is fine).
+      - { type: words_preserved, manifest: "@renders/t05_vertical.mov|@renders/t05_square.mov", words: ["SUMMER", "LAUNCH", "Doors", "open", "at", "nine"] }
+    visual_rubric: adaptation
+
+  - id: T06_long_text_repair
+    fixtures: long_text_repair
+    title: Long-text clipping repair
+    brief: >
+      workdir/overflow.vcr renders but the headline runs off the canvas. Fix it so the whole headline
+      is visible inside the 1280x720 frame with a margin, WITHOUT changing the words. You may change
+      size, position, or split into lines (separate layers). Export to renders/t06_fixed.mov.
+    supplied: [overflow.vcr]
+    expected_outputs: [renders/t06_fixed.mov]
+    gates:
+      - type: verify
+        path: renders/t06_fixed.mov
+        expect: { width: 1280, height: 720, fps: 30, frames: 90, container: mov, codec: prores }
+        require_provenance: true
+      - { type: inspect_clean, manifest: "@renders/t06_fixed.mov", forbid: [layout.touches_canvas_edge, layout.outside_safe_area, layer.renders_nothing], phases: [hold] }
+      - { type: words_preserved, manifest: "@renders/t06_fixed.mov", words: ["QUARTERLY", "RESULTS", "EXCEEDED", "EVERY", "FORECAST"] }
+    visual_rubric: legibility
+    notes: "Splitting text across layers is allowed; every original word must still appear."
+
+  - id: T07_parameterized_variants
+    fixtures: parameterized_variants
+    title: Parameterized variants
+    brief: >
+      workdir/base.vcr declares params `accent` (color) and `bar_width` (float). Render three variants
+      WITHOUT editing the manifest, using param overrides only: (a) accent #FF5533, bar_width 0.30;
+      (b) accent #33C3FF, bar_width 0.50; (c) accent #FFD633, bar_width 0.70. Export
+      renders/t07_a.mov, renders/t07_b.mov, renders/t07_c.mov.
+    supplied: [base.vcr]
+    expected_outputs: [renders/t07_a.mov, renders/t07_b.mov, renders/t07_c.mov]
+    gates:
+      - { type: verify, path: renders/t07_a.mov, manifest: base.vcr, set: { accent: "#FF5533", bar_width: "0.30" }, require_provenance: true }
+      - { type: verify, path: renders/t07_b.mov, manifest: base.vcr, set: { accent: "#33C3FF", bar_width: "0.50" }, require_provenance: true }
+      - { type: verify, path: renders/t07_c.mov, manifest: base.vcr, set: { accent: "#FFD633", bar_width: "0.70" }, require_provenance: true }
+      - { type: variants_distinct, paths: [renders/t07_a.mov, renders/t07_b.mov, renders/t07_c.mov] }
+      - { type: manifest_unchanged, manifest: base.vcr }
+    visual_rubric: variants
+
+  - id: T08a_missing_asset_recoverable
+    fixtures: missing_asset
+    title: Missing asset, recoverable from the supplied pool
+    brief: >
+      Render workdir/manifest.vcr (a 2 second 1280x720 30 fps logo card) to renders/t08a.mov. If
+      something it needs is missing, find it; do not substitute different artwork.
+    supplied: [manifest.vcr]
+    pool: [assets_pool/logo_mark.png]
+    fault: "assets/logo_mark.png is absent next to the manifest; the real file is in assets_pool/."
+    expected_outputs: [renders/t08a.mov]
+    gates:
+      - type: verify
+        path: renders/t08a.mov
+        expect: { width: 1280, height: 720, fps: 30, frames: 60, container: mov, codec: prores }
+        require_provenance: true
+      - { type: asset_identity, manifest: "@renders/t08a.mov", layer: logo, sha256_of: assets_pool/logo_mark.png }
+    visual_rubric: asset_fidelity
+
+  - id: T08b_missing_asset_unavailable
+    fixtures: missing_asset_unavailable
+    title: Missing asset, not available anywhere
+    brief: >
+      Render workdir/manifest.vcr (a 2 second 1280x720 30 fps client-logo card) to renders/t08b.mov.
+    supplied: [manifest.vcr]
+    fault: "assets/client_logo.png exists nowhere. Correct behavior is to stop and report the blocker; inventing a logo is a failure."
+    expected_outputs: []
+    gates:
+      - { type: answer_json, path: answer.json, equals: { status: blocked }, contains_any: { reason: ["client_logo", "asset", "missing"] } }
+      - { type: no_file, path: renders/t08b.mov }
+    answer_spec: "Write answer.json: {\"status\": \"blocked\"|\"delivered\", \"reason\": \"...\", \"needs\": \"...\"}"
+    visual_rubric: none
+
+  - id: T09_unsupported_backend_recovery
+    title: Unsupported-backend recovery
+    brief: >
+      Make a 2 second 1280x720 30 fps clip with a custom WGSL shader layer producing an animated
+      gradient, exported to renders/t09.mov. Render on this machine.
+    supplied: []
+    applicable_if: { capability: "backends.gpu.usable", equals: false }
+    fault: "No GPU adapter. The shader layer cannot render on the software backend."
+    expected_outputs: []
+    gates:
+      - type: any_of
+        children:
+          - type: all_of
+            children:
+              - { type: answer_json, path: answer.json, equals: { status: blocked }, contains_any: { reason: ["gpu", "shader", "software"] } }
+              - { type: no_file, path: renders/t09.mov }
+          - type: all_of
+            children:
+              - { type: answer_json, path: answer.json, equals: { status: substituted, requires_approval: true } }
+              - { type: verify, path: renders/t09.mov, expect: { width: 1280, height: 720, fps: 30, frames: 60, codec: prores } }
+              - { type: manifest_forbids_layer_kinds, manifest: "*.vcr", kinds: [shader, wgpu_shader] }
+    answer_spec: "Write answer.json: {\"status\": \"blocked\"|\"substituted\", \"reason\": \"...\", \"requires_approval\": true|false}. A procedural substitute is only acceptable if flagged as needing approval; a silently transparent or dropped shader is a failure."
+    visual_rubric: none
+    notes: "Marked not_applicable on machines where the GPU backend is usable."
+
+  - id: T10_encoded_artifact_verification
+    title: Encoded-artifact verification
+    brief: >
+      workdir/artifacts/ holds seven exported files that were all supposed to be a 1280x720, 30 fps,
+      3 second (90 frame) ProRes 4444 .mov with a transparent background, rendered from
+      workdir/artifacts/scene.vcr. For each file decide whether it is acceptable, and if not why.
+      Write answer.json: {"<filename>": {"acceptable": true|false, "problem": "<short code>"}}.
+      Problem codes: ok, wrong_duration, wrong_codec, no_transparency, stale, modified, unreadable.
+    supplied: [artifacts/]
+    expected_outputs: []
+    generator: scripts/agent_bench/make_bad_artifacts.sh
+    gates:
+      - type: answer_json
+        path: answer.json
+        truth_file: artifacts_truth.json   # scorer-only; never shown to the agent
+    visual_rubric: none
+
+scoring:
+  task_pass: "all gates pass AND zero operational human interventions. The suite counts 10 tasks: T08 is one task with two cases (T08a and T08b) and passes only if both do."
+  metrics_recorded_separately:
+    - task_completion          # gates passed (artifact correctness), independent of interventions
+    - operational_interventions
+    - repair_attempts
+    - elapsed_seconds
+    - tool_calls
+    - tokens                   # null when the harness cannot observe it; never estimated
+    - visual_quality           # rubric score 0-4 per criterion, see visual_rubrics below
+    - artifact_correctness     # fraction of mechanical gates passed
+  proposed_release_target:
+    status: "PROPOSED, not an existing measured result"
+    deterministic_contract_checks: "all pass"
+    autonomy: ">= 9 of 10 tasks pass (zero operational interventions) in each tested harness, in each of >= 3 repeated runs"
+    visual: "every delivered clip scores >= 3 on every criterion of its rubric"
+
+visual_rubrics:
+  # Scored by a human (or a documented reviewer model) looking at inspect's contact sheet. 0-4 each.
+  # Mechanical gates above are NOT part of this score. A pass is >= 3 on every criterion.
+  lower_third: [legibility_at_hold, hierarchy_between_lines, safe_area_and_alignment, motion_timing_feels_intentional, restraint]
+  titles: [legibility, centering, rhythm_between_titles, transitions_clean]
+  intro: [logo_fidelity_unaltered, composition_balance, motion_timing_feels_intentional, legibility]
+  photo_caption: [caption_legibility_over_image, placement, image_not_obscured, type_scale]
+  adaptation: [reflow_suits_aspect, hierarchy_preserved, nothing_clipped_or_cramped, consistency_across_aspects]
+  legibility: [whole_headline_readable, line_breaks_natural, margins_consistent, scale_appropriate]
+  variants: [variants_visibly_distinct_as_specified, otherwise_identical]
+  asset_fidelity: [logo_unaltered_and_placed_sensibly]

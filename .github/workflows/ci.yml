@@ -73,6 +73,13 @@ jobs:
         # Note: determinism tests force software rendering, which works in CI
         run: cargo test --all-targets
 
+      - name: MCP adapter tests
+        # Uses the checkout's target/debug/vcr built by the step above (engine selection prefers it).
+        run: |
+          python3 -m pip install --quiet "mcp[cli]>=1.0.0" httpx pyyaml
+          cargo build --bin vcr
+          python3 -m unittest discover -s scripts/vcr-mcp-server/tests -v
+
   determinism:
     name: Determinism Verification
     runs-on: ubuntu-latest

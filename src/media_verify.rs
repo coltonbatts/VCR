@@ -245,8 +245,7 @@ pub fn measure_transparency(
 ) -> Result<TransparencyStats> {
     let mut command = Command::new("ffmpeg");
     command.args(["-v", "error", "-i"]).arg(path);
-    let mode;
-    match max_frames {
+    let mode = match max_frames {
         Some(limit) if total_frames > limit && limit > 0 => {
             let picks: Vec<u64> = (0..limit)
                 .map(|i| i * (total_frames - 1) / (limit - 1).max(1))
@@ -262,10 +261,10 @@ pub fn measure_transparency(
                 "-fps_mode",
                 "passthrough",
             ]);
-            mode = format!("sampled {limit} of {total_frames} frames");
+            format!("sampled {limit} of {total_frames} frames")
         }
-        _ => mode = "all frames".to_owned(),
-    }
+        _ => "all frames".to_owned(),
+    };
     command
         .args(["-an", "-f", "rawvideo", "-pix_fmt", "rgba", "-"])
         .stdout(Stdio::piped())

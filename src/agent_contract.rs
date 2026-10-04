@@ -399,9 +399,7 @@ impl Envelope {
         })
     }
 
-    /// Merge pre-contract top-level keys into the document so existing consumers keep working.
-    /// New code should read `result`. Existing keys are never overwritten.
-    pub fn to_json_line_with_legacy(&self, legacy: &impl Serialize) -> String {
+    fn merged_with_legacy(&self, legacy: &impl Serialize) -> Value {
         let mut value = serde_json::to_value(self).unwrap_or(Value::Null);
         if let (Some(target), Ok(Value::Object(extra))) =
             (value.as_object_mut(), serde_json::to_value(legacy))
@@ -410,7 +408,19 @@ impl Envelope {
                 target.entry(key).or_insert(entry);
             }
         }
-        value.to_string()
+        value
+    }
+
+    /// Merge pre-contract top-level keys into the document so existing consumers keep working.
+    /// New code should read `result`. Existing keys are never overwritten.
+    pub fn to_json_line_with_legacy(&self, legacy: &impl Serialize) -> String {
+        self.merged_with_legacy(legacy).to_string()
+    }
+
+    /// Pretty-printed variant for the legacy `VCR_AGENT_MODE` stderr output, whose consumers
+    /// historically matched the pretty-printed form (`"error_type": "usage"`).
+    pub fn to_json_pretty_with_legacy(&self, legacy: &impl Serialize) -> String {
+        serde_json::to_string_pretty(&self.merged_with_legacy(legacy)).unwrap_or_default()
     }
 }
 
@@ -747,7 +757,7 @@ pub fn classify_error(operation: &str, error: &Error) -> ErrorBody {
             location.field = Some(field);
         }
         if let Some(path) = capture(&raw_chain, r"does not exist: (.+)") {
-            observed = Some(json!(path.trim()));
+            observed = Some(json!(path.trim().trim_start_matches("./")));
         }
         recovery.push("Supply the asset at the referenced path (relative to the manifest) or correct the path; do not substitute different artwork without approval.".to_owned());
     }

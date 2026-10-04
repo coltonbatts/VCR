@@ -1,0 +1,18 @@
+# References assets/logo_mark.png, which is NOT next to this manifest.
+# A copy of the real asset exists in the benchmark assets directory (docs/agent-benchmark/assets/).
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 30
+  duration: 2.0
+layers:
+  - id: backdrop
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.08, g: 0.08, b: 0.1, a: 1.0 }
+  - id: logo
+    z_index: 1
+    position: { x: 384, y: 104 }
+    image:
+      path: assets/logo_mark.png

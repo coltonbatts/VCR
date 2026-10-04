@@ -1,0 +1,34 @@
+# Variant matrix for the reusable lower-third system (scene: examples/agent/lower_third_v1.vcr).
+#
+# 3 palettes x 2 motion timings x 2 text sets = 12 intentional variants.
+#
+# ALL CONTENT HERE IS FIXTURE MATERIAL for engine proof. Palette values and sample copy are not
+# approved brand identity; a human must approve or replace them before production use.
+# Text is substituted by the generator because manifests have no string params (only
+# float/int/bool/color/vec2). Palette and timing use declared params via --set.
+scene: examples/agent/lower_third_v1.vcr
+base_request: docs/agent-first/proof/lower_third_request.yaml   # prompt gate: status ok
+
+axes:
+  palette:
+    dark_neutral: { panel_color: "#0D0D12CC", accent_color: "#F5F5F5FF" }
+    deep_blue:    { panel_color: "#0B1E3BCC", accent_color: "#5CC8FFFF" }
+    deep_green:   { panel_color: "#0B2B1FCC", accent_color: "#7DE3A1FF" }
+  motion:
+    standard: { enter_end: 30, exit_start: 240, exit_frames: 30 }
+    quick:    { enter_end: 18, exit_start: 252, exit_frames: 18 }
+  text:
+    short: { name: "SAMPLE NAME", title: "SAMPLE TITLE" }
+    long:  { name: "SAMPLE PERSON WITH A LONG NAME", title: "A LONGER SAMPLE JOB TITLE AT A SAMPLE ORGANISATION" }
+
+# Gates every variant must pass (mechanical, via the engine):
+gates:
+  - vcr check / lint / explain (preflight ready) with the variant's --set values
+  - vcr inspect: no layout.touches_canvas_edge / layer.renders_nothing at hold; hold samples have name and title bounds inside the panel bounds
+  - vcr render (software) then vcr verify --manifest --expect-transparency required (1920x1080, 60 fps, 300 frames, ProRes 4444)
+  - decoded alpha: min_alpha 0 and some frames with transparency
+  - distinctness: all 12 decoded-frame hashes differ
+  - reproducibility: re-render of one variant matches at raster / decoded / file level
+
+# Not covered by this matrix (separate completion gates): recovery behavior (fault injection),
+# human approval of palette and copy, autonomous-agent runs.

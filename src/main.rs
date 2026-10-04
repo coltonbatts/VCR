@@ -2208,10 +2208,13 @@ fn print_cli_error(command_name: &str, error: &anyhow::Error) {
             .unwrap_or(false);
 
         if agent_mode {
-            match serde_json::to_string_pretty(&coded.envelope()) {
-                Ok(json) => eprintln!("{json}"),
-                Err(_) => eprintln!("vcr {command_name}: {summary}"),
-            }
+            // One error shape: the contract envelope (it carries the pre-contract
+            // `ok` / `error.{code,message,details}` fields unchanged).
+            let envelope = vcr::agent_contract::Envelope::from_error(command_name, error);
+            eprintln!(
+                "{}",
+                serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| envelope.to_json_line())
+            );
         } else {
             eprintln!("vcr {command_name}: {summary}");
         }
@@ -2262,13 +2265,10 @@ fn print_cli_error(command_name: &str, error: &anyhow::Error) {
             }
         }
 
-        // Emit JSON to stderr
-        if let Ok(json) = report.to_json() {
-            eprintln!("{}", json);
-        } else {
-            // Fallback to regular error if JSON serialization fails
-            eprintln!("vcr {command_name}: {}", report.summary);
-        }
+        // Emit the contract envelope on stderr, with the legacy AgentErrorReport keys
+        // (`error_type`, `summary`, `suggested_fix`, `context`) merged in for old consumers.
+        let envelope = vcr::agent_contract::Envelope::from_error(command_name, error);
+        eprintln!("{}", envelope.to_json_pretty_with_legacy(&report));
     } else {
         // Regular human-readable output
         eprintln!("vcr {command_name}: {summary}");

@@ -125,7 +125,7 @@ fn schema_failure_has_stable_code_location_and_exit() {
     assert_eq!(e["location"]["field"], "bogus_field");
     assert_eq!(e["retryable"], false);
     assert_eq!(e["exit_code"], 3);
-    assert!(e["recovery"].as_array().unwrap().len() >= 1);
+    assert!(!e["recovery"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -898,13 +898,10 @@ fn inspect_detects_clipping_and_a_targeted_param_revision_fixes_it() {
     assert_eq!(hit["severity"], "warning");
     assert_eq!(hit["basis"], "exact");
     assert!(hit["message"].as_str().unwrap().contains("right"));
-    assert_eq!(
-        clipped["result"]["revise_with"]
-            .as_str()
-            .unwrap()
-            .contains("--set"),
-        true
-    );
+    assert!(clipped["result"]["revise_with"]
+        .as_str()
+        .unwrap()
+        .contains("--set"));
 
     // Revise one declared parameter; nothing else is rebuilt.
     let fixed = run(&["--set", "x_offset=0"], "ins_ok");
@@ -1054,4 +1051,81 @@ layers:
         max < 160 && min > 40,
         "preview is a scaled composition, got x {min}..{max}"
     );
+}
+
+#[test]
+fn manifest_with_assets_validates_when_given_by_bare_filename() {
+    // Regression: `Path::parent()` of "scene.vcr" is "", and canonicalizing "" failed, so any
+    // manifest with an image/video/sequence asset broke when run from its own directory.
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("assets")).unwrap();
+    image::RgbaImage::from_pixel(8, 8, image::Rgba([255, 0, 0, 255]))
+        .save(dir.path().join("assets/dot.png"))
+        .unwrap();
+    write(
+        dir.path(),
+        "scene.vcr",
+        "version: 1\nenvironment:\n  resolution: { width: 64, height: 36 }\n  fps: 10\n  duration: { frames: 2 }\nlayers:\n  - id: pic\n    image:\n      path: assets/dot.png\n",
+    );
+    let out = vcr(dir.path(), &["check", "scene.vcr", "--json"]);
+    let d = doc(&out);
+    assert_eq!(d["status"], "ok", "{d}");
+    assert_eq!(out.status.code(), Some(0));
+}
+
+#[test]
+fn legacy_agent_mode_errors_use_the_envelope_and_keep_old_keys() {
+    let dir = TempDir::new().unwrap();
+    write(
+        dir.path(),
+        "broken.vcr",
+        "version: 1\nenvironment:\n  resolution: { width: 64, height: 36 }\n  fps: 10\nlayers:\n  - id: a\n    procedural: { kind: solid_color, color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 } }\n",
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_vcr"))
+        .current_dir(dir.path())
+        .args(["check", "broken.vcr"])
+        .env("VCR_AGENT_MODE", "1")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(3));
+    assert!(
+        out.stdout.is_empty(),
+        "legacy agent mode keeps stdout clean"
+    );
+    let d: Value = serde_json::from_slice(&out.stderr).expect("stderr is one JSON document");
+    // contract fields
+    assert_eq!(d["contract"], "vcr.agent/1");
+    assert_eq!(d["ok"], false);
+    assert_eq!(d["error"]["category"], "manifest");
+    assert_eq!(d["error"]["operation"], "check");
+    // legacy AgentErrorReport keys still present at top level
+    assert_eq!(d["error_type"], "validation");
+    assert!(d["summary"].as_str().unwrap().contains("duration"));
+    assert!(d["suggested_fix"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("duration"));
+
+    // coded errors share the same envelope
+    write(dir.path(), "a.vcr", SMALL_ALPHA);
+    let coded = Command::new(env!("CARGO_BIN_EXE_vcr"))
+        .current_dir(dir.path())
+        .args([
+            "--backend",
+            "software",
+            "render-frame",
+            "a.vcr",
+            "--frame",
+            "0",
+            "--aspect",
+            "bogus",
+        ])
+        .env("VCR_AGENT_MODE", "1")
+        .output()
+        .unwrap();
+    // unknown flag => argument error, structured because agent mode is on
+    let c: Value = serde_json::from_slice(&coded.stderr)
+        .expect("argument errors are structured in agent mode");
+    assert_eq!(c["error"]["code"], "usage.invalid_argument");
+    assert_eq!(coded.status.code(), Some(2));
 }

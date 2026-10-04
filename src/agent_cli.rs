@@ -704,8 +704,13 @@ pub(super) fn verify(output_file: &Path, args: &VerifyArgs, json_out: bool) -> R
 fn report_checks_for_humans(envelope: &Envelope) -> Vec<String> {
     let mut lines = Vec::new();
     for d in &envelope.diagnostics {
+        let detail = match (&d.expected, &d.observed) {
+            (Some(e), Some(o)) => format!(" [expected {e}, observed {o}]"),
+            (None, Some(o)) => format!(" [observed {o}]"),
+            _ => String::new(),
+        };
         lines.push(format!(
-            "{}: {} ({})",
+            "{}: {} ({}){detail}",
             match d.severity {
                 Severity::Warning => "warn",
                 _ => "FAIL",

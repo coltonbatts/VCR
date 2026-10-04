@@ -107,7 +107,9 @@ pub fn sweep_stale_partials(output: &Path) {
         _ => PathBuf::from("."),
     };
     let prefix = format!(".{stem}.partial-");
-    let Ok(entries) = fs::read_dir(&dir) else { return };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if !(name.starts_with(&prefix) && name.ends_with(&ext)) {

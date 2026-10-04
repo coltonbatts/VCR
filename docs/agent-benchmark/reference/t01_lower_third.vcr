@@ -1,0 +1,42 @@
+# Scripted REFERENCE solution for T01 (not an agent run). Normalized procedural geometry; t = frames.
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 30
+  duration: 3.0
+  encoding: { prores_profile: prores4444 }
+params:
+  slide: { type: float, default: 48.0, min: 0.0, max: 300.0 }
+groups:
+  - id: lt
+    pos_x: "-slide * (1.0 - easeinout(clamp(t / 12.0, 0.0, 1.0))) - slide * easeinout(clamp((t - 66.0) / 12.0, 0.0, 1.0))"
+    opacity: "clamp(t / 12.0, 0.0, 1.0) * (1.0 - clamp((t - 66.0) / 12.0, 0.0, 1.0))"
+layers:
+  - id: panel
+    group: lt
+    z_index: 1
+    procedural:
+      kind: rounded_rect
+      center: { x: 0.20625, y: 0.861111 }   # px x 64..464, y 560..680
+      size: { x: 0.3125, y: 0.166667 }
+      corner_radius: 0.004
+      color: { r: 0.08, g: 0.09, b: 0.12, a: 0.85 }
+  - id: stripe
+    group: lt
+    z_index: 2
+    procedural:
+      kind: rounded_rect
+      center: { x: 0.053125, y: 0.861111 }  # 8px stripe at the panel's left edge
+      size: { x: 0.00625, y: 0.166667 }
+      corner_radius: 0.0
+      color: { r: 0.9, g: 0.9, b: 0.9, a: 1.0 }
+  - id: name
+    group: lt
+    z_index: 3
+    position: { x: 96, y: 578 }
+    text: { content: "ALEX RIVERA", font_family: "GeistPixel-Line", font_size: 48, color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 } }
+  - id: role
+    group: lt
+    z_index: 3
+    position: { x: 96, y: 634 }
+    text: { content: "Head of Design", font_family: "GeistPixel-Line", font_size: 28, color: { r: 0.85, g: 0.86, b: 0.9, a: 1.0 } }
