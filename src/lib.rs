@@ -1,3 +1,4 @@
+pub mod agent_contract;
 pub mod agent_errors;
 pub mod agent_metadata;
 pub mod animation_engine;

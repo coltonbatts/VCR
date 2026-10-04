@@ -39,6 +39,31 @@ pub const FONT_ASSET_HASHES: [(&str, &str); 5] = [
     ),
 ];
 
+/// Accepted `font_family` spellings (case-insensitive) and the bundled font file each resolves to.
+pub const FONT_FAMILY_ALIASES: [(&str, &str); 10] = [
+    ("geistpixel-line", "GeistPixel-Line.ttf"),
+    ("line", "GeistPixel-Line.ttf"),
+    ("geistpixel-square", "GeistPixel-Square.ttf"),
+    ("square", "GeistPixel-Square.ttf"),
+    ("geistpixel-grid", "GeistPixel-Grid.ttf"),
+    ("grid", "GeistPixel-Grid.ttf"),
+    ("geistpixel-circle", "GeistPixel-Circle.ttf"),
+    ("circle", "GeistPixel-Circle.ttf"),
+    ("geistpixel-triangle", "GeistPixel-Triangle.ttf"),
+    ("triangle", "GeistPixel-Triangle.ttf"),
+];
+
+/// The bundled font file for a `font_family`, or `None` when the name is unknown. The renderer
+/// falls back to `GeistPixel-Line` for unknown names; callers that care (lint, preflight) use
+/// this to flag the substitution instead of letting it pass silently.
+pub fn resolve_font_family(font_family: &str) -> Option<&'static str> {
+    let wanted = font_family.to_ascii_lowercase();
+    FONT_FAMILY_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == wanted)
+        .map(|(_, file)| *file)
+}
+
 pub fn verify_geist_pixel_bundle(manifest_root: &Path) -> Result<()> {
     let font_dir = manifest_root.join(GEIST_PIXEL_DIR_REL);
     let mut actual = Vec::new();
