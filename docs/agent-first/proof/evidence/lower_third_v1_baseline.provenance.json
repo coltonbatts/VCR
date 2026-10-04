@@ -1,0 +1,203 @@
+{
+  "schema": "vcr.provenance/1",
+  "status": "complete",
+  "engine": {
+    "name": "vcr",
+    "version": "0.1.2",
+    "git_hash": "707bc72",
+    "build_profile": "release",
+    "os": "linux",
+    "arch": "x86_64",
+    "contract": "vcr.agent/1",
+    "executable": "/home/user/VCR/target/release/vcr"
+  },
+  "toolchain": {
+    "ffmpeg": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+    "ffmpeg_mode": "Auto"
+  },
+  "backend": {
+    "name": "CPU",
+    "reason": "forced software backend",
+    "requested": "software"
+  },
+  "manifest": {
+    "file_sha256": "2d9bcc8135401641162b23de3c1d0b4032b90abda589ad8fc618b7e72d4da8fa",
+    "overrides": {},
+    "params": {
+      "accent_color": {
+        "a": 1.0,
+        "b": 0.9599999785423279,
+        "g": 0.9599999785423279,
+        "r": 0.9599999785423279
+      },
+      "enter_end": 30.0,
+      "exit_frames": 30.0,
+      "exit_start": 240.0,
+      "panel_color": {
+        "a": 0.800000011920929,
+        "b": 0.07000000029802322,
+        "g": 0.05000000074505806,
+        "r": 0.05000000074505806
+      },
+      "slide_distance": 80.0
+    },
+    "path": "examples/agent/lower_third_v1.vcr",
+    "resolved_manifest_hash": "fc421553affc0d88",
+    "seed": 0
+  },
+  "inputs": [],
+  "window": {
+    "encoding_profile": "4444",
+    "fps": 60,
+    "frame_count": 300,
+    "height": 1080,
+    "start_frame": 0,
+    "width": 1920
+  },
+  "output": {
+    "bytes": 24842258,
+    "path": "renders/lower_third/lt_v1_baseline.mov",
+    "sha256": "363e93c11fc83bb16a89f4de557cbdf34169f931ca624fae618862f550411f20"
+  },
+  "hashes": {
+    "decoded_frames_sha256": "e6314810fc79291edd74ee4f6249f5d70ae8ef1d9398ed3de6d40d4e87dd5a5f",
+    "output_file_sha256": "363e93c11fc83bb16a89f4de557cbdf34169f931ca624fae618862f550411f20",
+    "raster_frames_sha256": "7558648dffecccffbe5bce67b801e9d1564951cbe08e0182ba5cea681096f685"
+  },
+  "determinism": {
+    "backend": "CPU",
+    "conditions": "compare engine.version/git_hash, engine.os/arch, toolchain.ffmpeg and backend before treating a hash difference as a defect",
+    "levels": {
+      "decoded_frames": "expected identical only when encoded bytes are identical (ProRes is lossy; decode is deterministic)",
+      "encoded_file_bytes": "identical only for the same ffmpeg build and arguments (see toolchain.ffmpeg); different ffmpeg builds can produce different bytes from identical frames",
+      "raster_frames": "expected identical (raster_frames_sha256) for the same engine build on the software backend; matches across machines in the repo's golden test",
+      "scene_and_settings": "reproducible: same manifest, params and seed resolve to the same settings (manifest/render hashes)"
+    },
+    "seed": 0
+  },
+  "verification": {
+    "expectations": {
+      "alpha_capable": true,
+      "codec": "prores",
+      "container": "mov",
+      "fps": 60,
+      "frame_count": 300,
+      "height": 1080,
+      "profile": "4444",
+      "width": 1920
+    },
+    "media": {
+      "checks": [
+        {
+          "expected": "mov",
+          "id": "container",
+          "observed": "mov,mp4,m4a,3gp,3g2,mj2",
+          "status": "pass"
+        },
+        {
+          "expected": "prores",
+          "id": "codec",
+          "observed": "prores",
+          "status": "pass"
+        },
+        {
+          "expected": "4444",
+          "id": "profile",
+          "observed": "4444",
+          "status": "pass"
+        },
+        {
+          "expected": {
+            "height": 1080,
+            "width": 1920
+          },
+          "id": "resolution",
+          "observed": {
+            "height": 1080,
+            "width": 1920
+          },
+          "status": "pass"
+        },
+        {
+          "expected": "60/1",
+          "id": "frame_rate",
+          "note": "exact rational comparison",
+          "observed": "60/1",
+          "status": "pass"
+        },
+        {
+          "expected": 300,
+          "id": "frame_count",
+          "observed": 300,
+          "status": "pass"
+        },
+        {
+          "expected": 5.0,
+          "id": "duration_seconds",
+          "note": "tolerance: half a frame period",
+          "observed": 5.0,
+          "status": "pass"
+        },
+        {
+          "expected": true,
+          "id": "alpha_capable",
+          "note": "pix_fmt=yuva444p12le",
+          "observed": true,
+          "status": "pass"
+        },
+        {
+          "id": "transparency",
+          "note": "no expectation; observation reported only",
+          "observed": {
+            "frames_decoded": 8,
+            "frames_with_transparency": 8,
+            "fully_transparent_pixel_fraction_max": 1.0,
+            "min_alpha": 0
+          },
+          "status": "skipped"
+        }
+      ],
+      "limits": [
+        "frame count is the demuxed packet count (exact for intra-only codecs like ProRes)",
+        "frame rate compared as exact rationals; duration compared within half a frame period",
+        "transparency measured on decoded 8-bit RGBA; alpha below 8-bit resolution is not distinguished",
+        "does not judge visual quality; see `vcr inspect` for motion/bounds diagnostics",
+        "transparency sampled 8 of 300 frames; unsampled frames not examined"
+      ],
+      "passed": true,
+      "probe": {
+        "advertised_nb_frames": 300,
+        "alpha_capable_pix_fmt": true,
+        "avg_frame_rate": "60/1",
+        "codec": "prores",
+        "color_primaries": "bt709",
+        "color_range": null,
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "container": "mov,mp4,m4a,3gp,3g2,mj2",
+        "format_duration_seconds": 5.0,
+        "height": 1080,
+        "packet_count": 300,
+        "pix_fmt": "yuva444p12le",
+        "profile": "4444",
+        "r_frame_rate": "60/1",
+        "stream_duration_seconds": 5.0,
+        "width": 1920
+      },
+      "transparency": {
+        "first_frame_min_alpha": 0,
+        "frames_decoded": 8,
+        "frames_with_transparency": 8,
+        "fully_transparent_pixel_fraction_max": 1.0,
+        "last_frame_min_alpha": 0,
+        "min_alpha": 0,
+        "mode": "sampled 8 of 300 frames",
+        "transparent_pixel_fraction_max": 1.0
+      }
+    },
+    "note": "produced at render time on the unpublished file; run `vcr verify` for a fresh, full-frame check"
+  },
+  "sidecars": {
+    "metadata": "renders/lower_third/lt_v1_baseline.mov.metadata.json"
+  }
+}

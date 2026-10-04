@@ -1,0 +1,149 @@
+{
+  "manifest_hash": "c959173b0169b830",
+  "resolved_manifest_hash": "fc421553affc0d88",
+  "vcr_version": "0.1.2",
+  "backend": "CPU",
+  "backend_reason": "forced software backend",
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "fps": 60,
+  "frame_count": 300,
+  "start_frame": 0,
+  "end_frame": 299,
+  "resolved_params": {
+    "accent_color": {
+      "r": 0.96,
+      "g": 0.96,
+      "b": 0.96,
+      "a": 1.0
+    },
+    "enter_end": 30.0,
+    "exit_frames": 30.0,
+    "exit_start": 240.0,
+    "panel_color": {
+      "r": 0.05,
+      "g": 0.05,
+      "b": 0.07,
+      "a": 0.8
+    },
+    "slide_distance": 80.0
+  },
+  "overrides": {},
+  "agent_context": {
+    "layers_rendered": [
+      {
+        "id": "panel",
+        "layer_type": "unknown",
+        "final_position": [
+          0.0,
+          0.0
+        ],
+        "final_opacity": 0.0,
+        "final_scale": [
+          1.0,
+          1.0
+        ],
+        "final_rotation_degrees": 0.0,
+        "was_visible": false,
+        "expression_values": {
+          "opacity": 0.0,
+          "rotation_degrees": 0.0,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      {
+        "id": "accent_stripe",
+        "layer_type": "unknown",
+        "final_position": [
+          0.0,
+          0.0
+        ],
+        "final_opacity": 0.0,
+        "final_scale": [
+          1.0,
+          1.0
+        ],
+        "final_rotation_degrees": 0.0,
+        "was_visible": false,
+        "expression_values": {
+          "opacity": 0.0,
+          "rotation_degrees": 0.0,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      {
+        "id": "name_text",
+        "layer_type": "unknown",
+        "final_position": [
+          0.0,
+          0.0
+        ],
+        "final_opacity": 0.0,
+        "final_scale": [
+          1.0,
+          1.0
+        ],
+        "final_rotation_degrees": 0.0,
+        "was_visible": false,
+        "expression_values": {
+          "opacity": 0.0,
+          "rotation_degrees": 0.0,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      {
+        "id": "title_text",
+        "layer_type": "unknown",
+        "final_position": [
+          0.0,
+          0.0
+        ],
+        "final_opacity": 0.0,
+        "final_scale": [
+          1.0,
+          1.0
+        ],
+        "final_rotation_degrees": 0.0,
+        "was_visible": false,
+        "expression_values": {
+          "opacity": 0.0,
+          "rotation_degrees": 0.0,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "x": 0.0,
+          "y": 0.0
+        }
+      }
+    ],
+    "manifest_hash": "fc421553affc0d88",
+    "resolved_params": {
+      "accent_color": {
+        "r": 0.96,
+        "g": 0.96,
+        "b": 0.96,
+        "a": 1.0
+      },
+      "enter_end": 30.0,
+      "exit_frames": 30.0,
+      "exit_start": 240.0,
+      "panel_color": {
+        "r": 0.05,
+        "g": 0.05,
+        "b": 0.07,
+        "a": 0.8
+      },
+      "slide_distance": 80.0
+    }
+  }
+}

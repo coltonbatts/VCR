@@ -1,0 +1,81 @@
+{
+  "evidence_kind": "deterministic_contract_check",
+  "claim_scope": "contract and tooling behave as specified; says nothing about agent autonomy",
+  "engine": {
+    "name": "vcr",
+    "version": "0.1.2",
+    "git_hash": "707bc72",
+    "build_profile": "release",
+    "os": "linux",
+    "arch": "x86_64",
+    "contract": "vcr.agent/1",
+    "executable": "/home/user/VCR/target/release/vcr"
+  },
+  "all_passed": true,
+  "steps": [
+    {
+      "name": "build release engine",
+      "passed": true,
+      "seconds": 0.3,
+      "command": "cargo build --release",
+      "tail": [
+        "Finished `release` profile [optimized] target(s) in 0.25s"
+      ]
+    },
+    {
+      "name": "library unit tests (contract, schema table, inspect, capabilities)",
+      "passed": true,
+      "seconds": 3.5,
+      "command": "cargo test --lib",
+      "tail": [
+        "   Compiling vcr v0.1.2 (/home/user/VCR)",
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.33s",
+        "     Running unittests src/lib.rs (target/debug/deps/vcr-bab29928c880f0d9)"
+      ]
+    },
+    {
+      "name": "CLI contract tests (parsed JSON structure and meaning)",
+      "passed": true,
+      "seconds": 8.2,
+      "command": "cargo test --test agent_contract_cli",
+      "tail": [
+        "   Compiling vcr v0.1.2 (/home/user/VCR)",
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.56s",
+        "     Running tests/agent_contract_cli.rs (target/debug/deps/agent_contract_cli-eff355fb6d1966e6)"
+      ]
+    },
+    {
+      "name": "existing CLI/determinism regressions",
+      "passed": true,
+      "seconds": 8.2,
+      "command": "cargo test --test cli_contract --test determinism --test params_reliability --test agent_error_reporting",
+      "tail": [
+        "     Running tests/cli_contract.rs (target/debug/deps/cli_contract-94887e48a47c0e7c)",
+        "     Running tests/determinism.rs (target/debug/deps/determinism-a0914fc5b2a6f039)",
+        "     Running tests/params_reliability.rs (target/debug/deps/params_reliability-6b08eb15c2696564)"
+      ]
+    },
+    {
+      "name": "MCP adapter tests (selection, timeout cleanup, parity, workflow)",
+      "passed": true,
+      "seconds": 4.7,
+      "command": "/usr/bin/python3 -m unittest discover -s scripts/vcr-mcp-server/tests",
+      "tail": [
+        "Ran 13 tests in 4.051s",
+        "",
+        "OK"
+      ]
+    },
+    {
+      "name": "scripted reference solutions + negative controls (gates reject wrong work)",
+      "passed": true,
+      "seconds": 135.2,
+      "command": "/usr/bin/python3 scripts/agent_bench/reference_run.py",
+      "tail": [
+        "",
+        "19 scored: 19 as expected, 0 NOT as expected",
+        "evidence_kind=scripted_reference: this does not measure agent autonomy"
+      ]
+    }
+  ]
+}
