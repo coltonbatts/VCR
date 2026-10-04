@@ -4,11 +4,11 @@ VCR is built on the philosophy that **code is the source, but the image is the t
 
 ## Current tooling (preferred)
 
-The hierarchy below is implemented by the engine; use these instead of ad-hoc ffmpeg/python:
+The hierarchy below is implemented by the engine now; use these instead of ad-hoc ffmpeg/python:
 
-- `vcr inspect scene.vcr --json -o renders/scene_inspect`: motion-aware sampled frames and a labelled **contact sheet** over an alpha checkerboard, with exact per-layer bounds and clipping/timing diagnostics. This satisfies the contact-sheet proof-of-work rule for manifest changes.
+- `vcr inspect scene.vcr --json -o renders/scene_inspect`: motion-aware sampled frames, a labelled **contact sheet** over an alpha checkerboard, exact per-layer pixel bounds, and clipping/timing diagnostics. This satisfies the contact-sheet proof-of-work rule for manifest changes.
 - `vcr verify out.mov --manifest scene.vcr --expect-transparency required --json`: encoded-media check (resolution, exact frame rate, frame count, codec/profile, alpha capability, decoded transparency, staleness).
-- Mechanical results are exact or labelled approximate; whether a design is *good* remains a judgment made by looking at the contact sheet.
+- Mechanical results are exact or labelled approximate; whether a design is *good* remains a judgment made by looking at the contact sheet. See `docs/AGENT_QUICKSTART.md`.
 
 ## The Verification Hierarchy
 
