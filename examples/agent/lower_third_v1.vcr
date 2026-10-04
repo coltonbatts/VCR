@@ -1,0 +1,102 @@
+# lower_third v1 — reusable alpha lower third (agent proof scene).
+# Authored from docs/agent-first/proof/lower_third_request.normalized.yaml (vcr prompt gate: status ok).
+#
+# CREATIVE STATUS: copy ("SAMPLE NAME" / "SAMPLE TITLE") and the neutral palette are FIXTURE
+# placeholders for engine proof. They are not approved brand identity.
+#
+# Timeline @ 60 fps, 300 frames (5.0 s):
+#   frames   0..30   entrance  (slide + fade in)
+#   frames  30..240  hold
+#   frames 240..270  exit      (slide + fade out)
+#   frames 270..299  empty     (transparent)
+# NOTE: `t` in expressions is a FRAME index; layer start_time/end_time are seconds.
+version: 1
+environment:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  duration: 5.0
+  encoding:
+    prores_profile: prores4444
+
+params:
+  accent_color:
+    type: color
+    default: { r: 0.96, g: 0.96, b: 0.96, a: 1.0 }
+    description: "Accent stripe colour (placeholder neutral)"
+  panel_color:
+    type: color
+    default: { r: 0.05, g: 0.05, b: 0.07, a: 0.80 }
+    description: "Panel colour including its alpha (placeholder neutral)"
+  slide_distance:
+    type: float
+    default: 80.0
+    min: 0.0
+    max: 400.0
+    description: "Horizontal slide distance in pixels for entrance and exit"
+  enter_end:
+    type: float
+    default: 30.0
+    min: 1.0
+    max: 120.0
+    description: "Frame at which the entrance finishes"
+  exit_start:
+    type: float
+    default: 240.0
+    min: 60.0
+    max: 290.0
+    description: "Frame at which the exit begins"
+  exit_frames:
+    type: float
+    default: 30.0
+    min: 1.0
+    max: 120.0
+    description: "Duration of the exit in frames"
+
+groups:
+  - id: lt
+    # Slide in from the left, slide out to the left; fade with both.
+    pos_x: "-slide_distance * (1.0 - easeinout(clamp(t / enter_end, 0.0, 1.0))) - slide_distance * easeinout(clamp((t - exit_start) / exit_frames, 0.0, 1.0))"
+    opacity: "clamp(t / enter_end, 0.0, 1.0) * (1.0 - clamp((t - exit_start) / exit_frames, 0.0, 1.0))"
+
+layers:
+  - id: panel
+    group: lt
+    z_index: 1
+    procedural:
+      kind: rounded_rect
+      # Procedural geometry is NORMALIZED (0..1 of canvas width/height; corner_radius of width).
+      # Panel spans px x 96..936, y 820..986 on a 1920x1080 canvas.
+      center: { x: 0.26875, y: 0.836111 }
+      size: { x: 0.4375, y: 0.153704 }
+      corner_radius: 0.003125
+      color: "${panel_color}"
+
+  - id: accent_stripe
+    group: lt
+    z_index: 2
+    procedural:
+      kind: rounded_rect
+      center: { x: 0.053125, y: 0.836111 }   # 12px stripe on the panel's left edge
+      size: { x: 0.00625, y: 0.153704 }
+      corner_radius: 0.0
+      color: "${accent_color}"
+
+  - id: name_text
+    group: lt
+    z_index: 3
+    position: { x: 132, y: 834 }
+    text:
+      content: "SAMPLE NAME"
+      font_family: "GeistPixel-Line"
+      font_size: 64
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+
+  - id: title_text
+    group: lt
+    z_index: 3
+    position: { x: 132, y: 920 }
+    text:
+      content: "SAMPLE TITLE"
+      font_family: "GeistPixel-Line"
+      font_size: 36
+      color: { r: 0.85, g: 0.85, b: 0.88, a: 1.0 }

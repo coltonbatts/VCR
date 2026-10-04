@@ -1,0 +1,22 @@
+# Scripted REFERENCE solution for T05 (square 720x720).
+version: 1
+environment:
+  resolution: { width: 720, height: 720 }
+  fps: 30
+  duration: 3.0
+layers:
+  - id: backdrop
+    z_index: 0
+    procedural: { kind: solid_color, color: { r: 0.06, g: 0.09, b: 0.16, a: 1.0 } }
+  - id: headline_1
+    z_index: 2
+    position: { x: 60, y: 200 }
+    text: { content: "SUMMER", font_family: "GeistPixel-Line", font_size: 96, color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 } }
+  - id: headline_2
+    z_index: 2
+    position: { x: 60, y: 310 }
+    text: { content: "LAUNCH", font_family: "GeistPixel-Line", font_size: 96, color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 } }
+  - id: subline
+    z_index: 2
+    position: { x: 62, y: 460 }
+    text: { content: "Doors open at nine", font_family: "GeistPixel-Line", font_size: 44, color: { r: 0.8, g: 0.85, b: 0.95, a: 1.0 } }

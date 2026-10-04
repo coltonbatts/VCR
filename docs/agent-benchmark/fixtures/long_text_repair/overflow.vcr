@@ -1,0 +1,20 @@
+# Broken on purpose: the headline is wider than the canvas. Repair WITHOUT changing the words.
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 30
+  duration: 3.0
+layers:
+  - id: backdrop
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.10, g: 0.10, b: 0.12, a: 1.0 }
+  - id: headline
+    z_index: 2
+    position: { x: 80, y: 300 }
+    text:
+      content: "QUARTERLY RESULTS EXCEEDED EVERY FORECAST"
+      font_family: "GeistPixel-Line"
+      font_size: 72
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }

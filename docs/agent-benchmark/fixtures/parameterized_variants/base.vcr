@@ -1,0 +1,39 @@
+# Parameterized base for the variants task. Only declared params may differ between variants.
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 30
+  duration: 2.0
+params:
+  accent:
+    type: color
+    default: { r: 0.95, g: 0.95, b: 0.95, a: 1.0 }
+    description: "Accent bar colour"
+  bar_width:
+    type: float
+    default: 0.30
+    min: 0.1
+    max: 0.8
+    description: "Accent bar width as a fraction of the canvas width"
+layers:
+  - id: backdrop
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.05, g: 0.05, b: 0.08, a: 1.0 }
+  - id: bar
+    z_index: 1
+    procedural:
+      kind: rounded_rect
+      center: { x: 0.2, y: 0.8 }
+      size: { x: 0.3, y: 0.02 }
+      corner_radius: 0.0
+      color: "${accent}"
+  - id: label
+    z_index: 2
+    position: { x: 70, y: 540 }
+    text:
+      content: "VARIANT"
+      font_family: "GeistPixel-Line"
+      font_size: 56
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
