@@ -26,7 +26,7 @@ text. This document covers what exists today; operations not listed here keep th
 ```jsonc
 {
   "contract": "vcr.agent/1",
-  "operation": "check",          // check | lint | dump | doctor | prompt | explain
+  "operation": "check",          // check | lint | dump | doctor | prompt | explain | capabilities | inspect
   "ok": true,                    // status == "ok"
   "status": "ok",                // ok | blocked | failed | error
   "engine": {"version": "0.1.2", "git_hash": "…", "build_profile": "release", "os": "linux", "arch": "x86_64", "executable": "/…/vcr", "contract": "vcr.agent/1"},
@@ -71,7 +71,17 @@ Existing coded errors (e.g. `invalid_aspect_preset`) keep their code verbatim.
 | `vcr dump M --frame N --json` | Evaluated layer state at an exact frame; `time_rational` = `frame/fps`. |
 | `vcr doctor --json` | Runtime probes: ffmpeg, ffprobe, fonts, GPU. Missing dependency → `status: failed`, exit 4. |
 | `vcr explain M --json [--strict]` (alias `vcr preflight`) | **Backend preflight.** `result.backend_preflight`: `requested_backend`, `resolved_backend` (null = cannot run here), `gpu_available`, `ready`, `incompatibilities` (layers and the manifest features `post`/`ascii_post` the software backend cannot honor), `runtime` (ffmpeg, ffprobe, fonts, GPU probes), `checks` (diagnostics: `backend.software_unsupported_layer`, `backend.software_ignores_feature`, `backend.gpu_unavailable`, `runtime.*_missing`, `text.font_family_fallback`) and the legacy `blockers`. Describes by default (exit 0); `--strict` makes `ready: false` a `failed` result (exit 3). Legacy top-level keys are preserved. |
+| `vcr capabilities --json [--schema]` | **Discovery from the installed engine.** Engine identity, contract and manifest versions, compiled features, runtime probes, supported layer kinds with backend requirements (`compiled_backends` vs `usable_here`: compiled support is not the same as usable on this machine), procedural kinds, post shaders, encoding profiles, fonts, expression functions, and the **time units** (expressions/keyframes use frames; layer `start_time`/`end_time`/`time_offset` use seconds; `start_time` does not shift keyframes). `--schema` adds the manifest JSON Schema generated from the engine's own types. Lists are derived from the engine's definitions, with tests that fail on drift. |
+| `vcr inspect M --json [-o DIR] [--samples N] [--set …]` | **Temporal evidence.** Samples the evaluated layer-state timeline (first/last frame plus start/mid/end of every motion or still run, topped up with evenly spaced frames) and writes `sample_<frame>.png`, `contact_sheet.png` (alpha checkerboard, labelled with frame and time) and `inspection.json` under `DIR` (default `renders/<stem>_inspect`). Each sample has the exact `frame`, `time_seconds`, `time_rational` (`frame/fps`), `phase` (`entrance|hold|exit|ending|…`), evaluated layer state, exact per-layer pixel bounds (each layer rendered alone) and whole-frame pixel stats. |
 | `vcr prompt --json [--strict]` | Prompt gate. `result.defaults_applied` lists **specification** defaults only (resolution, fps, seed, output). `result.creative_inputs` reports whether text, palette, typeface and assets were specified; creative content is never defaulted. Unresolved items → `status: blocked` (exit 0, or 6 with `--strict`). |
+
+### Inspect diagnostics
+
+`exact` unless marked: `layout.touches_canvas_edge` (content within 0.5% / ≥4 px of an edge: warning at rest, info during motion), `layout.outside_safe_area` (info, hold phase only), `layer.renders_nothing`, `timing.motion_on_last_frame`, `timing.leading_empty` / `ends_empty` / `nothing_visible`, `timing.hold_short` (approximate), `text.small` (approximate). Inspection reports mechanical facts; whether the design is readable, balanced or on-brief is a judgment for whoever looks at `contact_sheet.png`. Revise by editing the layer with the reported stable `id`, or by changing declared params with `--set`, then inspect again.
+
+## Determinism scope
+
+Scene settings (`manifest_hash`) are always reproducible. Software-backend raster frames are expected identical for the same engine build. Encoded file bytes also depend on the ffmpeg build. GPU output is not bit-identical across hardware or drivers.
 
 `render`, `verify` and `params` keep their existing `--json` output. Their *errors* now use
 the envelope when `--json` is passed.

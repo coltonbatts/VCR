@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Discovery**: `vcr capabilities [--schema] --json` reports what the installed engine can do and what is usable on this machine (layers with backend requirements, fonts, encoding profiles, expression functions, explicit time units). The manifest JSON Schema is generated from the engine's types with `schemars` (new dependency); the expression-function table has a drift test.
+- **Inspection**: `vcr inspect` samples the timeline (entrance, hold, exit, ending), writes a labelled contact sheet over an alpha checkerboard, and reports exact per-layer bounds plus clipping and timing diagnostics.
+
 - **Preflight** (`vcr explain --json`, alias `vcr preflight`): resolved backend, ffmpeg/ffprobe/font/GPU probes, layers and manifest features the software backend cannot honor, font-fallback detection, a single `ready` flag, `--strict`. Output is in the `vcr.agent/1` envelope; legacy top-level keys are preserved.
 - **Behavior change:** the software backend now refuses manifests with `post:` / enabled `ascii_post:` (`UNSUPPORTED_SOFTWARE_FEATURES`) instead of silently ignoring them, including when `auto` falls back to software. `vcr doctor` also checks `ffprobe`.
 - SKILL.md no longer claims shader layers fall back to transparent or that `post:` is skipped on software.
