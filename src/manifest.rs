@@ -902,6 +902,7 @@ fn validate_manifest(
 
     let manifest_dir = manifest_path
         .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     let mut seen_ids = BTreeSet::new();
     let known_groups = manifest

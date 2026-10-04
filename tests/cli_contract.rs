@@ -685,3 +685,24 @@ fn ascii_capture_invalid_aspect_emits_typed_error_envelope() {
         Value::String("INVALID_ASPECT_PRESET".to_owned())
     );
 }
+
+#[test]
+fn manifest_with_assets_validates_when_given_by_bare_filename() {
+    // Regression: `Path::parent()` of "scene.vcr" is "", and canonicalizing "" failed, so any
+    // manifest with an image/video/sequence asset broke when run from its own directory.
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir_all(dir.path().join("assets")).expect("assets dir");
+    image::RgbaImage::from_pixel(8, 8, image::Rgba([255, 0, 0, 255]))
+        .save(dir.path().join("assets/dot.png"))
+        .expect("png should write");
+    write_manifest(
+        &dir.path().join("scene.vcr"),
+        "version: 1\nenvironment:\n  resolution: { width: 64, height: 36 }\n  fps: 10\n  duration: { frames: 2 }\nlayers:\n  - id: pic\n    image:\n      path: assets/dot.png\n",
+    );
+    let output = run_vcr(dir.path(), &["check", "scene.vcr"]);
+    assert!(
+        output.status.success(),
+        "check by bare filename should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
