@@ -25,6 +25,7 @@ pub mod manifest;
 pub mod packs;
 pub mod play;
 pub mod post_process;
+pub mod preflight;
 pub mod prompt_gate;
 pub mod renderer;
 pub mod sandbox;

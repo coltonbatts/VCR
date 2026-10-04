@@ -115,50 +115,11 @@ pub(super) fn lint_json(manifest_path: &Path, set: &[String]) -> Result<()> {
 
 // ───────────────────────────── doctor ─────────────────────────────
 
-fn probe_tool(name: &str) -> Value {
-    match std::process::Command::new(name).arg("-version").output() {
-        Ok(out) if out.status.success() => json!({
-            "available": true,
-            "version": String::from_utf8_lossy(&out.stdout).lines().next().map(str::trim),
-        }),
-        Ok(out) => {
-            json!({"available": false, "error": format!("`{name} -version` exited with {}", out.status)})
-        }
-        Err(error) => json!({"available": false, "error": error.to_string()}),
-    }
-}
-
 pub(super) fn doctor_json() -> Result<()> {
-    let ffmpeg = probe_tool("ffmpeg");
-    let ffprobe = probe_tool("ffprobe");
-    let fonts = match verify_geist_pixel_bundle(Path::new(env!("CARGO_MANIFEST_DIR"))) {
-        Ok(()) => json!({"bundle_ok": true}),
-        Err(error) => json!({"bundle_ok": false, "error": error.to_string()}),
-    };
-    let probe_env = Environment {
-        resolution: Resolution {
-            width: 16,
-            height: 16,
-        },
-        fps: 24,
-        duration: ManifestDuration::Frames { frames: 1 },
-        color_space: Default::default(),
-        encoding: Default::default(),
-    };
-    let gpu = match pollster::block_on(Renderer::new_with_scene(
-        &probe_env,
-        &[],
-        RenderSceneData::default(),
-    )) {
-        Ok(renderer) => {
-            json!({"available": renderer.is_gpu_backend(), "detail": renderer.backend_reason()})
-        }
-        Err(error) => json!({"available": false, "detail": error.to_string()}),
-    };
-
+    let runtime = vcr::preflight::probe_runtime();
     let mut diagnostics = Vec::new();
     let mut missing = false;
-    if ffmpeg["available"] != true {
+    if !runtime.ffmpeg.available {
         missing = true;
         diagnostics.push(
             Diagnostic::new(
@@ -170,7 +131,7 @@ pub(super) fn doctor_json() -> Result<()> {
             .recover("Install ffmpeg and ensure it is on PATH."),
         );
     }
-    if ffprobe["available"] != true {
+    if !runtime.ffprobe.available {
         missing = true;
         diagnostics.push(
             Diagnostic::new(
@@ -182,7 +143,7 @@ pub(super) fn doctor_json() -> Result<()> {
             .recover("Install ffmpeg (ships ffprobe) and ensure it is on PATH."),
         );
     }
-    if fonts["bundle_ok"] != true {
+    if !runtime.fonts.bundle_ok {
         missing = true;
         diagnostics.push(
             Diagnostic::new(
@@ -191,11 +152,11 @@ pub(super) fn doctor_json() -> Result<()> {
                 "dependency.font_missing",
                 "bundled Geist Pixel fonts missing or modified",
             )
-            .observed(fonts["error"].clone())
+            .observed(runtime.fonts.error.clone().unwrap_or_default())
             .recover("Restore assets/fonts/geist_pixel from the repository."),
         );
     }
-    if gpu["available"] != true {
+    if !runtime.gpu.available {
         diagnostics.push(
             Diagnostic::new(
                 Severity::Info,
@@ -203,18 +164,12 @@ pub(super) fn doctor_json() -> Result<()> {
                 "backend.gpu_unavailable",
                 "no usable GPU adapter; only the software backend can run here",
             )
-            .observed(gpu["detail"].clone()),
+            .observed(runtime.gpu.detail.clone()),
         );
     }
     let ready = !missing;
     let mut envelope = Envelope::new("doctor", if ready { Status::Ok } else { Status::Failed })
-        .with_result(json!({
-            "ready": ready,
-            "runtime": {
-                "ffmpeg": ffmpeg, "ffprobe": ffprobe, "fonts": fonts, "gpu": gpu,
-                "software_backend_available": true,
-            },
-        }))
+        .with_result(json!({ "ready": ready, "runtime": runtime }))
         .with_diagnostics(diagnostics);
     if missing {
         envelope = envelope.with_exit(EXIT_MISSING_DEPENDENCY);

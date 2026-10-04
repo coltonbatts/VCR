@@ -26,7 +26,7 @@ text. This document covers what exists today; operations not listed here keep th
 ```jsonc
 {
   "contract": "vcr.agent/1",
-  "operation": "check",          // check | lint | dump | doctor | prompt
+  "operation": "check",          // check | lint | dump | doctor | prompt | explain
   "ok": true,                    // status == "ok"
   "status": "ok",                // ok | blocked | failed | error
   "engine": {"version": "0.1.2", "git_hash": "…", "build_profile": "release", "os": "linux", "arch": "x86_64", "executable": "/…/vcr", "contract": "vcr.agent/1"},
@@ -55,6 +55,8 @@ text. This document covers what exists today; operations not listed here keep th
 | `asset.missing` | asset | referenced file absent (location: layer + field; `observed` = authored path) |
 | `dependency.ffmpeg_missing` / `ffprobe_missing` / `font_missing` / `missing` | dependency | tool or bundled asset missing |
 | `backend.unavailable` | backend | GPU requested, none present |
+| `UNSUPPORTED_SOFTWARE_LAYER_TYPES` | backend | a layer needs the GPU (`expected` = software-supported kinds, `observed` = layers) |
+| `UNSUPPORTED_SOFTWARE_FEATURES` | backend | `post:` / enabled `ascii_post:` would be silently ignored on software |
 | `encoder.failed` | encoder | ffmpeg failure |
 | `io.read_failed` / `io.write_failed` | io | filesystem |
 
@@ -68,12 +70,16 @@ Existing coded errors (e.g. `invalid_aspect_preset`) keep their code verbatim.
 | `vcr lint M --json` | Findings are `diagnostics` (`lint.unreachable_layer`, `lint.alpha_blocked`), `status: failed`, exit 3. |
 | `vcr dump M --frame N --json` | Evaluated layer state at an exact frame; `time_rational` = `frame/fps`. |
 | `vcr doctor --json` | Runtime probes: ffmpeg, ffprobe, fonts, GPU. Missing dependency → `status: failed`, exit 4. |
+| `vcr explain M --json [--strict]` (alias `vcr preflight`) | **Backend preflight.** `result.backend_preflight`: `requested_backend`, `resolved_backend` (null = cannot run here), `gpu_available`, `ready`, `incompatibilities` (layers and the manifest features `post`/`ascii_post` the software backend cannot honor), `runtime` (ffmpeg, ffprobe, fonts, GPU probes), `checks` (diagnostics: `backend.software_unsupported_layer`, `backend.software_ignores_feature`, `backend.gpu_unavailable`, `runtime.*_missing`, `text.font_family_fallback`) and the legacy `blockers`. Describes by default (exit 0); `--strict` makes `ready: false` a `failed` result (exit 3). Legacy top-level keys are preserved. |
 | `vcr prompt --json [--strict]` | Prompt gate. `result.defaults_applied` lists **specification** defaults only (resolution, fps, seed, output). `result.creative_inputs` reports whether text, palette, typeface and assets were specified; creative content is never defaulted. Unresolved items → `status: blocked` (exit 0, or 6 with `--strict`). |
 
-`render`, `verify`, `explain` and `params` keep their existing `--json` output. Their *errors* now use
+`render`, `verify` and `params` keep their existing `--json` output. Their *errors* now use
 the envelope when `--json` is passed.
 
 ## Compatibility
+
+- **Software backend is now strict.** A manifest with `post:` effects or an enabled `ascii_post:` fails on the software backend with `UNSUPPORTED_SOFTWARE_FEATURES` (exit 2); it used to render with those silently ignored. This also applies when `auto` falls back to software for lack of a GPU. Unsupported *layers* were already rejected.
+- `vcr doctor` now also checks `ffprobe` (every build runs it).
 
 - Exit codes are unchanged except the new `6`, which only `prompt --strict` returns.
 - `VCR_AGENT_MODE=1` consumers keep their keys; the document also gains the envelope fields.

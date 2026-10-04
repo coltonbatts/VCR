@@ -3432,14 +3432,8 @@ fn unpremultiply_rgba_in_place(bytes: &mut [u8]) {
     }
 }
 fn render_text_to_pixmap(layer: &TextLayer) -> Result<Pixmap> {
-    let font_file: &'static str = match layer.text.font_family.to_lowercase().as_str() {
-        "geistpixel-line" | "line" => "GeistPixel-Line.ttf",
-        "geistpixel-square" | "square" => "GeistPixel-Square.ttf",
-        "geistpixel-grid" | "grid" => "GeistPixel-Grid.ttf",
-        "geistpixel-circle" | "circle" => "GeistPixel-Circle.ttf",
-        "geistpixel-triangle" | "triangle" => "GeistPixel-Triangle.ttf",
-        _ => "GeistPixel-Line.ttf",
-    };
+    let font_file: &'static str = crate::font_assets::resolve_font_family(&layer.text.font_family)
+        .unwrap_or("GeistPixel-Line.ttf");
 
     let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     verify_geist_pixel_bundle(manifest_root)?;

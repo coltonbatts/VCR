@@ -306,9 +306,17 @@ enum Commands {
         )]
         json: bool,
     },
-    #[command(about = "Show how expressions and layers resolve")]
+    #[command(
+        about = "Show how expressions and layers resolve; with --json also the backend preflight",
+        alias = "preflight"
+    )]
     Explain {
         manifest: PathBuf,
+        #[arg(
+            long = "strict",
+            help = "With --json: exit 3 when preflight reports blockers"
+        )]
+        strict: bool,
         #[arg(
             long = "set",
             value_name = "NAME=VALUE",
@@ -1178,9 +1186,10 @@ fn run_cli(cli: Cli) -> Result<()> {
         Commands::Params { manifest, json } => run_params(&manifest, json),
         Commands::Explain {
             manifest,
+            strict,
             set,
             json,
-        } => run_explain(&manifest, &set, json, cli.backend),
+        } => run_explain(&manifest, &set, json, strict, cli.backend),
         Commands::Preview {
             manifest,
             output,
@@ -2168,6 +2177,21 @@ fn run_doctor() -> Result<()> {
             println!("MISSING (required for 'build' and 'preview' video output)");
             all_ok = false;
             missing_dependencies.push("ffmpeg");
+        }
+    }
+
+    print!("- FFprobe: ");
+    match std::process::Command::new("ffprobe")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        Ok(status) if status.success() => println!("OK"),
+        _ => {
+            println!("MISSING (required to verify encoded output)");
+            all_ok = false;
+            missing_dependencies.push("ffprobe");
         }
     }
 
@@ -3350,10 +3374,17 @@ fn run_explain(
     manifest_path: &Path,
     set_values: &[String],
     json: bool,
+    strict: bool,
     requested_backend: BackendArg,
 ) -> Result<()> {
     let manifest = load_manifest_with_overrides(manifest_path, set_values)?;
     if json {
+        let report = vcr::preflight::run_preflight(
+            &manifest,
+            backend_label(requested_backend),
+            None,
+            vcr::preflight::probe_runtime(),
+        );
         let unsupported_software_layers = software_unsupported_layers(&manifest.layers)
             .into_iter()
             .map(|layer| ExplainUnsupportedLayerJson {
@@ -3361,13 +3392,13 @@ fn run_explain(
                 kind: layer.kind.to_owned(),
             })
             .collect::<Vec<_>>();
-        let software_compatible = unsupported_software_layers.is_empty();
+        let software_compatible = report.incompatibilities.is_empty();
         let recommended_backend = if software_compatible {
             "software"
         } else {
             "gpu"
         };
-        let blockers = if software_compatible {
+        let mut blockers = if unsupported_software_layers.is_empty() {
             Vec::new()
         } else {
             vec![format!(
@@ -3375,6 +3406,11 @@ fn run_explain(
                 unsupported_software_layers.len()
             )]
         };
+        for check in report.checks.iter().filter(|c| c.is_blocking()) {
+            if !check.code.starts_with("backend.software_unsupported_layer") {
+                blockers.push(check.message.clone());
+            }
+        }
         let payload = ExplainJsonOutput {
             manifest: manifest_path.display().to_string(),
             manifest_hash: manifest.manifest_hash.clone(),
@@ -3393,13 +3429,28 @@ fn run_explain(
                 software_supported_layer_types: &SOFTWARE_SUPPORTED_LAYER_TYPES,
                 unsupported_software_layers,
                 blockers,
+                resolved_backend: report.plan.resolved,
+                gpu_available: report.plan.gpu_available,
+                ready: report.ready,
+                incompatibilities: report.incompatibilities.clone(),
+                runtime: report.runtime.clone(),
+                checks: report.checks.clone(),
             },
         };
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&payload).context("failed to encode explain json")?
-        );
-        return Ok(());
+        let status = if strict && !report.ready {
+            vcr::agent_contract::Status::Failed
+        } else {
+            vcr::agent_contract::Status::Ok
+        };
+        let envelope = vcr::agent_contract::Envelope::new("explain", status)
+            .with_result(&payload)
+            .with_diagnostics(report.checks.clone());
+        // Pre-contract top-level keys stay at the top level; `result` carries the same data.
+        println!("{}", envelope.to_json_line_with_legacy(&payload));
+        return match envelope.exit_code() {
+            0 => Ok(()),
+            code => Err(anyhow::Error::new(agent_cli::EarlyExit(code))),
+        };
     }
 
     println!("Explain {}", manifest_path.display());
@@ -3451,18 +3502,70 @@ fn run_explain(
     Ok(())
 }
 
+const UNSUPPORTED_SOFTWARE_FEATURES_CODE: &str = "UNSUPPORTED_SOFTWARE_FEATURES";
+
+/// The software renderer does not implement `post:` / `ascii_post`; it would silently drop them.
+/// Refuse instead, so a successful render always means the manifest was honored.
+fn ensure_software_honors_scene(scene: &RenderSceneData) -> Result<()> {
+    let mut features = Vec::new();
+    if !scene.post.is_empty() {
+        features.push("post");
+    }
+    if scene.ascii_post.as_ref().is_some_and(|post| post.enabled) {
+        features.push("ascii_post");
+    }
+    if features.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow::Error::new(
+        vcr::error_codes::CodedError::usage(
+            UNSUPPORTED_SOFTWARE_FEATURES_CODE,
+            format!(
+                "software mode does not implement manifest feature(s): {}; they would be silently ignored. re-run with `--backend gpu` or remove them",
+                features.join(", ")
+            ),
+        )
+        .with_details(serde_json::json!({
+            "backend": "software",
+            "unsupported_features": features,
+            "next_steps": [
+                "re-run with --backend gpu on a machine with a GPU adapter",
+                "remove the unsupported features after confirming with the requester"
+            ],
+        })),
+    ))
+}
+
 fn create_renderer(
     environment: &Environment,
     layers: &[vcr::schema::Layer],
     scene: RenderSceneData,
     backend: BackendArg,
 ) -> Result<Renderer> {
-    match backend {
-        BackendArg::Software => Renderer::new_software(environment, layers, scene),
+    let needs_check = !scene.post.is_empty() || scene.ascii_post.is_some();
+    let check_scene = needs_check.then(|| RenderSceneData {
+        post: scene.post.clone(),
+        ascii_post: scene.ascii_post.clone(),
+        ..RenderSceneData::default()
+    });
+    let renderer = match backend {
+        BackendArg::Software => {
+            if let Some(check) = &check_scene {
+                ensure_software_honors_scene(check)?;
+            }
+            Renderer::new_software(environment, layers, scene)?
+        }
         BackendArg::Gpu | BackendArg::Auto => {
-            pollster::block_on(Renderer::new_with_scene(environment, layers, scene))
+            pollster::block_on(Renderer::new_with_scene(environment, layers, scene))?
+        }
+    };
+    // `auto` without a GPU adapter falls back to software: apply the same refusal.
+    if !renderer.is_gpu_backend() {
+        if let Some(check) = &check_scene {
+            ensure_software_honors_scene(check)?;
         }
     }
+    Ok(renderer)
 }
 
 pub struct BuildResult {
@@ -4398,6 +4501,15 @@ struct ExplainBackendPreflightJson {
     software_supported_layer_types: &'static [&'static str],
     unsupported_software_layers: Vec<ExplainUnsupportedLayerJson>,
     blockers: Vec<String>,
+    /// What `requested_backend` resolves to on this machine (`null` = cannot run here).
+    resolved_backend: Option<&'static str>,
+    gpu_available: bool,
+    /// True when nothing prevents rendering this manifest with the requested backend here.
+    ready: bool,
+    /// Layers and manifest features (`post`, `ascii_post`) the software backend cannot honor.
+    incompatibilities: Vec<vcr::preflight::SoftwareIncompatibility>,
+    runtime: vcr::preflight::RuntimeProbe,
+    checks: Vec<vcr::agent_contract::Diagnostic>,
 }
 
 #[derive(Debug, Serialize)]

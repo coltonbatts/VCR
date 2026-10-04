@@ -434,7 +434,7 @@ struct ShaderUniforms {
 
 Uniform packing: uniforms map to `custom[0].x`, `custom[0].y`, `custom[0].z`, `custom[0].w`, `custom[1].x`, etc. in declaration order. Maximum 8 uniforms.
 
-**Falls back to transparent on software backend.**
+**Software backend: rejected.** A manifest containing `shader` (or `wgpu_shader`, `video`, `lottie`) layers cannot render on the software backend. `vcr render --backend software` fails with `UNSUPPORTED_SOFTWARE_LAYER_TYPES` (exit 2) and `vcr explain --json` reports it as a preflight blocker. The same applies to `post:` and enabled `ascii_post:` (`UNSUPPORTED_SOFTWARE_FEATURES`). Nothing is silently dropped or rendered transparent. Use `--backend gpu` on a machine with a GPU adapter, or remove the layer after confirming with the requester.
 
 ---
 
@@ -1215,8 +1215,8 @@ Before rendering, verify:
 7. **ScalarProperty expressions** use valid function names and reference defined params.
 8. **Modulator sources** in layer bindings must reference modulators defined at the top level.
 9. **Group parents** must reference defined group IDs. No cycles.
-10. **Post-processing** is GPU-only. Use `--backend gpu` or `auto`.
-11. **Shader layers** are GPU-only. Software backend renders them transparent.
+10. **Post-processing** is GPU-only. The software backend refuses it (`UNSUPPORTED_SOFTWARE_FEATURES`); use `--backend gpu`.
+11. **Shader / wgpu_shader / video / lottie layers** are GPU-only. The software backend refuses them (`UNSUPPORTED_SOFTWARE_LAYER_TYPES`).
 12. **Duration in frames** must not exceed 100,000.
 13. **Resolution** per dimension must not exceed 8192.
 
@@ -1234,11 +1234,15 @@ Any typo in a YAML key will cause a parse error. `colour` instead of `color` wil
 
 ### 3. Shader Layers are GPU-Only
 
-Custom shader layers render as transparent on the software backend. Always use `--backend gpu` or `auto` for shader content.
+Custom shader layers cannot render on the software backend; the render fails with a typed error instead of producing a transparent layer. Use `--backend gpu` (or `auto` on a machine with a GPU adapter). `vcr explain --json` tells you before you render.
 
 ### 4. Post-Processing is GPU-Only
 
-The `post:` pipeline requires the GPU backend. It will be skipped on software.
+The `post:` pipeline requires the GPU backend. The software backend refuses a manifest that has it (it would otherwise be ignored). `vcr explain --json` reports `backend.software_ignores_feature`.
+
+### 13. Unknown `font_family` Silently Falls Back
+
+Only the GeistPixel families are bundled. Any other name renders in `GeistPixel-Line`. `vcr explain --json` flags it as `text.font_family_fallback`; do not assume the requested typeface was used.
 
 ### 5. Image Paths Must Be Relative
 
