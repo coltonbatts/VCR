@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Verified delivery**: `vcr render`/`build` publish atomically (hidden partial file → conformance check → rename), remove stale sidecars first, and write `*.provenance.json` (engine build, ffmpeg, backend, inputs, raster/decoded/file hashes, determinism scope). `render --json`, `build --json` and `render-frame --json` emit the contract envelope; `render --json` keeps its legacy top-level keys.
+- **`vcr verify` now verifies** resolution, exact frame rate, frame count, duration, container, codec/profile, alpha capability and decoded-pixel transparency, and detects stale, modified and truncated output. **It exits 3 on mismatch** (it used to print only a hash). Legacy `--json` keys preserved.
+- Determinism docs split into scene / raster / decoded+encoded levels; the encoded level depends on the ffmpeg build.
+
 - **Discovery**: `vcr capabilities [--schema] --json` reports what the installed engine can do and what is usable on this machine (layers with backend requirements, fonts, encoding profiles, expression functions, explicit time units). The manifest JSON Schema is generated from the engine's types with `schemars` (new dependency); the expression-function table has a drift test.
 - **Inspection**: `vcr inspect` samples the timeline (entrance, hold, exit, ending), writes a labelled contact sheet over an alpha checkerboard, and reports exact per-layer bounds plus clipping and timing diagnostics.
 

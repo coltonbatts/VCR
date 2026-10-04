@@ -1,5 +1,17 @@
 # VCR Determinism Specification
 
+## 0. Scope levels (read first)
+
+"Deterministic" means different things at different layers; `*.provenance.json` records the conditions for each:
+
+| Level | Guarantee |
+|---|---|
+| Scene and settings (`manifest_hash`, `resolved_manifest_hash`) | Always reproducible |
+| Raster frames before encoding (`hashes.raster_frames_sha256`) | Software backend: expected identical for the same engine build (the golden frame hash matches on macOS and Linux). GPU: not guaranteed across hardware/drivers/OS |
+| Decoded frames (`hashes.decoded_frames_sha256`) / encoded file bytes (`hashes.output_file_sha256`) | Same ffmpeg build and arguments only. `tests/golden_manifest_stability.rs` pins an encoded-file hash from one ffmpeg build; on a different ffmpeg the raster hash still matches while the file hash does not (observed with ffmpeg 6.1.1 on Linux) |
+
+Compare `engine.*`, `toolchain.ffmpeg` and `backend` in provenance before treating a hash difference as a defect.
+
 ## 1. Contract
 
 **Deterministic run**: Same inputs → identical frame RGBA bytes.
@@ -42,7 +54,7 @@ Inputs:
 
 - No cross-platform float comparison in tests
 - Determinism tests use software backend only
-- Golden hashes are machine-specific; CI compares against CI baseline
+- Golden *frame* hashes are portable across machines for the software backend; golden *file* hashes are ffmpeg-build-specific; CI compares against CI baseline
 
 ## 6. Determinism Tests
 

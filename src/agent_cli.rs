@@ -6,12 +6,33 @@
 
 use super::*;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use serde_json::{json, Value};
 use vcr::agent_contract::{
     ArtifactRef, Basis, Diagnostic, Envelope, Location, Severity, Status, EXIT_BLOCKED,
     EXIT_MISSING_DEPENDENCY,
 };
 use vcr::inspect::{self, DiagnosticConfig};
+use vcr::media_verify::{self, CheckStatus, Expectations, TransparencyExpectation};
+use vcr::provenance;
+
+/// Set when a `--json` operation is running: incidental human lines move to stderr so stdout
+/// holds exactly one document.
+static JSON_MODE: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn set_json_mode(on: bool) {
+    JSON_MODE.store(on, Ordering::SeqCst);
+}
+
+/// Print a human status line: stdout normally, stderr in `--json` mode.
+pub(super) fn human_line(args: std::fmt::Arguments<'_>) {
+    if JSON_MODE.load(Ordering::SeqCst) {
+        eprintln!("{args}");
+    } else {
+        println!("{args}");
+    }
+}
 
 #[derive(Debug)]
 pub(super) struct EarlyExit(pub u8);
@@ -25,6 +46,14 @@ impl std::error::Error for EarlyExit {}
 
 pub(super) fn finish(envelope: Envelope) -> Result<()> {
     println!("{}", envelope.to_json_line());
+    match envelope.exit_code() {
+        0 => Ok(()),
+        code => Err(anyhow::Error::new(EarlyExit(code))),
+    }
+}
+
+fn finish_with_legacy(envelope: Envelope, legacy: &impl Serialize) -> Result<()> {
+    println!("{}", envelope.to_json_line_with_legacy(legacy));
     match envelope.exit_code() {
         0 => Ok(()),
         code => Err(anyhow::Error::new(EarlyExit(code))),
@@ -230,6 +259,354 @@ pub(super) fn capabilities(include_schema: bool, json_out: bool) -> Result<()> {
     );
     println!("Run `vcr capabilities --json [--schema]` for the full machine-readable contract.");
     Ok(())
+}
+
+// ───────────────────────────── verify ─────────────────────────────
+
+#[derive(Debug, Default)]
+pub(super) struct VerifyArgs {
+    pub manifest: Option<PathBuf>,
+    pub set: Vec<String>,
+    pub expect_width: Option<u32>,
+    pub expect_height: Option<u32>,
+    pub expect_fps: Option<u32>,
+    pub expect_frames: Option<u32>,
+    pub expect_container: Option<String>,
+    pub expect_codec: Option<String>,
+    pub expect_profile: Option<String>,
+    pub expect_alpha_capable: Option<bool>,
+    pub expect_transparency: Option<String>,
+    pub decode_frames: Option<String>,
+    pub require_provenance: bool,
+}
+
+#[derive(Serialize)]
+struct VerifyLegacy {
+    file_path: PathBuf,
+    hash: String,
+    tool_version: String,
+    backend: Option<String>,
+}
+
+fn read_provenance(output: &Path) -> Option<Value> {
+    let raw = fs::read(provenance::provenance_path_for(output)).ok()?;
+    serde_json::from_slice(&raw).ok()
+}
+
+pub(super) fn verify(output_file: &Path, args: &VerifyArgs, json_out: bool) -> Result<()> {
+    if !output_file.exists() {
+        bail!("file not found: {}", output_file.display());
+    }
+    let sha = vcr::agent_contract::sha256_file(output_file)
+        .with_context(|| format!("failed to read {}", output_file.display()))?;
+    let bytes = fs::metadata(output_file).map(|m| m.len()).unwrap_or(0);
+    let provenance_doc = read_provenance(output_file);
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    let mut expected = Expectations::default();
+    let mut sources: Vec<&str> = Vec::new();
+
+    // 1. Recorded at production time (lowest precedence).
+    if let Some(p) = &provenance_doc {
+        if let Some(rec) = p.get("verification").and_then(|v| v.get("expectations")) {
+            expected.width = rec.get("width").and_then(Value::as_u64).map(|v| v as u32);
+            expected.height = rec.get("height").and_then(Value::as_u64).map(|v| v as u32);
+            expected.fps = rec.get("fps").and_then(Value::as_u64).map(|v| v as u32);
+            expected.frame_count = rec
+                .get("frame_count")
+                .and_then(Value::as_u64)
+                .map(|v| v as u32);
+            expected.container = rec
+                .get("container")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            expected.codec = rec.get("codec").and_then(Value::as_str).map(str::to_owned);
+            expected.profile = rec
+                .get("profile")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            expected.alpha_capable = rec.get("alpha_capable").and_then(Value::as_bool);
+            sources.push("provenance");
+        }
+    }
+    // 2. Current manifest (stale detection + expectations).
+    let mut freshness = json!({"checked": false});
+    if let Some(manifest_path) = &args.manifest {
+        let manifest = load_manifest_with_overrides(manifest_path, &args.set)?;
+        let env = &manifest.environment;
+        expected.width = Some(env.resolution.width);
+        expected.height = Some(env.resolution.height);
+        expected.fps = Some(env.fps);
+        expected.frame_count = Some(env.total_frames());
+        expected.container.get_or_insert_with(|| "mov".to_owned());
+        expected.codec.get_or_insert_with(|| "prores".to_owned());
+        if provenance_doc.is_none() {
+            expected.profile = Some(env.encoding.prores_profile.to_ffmpeg_profile().to_owned());
+            expected.alpha_capable = Some(env.encoding.prores_profile.supports_alpha());
+        }
+        sources.push("manifest");
+        let recorded = provenance_doc.as_ref().and_then(|p| {
+            p.get("manifest")?
+                .get("resolved_manifest_hash")?
+                .as_str()
+                .map(str::to_owned)
+        });
+        let current = manifest.manifest_hash.clone();
+        let fresh = recorded.as_ref().map(|r| *r == current);
+        freshness = json!({"checked": true, "recorded_manifest_hash": recorded, "current_manifest_hash": current, "fresh": fresh});
+        if fresh == Some(false) {
+            diagnostics.push(
+                Diagnostic::new(
+                    Severity::Error,
+                    "verify",
+                    "verify.stale_artifact",
+                    "output was rendered from a different manifest/params than the current ones",
+                )
+                .expected(json!(current))
+                .observed(json!(recorded))
+                .recover("Re-render, then verify again. Do not deliver this file."),
+            );
+        }
+    }
+    // 3. Explicit flags (highest precedence).
+    macro_rules! flag {
+        ($field:ident, $arg:ident) => {
+            if let Some(v) = &args.$arg {
+                expected.$field = Some(v.clone());
+                if !sources.contains(&"flags") {
+                    sources.push("flags");
+                }
+            }
+        };
+    }
+    flag!(width, expect_width);
+    flag!(height, expect_height);
+    flag!(fps, expect_fps);
+    flag!(frame_count, expect_frames);
+    flag!(container, expect_container);
+    flag!(codec, expect_codec);
+    flag!(profile, expect_profile);
+    flag!(alpha_capable, expect_alpha_capable);
+    if let Some(t) = &args.expect_transparency {
+        expected.transparency = t.parse::<TransparencyExpectation>().map_err(|e| {
+            anyhow::Error::new(vcr::error_codes::CodedError::usage(
+                "invalid_expectation",
+                e.to_string(),
+            ))
+        })?;
+        sources.push("flags");
+    }
+
+    // Provenance integrity.
+    let mut producer = Value::Null;
+    match &provenance_doc {
+        Some(p) => {
+            producer = p.get("engine").cloned().unwrap_or(Value::Null);
+            let recorded_sha = p.pointer("/output/sha256").and_then(Value::as_str);
+            if recorded_sha != Some(sha.as_str()) {
+                diagnostics.push(
+                    Diagnostic::new(Severity::Error, "verify", "verify.modified_since_render", "file bytes differ from the output recorded in provenance (modified, replaced, or incomplete)")
+                        .expected(json!(recorded_sha)).observed(json!(sha))
+                        .recover("Re-render; do not deliver this file."),
+                );
+            }
+            if p.get("status").and_then(Value::as_str) != Some("complete") {
+                diagnostics.push(Diagnostic::new(
+                    Severity::Error,
+                    "verify",
+                    "verify.incomplete_export",
+                    "provenance does not mark this export complete",
+                ));
+            }
+        }
+        None => {
+            let sev = if args.require_provenance {
+                Severity::Error
+            } else {
+                Severity::Warning
+            };
+            diagnostics.push(
+                Diagnostic::new(sev, "verify", "verify.no_provenance", "no provenance record next to the file; its producer and freshness cannot be established")
+                    .recover("Re-render with this engine to produce <file>.provenance.json."),
+            );
+        }
+    }
+
+    let decode_budget = match args.decode_frames.as_deref() {
+        None => None, // all frames
+        Some("all") => None,
+        Some(n) => Some(n.parse::<u64>().map_err(|_| {
+            anyhow::Error::new(vcr::error_codes::CodedError::usage(
+                "invalid_expectation",
+                format!("--decode-frames must be a number or 'all', got '{n}'"),
+            ))
+        })?),
+    };
+    let report = match media_verify::verify_media(output_file, &expected, decode_budget) {
+        Ok(report) => report,
+        Err(error) if !error.to_string().contains("was not found on PATH") => {
+            // A file ffprobe cannot read is a verification *finding* (truncated, corrupt, not media).
+            diagnostics.push(
+                Diagnostic::new(Severity::Error, "verify", "verify.unreadable_media", "the file could not be read as media; it is incomplete, corrupt, or not a video")
+                    .observed(error.to_string().lines().next().unwrap_or("").to_owned())
+                    .recover("Re-render; do not deliver this file."),
+            );
+            let envelope = Envelope::new("verify", Status::Failed)
+                .with_result(json!({
+                    "file": output_file.display().to_string(), "sha256": sha, "bytes": bytes,
+                    "verifier": vcr::agent_contract::EngineIdentity::current(),
+                    "producer": producer, "expectation_sources": sources, "freshness": freshness,
+                    "media": Value::Null,
+                }))
+                .with_diagnostics(diagnostics)
+                .with_artifacts(vec![
+                    ArtifactRef::new("output", output_file).with_digest(output_file)
+                ]);
+            if json_out {
+                let legacy = VerifyLegacy {
+                    file_path: output_file.to_path_buf(),
+                    hash: sha,
+                    tool_version: version_string(),
+                    backend: None,
+                };
+                return finish_with_legacy(envelope, &legacy);
+            }
+            println!("FAIL: {} could not be read as media", output_file.display());
+            return Err(anyhow::Error::new(EarlyExit(3)));
+        }
+        Err(error) => return Err(error),
+    };
+    for c in report
+        .checks
+        .iter()
+        .filter(|c| c.status == CheckStatus::Fail)
+    {
+        let mut d = Diagnostic::new(
+            Severity::Error,
+            "verify",
+            format!("verify.{}_mismatch", c.id),
+            format!("{} does not match the expectation", c.id),
+        )
+        .basis(Basis::Exact);
+        if let Some(e) = &c.expected {
+            d = d.expected(e.clone());
+        }
+        if let Some(o) = &c.observed {
+            d = d.observed(o.clone());
+        }
+        diagnostics.push(d);
+    }
+    let failed = diagnostics.iter().any(Diagnostic::is_blocking);
+    let version = version_string();
+    let backend = provenance_doc
+        .as_ref()
+        .and_then(|p| p.pointer("/backend/name")?.as_str().map(str::to_owned));
+    let artifacts = vec![ArtifactRef::new("output", output_file).with_digest(output_file)];
+    let checked_any_expectation = !sources.is_empty();
+    let result = json!({
+        "file": output_file.display().to_string(),
+        "sha256": sha, "bytes": bytes,
+        "verifier": vcr::agent_contract::EngineIdentity::current(),
+        "producer": producer,
+        "producer_note": "`engine` (top level) is the VERIFIER; `producer` is the engine recorded in provenance. They are not the same evidence.",
+        "expectation_sources": sources,
+        "freshness": freshness,
+        "media": report,
+        "limits": if checked_any_expectation { json!([]) } else { json!(["no expectations or provenance supplied: only file integrity and probe facts are reported"]) },
+    });
+    let status = if failed { Status::Failed } else { Status::Ok };
+    let envelope = Envelope::new("verify", status)
+        .with_result(result)
+        .with_diagnostics(diagnostics)
+        .with_artifacts(artifacts);
+    if json_out {
+        let legacy = VerifyLegacy {
+            file_path: output_file.to_path_buf(),
+            hash: sha,
+            tool_version: version,
+            backend,
+        };
+        return finish_with_legacy(envelope, &legacy);
+    }
+    println!("Path: {}", output_file.display());
+    println!("Hash: {sha}");
+    println!("Version: {version}");
+    for c in &report_checks_for_humans(&envelope) {
+        println!("{c}");
+    }
+    if failed {
+        Err(anyhow::Error::new(EarlyExit(3)))
+    } else {
+        Ok(())
+    }
+}
+
+fn report_checks_for_humans(envelope: &Envelope) -> Vec<String> {
+    let mut lines = Vec::new();
+    for d in &envelope.diagnostics {
+        let detail = match (&d.expected, &d.observed) {
+            (Some(e), Some(o)) => format!(" [expected {e}, observed {o}]"),
+            (None, Some(o)) => format!(" [observed {o}]"),
+            _ => String::new(),
+        };
+        lines.push(format!(
+            "{}: {} ({}){detail}",
+            match d.severity {
+                Severity::Warning => "warn",
+                _ => "FAIL",
+            },
+            d.message,
+            d.code
+        ));
+    }
+    if lines.is_empty() {
+        lines.push("Verification: all checks passed".to_owned());
+    }
+    lines
+}
+
+// ───────────────────────────── build / render envelope ─────────────────────────────
+
+pub(super) fn build_envelope(
+    operation: &str,
+    manifest_path: &Path,
+    output_path: &Path,
+    build: &BuildResult,
+    elapsed_ms: u64,
+) -> Envelope {
+    let prov_path = provenance::provenance_path_for(output_path);
+    let meta_path = metadata_sidecar_for_file(output_path);
+    let output_hash = vcr::agent_contract::sha256_file(output_path).unwrap_or_default();
+    let result = json!({
+        "manifest": manifest_path.display().to_string(),
+        "backend": build.backend_name,
+        "frame_count": build.frame_count,
+        "frame_hash": build.frame_hash,
+        "output_hash": output_hash,
+        "duration_ms": elapsed_ms,
+        "output": output_path.display().to_string(),
+        "published": "atomic",
+        "verification": build.verification,
+        "next": [format!("vcr verify {} --manifest {} --json", output_path.display(), manifest_path.display())],
+    });
+    Envelope::ok(operation, result).with_artifacts(vec![
+        ArtifactRef::new("output", output_path).with_digest(output_path),
+        ArtifactRef::new("metadata", &meta_path).with_digest(&meta_path),
+        ArtifactRef::new("provenance", &prov_path).with_digest(&prov_path),
+    ])
+}
+
+#[derive(Serialize)]
+pub(super) struct RenderLegacy {
+    pub manifest: PathBuf,
+    pub backend: String,
+    pub frame_count: u32,
+    pub frame_hash: String,
+    pub output_hash: String,
+    pub duration_ms: u64,
+}
+
+pub(super) fn finish_render(envelope: Envelope, legacy: RenderLegacy) -> Result<()> {
+    finish_with_legacy(envelope, &legacy)
 }
 
 // ───────────────────────────── prompt ─────────────────────────────
@@ -567,8 +944,7 @@ pub(super) fn inspect(
     .with_artifacts(artifacts);
     // Keep a copy of the document next to the images.
     let doc_path = args.output_dir.join("inspection.json");
-    fs::write(&doc_path, envelope.to_json_line())
-        .with_context(|| format!("failed to write {}", doc_path.display()))?;
+    provenance::atomic_write(&doc_path, envelope.to_json_line().as_bytes())?;
     envelope
         .artifacts
         .push(ArtifactRef::new("inspection", &doc_path));
