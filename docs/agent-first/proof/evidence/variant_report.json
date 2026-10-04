@@ -1,0 +1,192 @@
+{
+  "evidence_kind": "scripted_reference",
+  "variants": [
+    {
+      "id": "lt_v1_dark_neutral_standard_short",
+      "stages": {
+        "check": "ok",
+        "lint": "ok",
+        "preflight": "ok",
+        "inspect": "ok",
+        "render+verify": "ok"
+      },
+      "refits": [
+        611
+      ],
+      "output_sha256": "d4a460a7d04e66cc",
+      "passed": true
+    },
+    {
+      "id": "lt_v1_dark_neutral_standard_long",
+      "stages": {
+        "check": "ok",
+        "lint": "ok",
+        "preflight": "ok",
+        "inspect": "ok",
+        "render+verify": "ok"
+      },
+      "refits": [
+        1322
+      ],
+      "output_sha256": "16efa46d574fa11a",
+      "passed": true
+    },
+    {
+      "id": "lt_v1_dark_neutral_quick_short",
+      "stages": {
+        "check": "ok",
+        "lint": "ok",
+        "preflight": "ok",
+        "inspect": "ok",
+        "render+verify": "ok"
+      },
+      "refits": [
+        611
+      ],
+      "output_sha256": "107e7198980d327d",
+      "passed": true
+    },
+    {
+      "id": "lt_v1_dark_neutral_quick_long",
+      "stages": {
+        "check": "ok",
+        "lint": "ok",
+        "preflight": "ok",
+        "inspect": "ok",
+        "render+verify": "ok"
+      },
+      "refits": [
+        1322
+      ],
+      "output_sha256": "d33cfd10790bcc28",
+      "passed": true
+    },
+    {
+      "id": "lt_v1_deep_blue_standard_short",
+      "stages": {
+        "check": "ok",
+        "lint": "ok",
+        "preflight": "ok",
+        "inspect": "ok",
+        "render+verify": "ok"
+      },
+      "refits": [
+        611
+      ],
+      "output_sha256": "9a0695891df0e396",
+      "passed": true
+    },
+    {
+      "id": "lt_v1_deep_blue_standard_long",
+      "stages": {
+        "check": "ok",
+        "lint": "ok",
+        "preflight": "ok",
+        "inspect": "ok",
+        "render+verify": "ok"
+      },
+      "refits": [
+        1322
+      ],
+      "output_sha256": "a33dfd07eeb01dfb",
+      "passed": true
+    },
+    {
+      "id": "lt_v1_deep_blue_quick_short",
+      "stages": {
+        "check": "ok",
+        "lint": "ok",
+        "preflight": "ok",
+        "inspect": "ok",
+        "render+verify": "ok"
+      },
+      "refits": [
+        611
+      ],
+      "output_sha256": "31987f4e2d6c1cdf",
+      "passed": true
+    },
+    {
+      "id": "lt_v1_deep_blue_quick_long",
+      "stages": {
+        "check": "ok",
+        "lint": "ok",
+        "preflight": "ok",
+        "inspect": "ok",
+        "render+verify": "ok"
+      },
+      "refits": [
+        1322
+      ],
+      "output_sha256": "8902513f658173f4",
+      "passed": true
+    },
+    {
+      "id": "lt_v1_deep_green_standard_short",
+      "stages": {
+        "check": "ok",
+        "lint": "ok",
+        "preflight": "ok",
+        "inspect": "ok",
+        "render+verify": "ok"
+      },
+      "refits": [
+        611
+      ],
+      "output_sha256": "105ec3831d509031",
+      "passed": true
+    },
+    {
+      "id": "lt_v1_deep_green_standard_long",
+      "stages": {
+        "check": "ok",
+        "lint": "ok",
+        "preflight": "ok",
+        "inspect": "ok",
+        "render+verify": "ok"
+      },
+      "refits": [
+        1322
+      ],
+      "output_sha256": "4633798293cd6571",
+      "passed": true
+    },
+    {
+      "id": "lt_v1_deep_green_quick_short",
+      "stages": {
+        "check": "ok",
+        "lint": "ok",
+        "preflight": "ok",
+        "inspect": "ok",
+        "render+verify": "ok"
+      },
+      "refits": [
+        611
+      ],
+      "output_sha256": "ecb0eba9a3ae72e0",
+      "passed": true
+    },
+    {
+      "id": "lt_v1_deep_green_quick_long",
+      "stages": {
+        "check": "ok",
+        "lint": "ok",
+        "preflight": "ok",
+        "inspect": "ok",
+        "render+verify": "ok"
+      },
+      "refits": [
+        1322
+      ],
+      "output_sha256": "71a1feeb81363cd8",
+      "passed": true
+    }
+  ],
+  "all_passed": true,
+  "decoded_hashes_distinct": true,
+  "reproducibility_recheck": {
+    "raster_frames_sha256": true,
+    "decoded_frames_sha256": true,
+    "output_file_sha256": true
+  }
+}

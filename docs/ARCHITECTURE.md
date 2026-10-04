@@ -17,7 +17,8 @@ VCR is a deterministic video renderer: YAML scene manifests → reproducible fra
 
 - **Scope**: Subcommands, flags, exit codes, machine-readable output.
 - **Location**: `src/main.rs`
-- **Contract**: Stable flags, documented exit codes, `--json` for params/explain. `vcr explain --json` includes resolved params plus backend preflight details: requested/recommended backend, software-supported layer types, unsupported layer IDs/kinds, and blockers.
+- **Contract**: Stable flags, documented exit codes, and the agent contract `vcr.agent/1` (`docs/AGENT_CONTRACT.md`): `--json` on capabilities/prompt/check/lint/explain/inspect/render/verify/doctor prints one envelope document on stdout. `vcr explain --json` is the backend preflight: resolved backend on this machine, runtime probes (ffmpeg, ffprobe, fonts, GPU), layers and manifest features the software backend cannot honor (`post`, `ascii_post`), font fallback, and blockers.
+- **Modules**: `agent_contract` (envelope, error taxonomy, engine identity), `capabilities` (discovery, schema derived with `schemars`), `preflight`, `inspect`, `media_verify`, `provenance` (library); `src/agent_cli.rs` (`--json` operations).
 
 ### 2.3 Optional Workflow / Integration Layers
 

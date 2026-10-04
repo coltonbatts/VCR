@@ -29,10 +29,33 @@ For people who think code is faster than the Adobe ecosystem.
 
 VCR is designed to be **Agent-First**. It provides:
 
-- **JSON Error Contract**: Set `VCR_AGENT_MODE=1` to get machine-readable error payloads with suggested fixes.
-- **Explain Preflight**: `vcr explain --json` reports resolved params plus backend compatibility, the recommended backend, unsupported layer IDs/kinds, and blockers before render.
-- **Deterministic Pipeline**: Agents can reason about frames and pixels without worrying about platform-specific variations.
+- **One machine contract (`vcr.agent/1`)**: `--json` on `capabilities`, `prompt`, `check`, `lint`, `explain`, `inspect`, `render`, `verify`, `doctor` prints exactly one JSON document (status, diagnostics, artifacts, typed errors with locations and recovery). See [docs/AGENT_CONTRACT.md](docs/AGENT_CONTRACT.md).
+- **Discoverable**: `vcr capabilities --json --schema` reports what *this installation* can do (layers, fonts, codecs, time units, manifest JSON Schema generated from the engine's types, ffmpeg/GPU availability).
+- **Inspectable**: `vcr inspect` samples the timeline (entrance, hold, exit, ending), writes a labelled contact sheet over an alpha checkerboard, and reports exact layer bounds plus clipping/timing diagnostics.
+- **Verifiable**: `vcr verify` compares the encoded `.mov` with the request (resolution, exact frame rate, frame count, codec/profile, alpha, *decoded* transparency) and detects stale, modified or truncated output. Renders publish atomically and write `*.provenance.json`.
+- **Legacy JSON Error Contract**: `VCR_AGENT_MODE=1` still prints machine-readable errors on stderr (now in the contract envelope plus the old keys).
+- **Preflight and quickstart**: `vcr explain --json` (alias `vcr preflight`) tells you before rendering whether *this machine* can render the scene with the chosen backend: the resolved backend, unsupported layers and ignored `post` effects, ffmpeg/GPU availability, font fallback, blockers, and a single `ready` flag. The full eight-step flow is in the [Agent Quickstart](docs/AGENT_QUICKSTART.md).
+- **Scoped determinism**: scene settings are always reproducible; software-backend raster frames are expected identical for the same engine build; encoded file bytes also depend on the ffmpeg build; GPU output is not bit-identical across hardware. Provenance records the conditions.
 - **Structured Manifests**: Declarative YAML makes it easy for LLMs to author and modify complex scenes.
+
+### The agent workflow
+
+discover → normalize → author → validate/preflight → inspect → revise → render → verify. Every step prints one JSON line on stdout with `--json`; read `status` (`ok | blocked | failed | error`), `diagnostics` and `error.code`, never stderr.
+
+```bash
+vcr capabilities --json                      # what can this installation do? (add --schema for the manifest schema)
+vcr prompt --json --text "5s alpha lower third 1920x1080 60fps"   # normalize; status "blocked" = ask the requester
+vcr check scene.vcr --json                   # then: vcr lint --json, vcr explain --json (backend preflight, `ready`)
+vcr inspect scene.vcr --json -o renders/inspect   # sampled frames + contact sheet + clipping/timing diagnostics
+vcr render scene.vcr -o renders/scene.mov --json  # atomic publish + provenance
+vcr verify renders/scene.mov --manifest scene.vcr --expect-transparency required --json
+```
+
+Delivered means `verify` passed, not "render exited 0". A scene can be schema-valid and still clipped or mistimed, which is what `inspect` is for; `check` passing does not mean the chosen backend can render it, which is what preflight is for.
+
+**MCP.** `scripts/vcr-mcp-server/` exposes the same operations as typed tools (`vcr_capabilities`, `vcr_normalize_brief`, `vcr_validate`, `vcr_inspect`, `vcr_render`, `vcr_verify`, …). It forwards the CLI's documents unchanged, adds the selected engine's identity, and never invents scene settings. See its [README](scripts/vcr-mcp-server/README.md).
+
+**Status, stated plainly.** The contract, discovery, inspection and verification are covered by deterministic tests, and a 1080p60 alpha lower third (plus a 12-variant matrix) has been rendered and verified on decoded pixels. A 10-task [agent benchmark](docs/agent-benchmark/README.md) is defined, but **no autonomous-agent runs have been performed yet** and there is no comparison against other tools, so VCR makes no "best available" claim. GPU-only paths (shader/video/lottie/post) are untested on CI hardware.
 
 ## Visual-First Development
 
@@ -191,6 +214,10 @@ Comprehensive guides and technical references are available in the `docs/` direc
 - **[Standard Operating Procedure](VCR_SOP.md)**: The mandatory "Golden Path" for render verification.
 - **[Prompt Guide](docs/PROMPT_GUIDE.md)**: How to write bulletproof VCR prompts.
 - **[Agent Protocol](AGENTS.md)**: How automated tools interact with the engine.
+- **[Agent Quickstart](docs/AGENT_QUICKSTART.md)**: The short, authoritative agent workflow.
+- **[Agent Contract](docs/AGENT_CONTRACT.md)**: `vcr.agent/1` envelope, error codes, exit codes, determinism scope, migration notes.
+- **[Agent Benchmark](docs/agent-benchmark/README.md)**: Pre-registered 10-task suite, scoring, and what counts as evidence.
+- **[Lower-third proof](docs/agent-first/proof/README.md)**: The first production proof and its limits.
 - **[Project Custodian](docs/PROJECT_CUSTODIAN.md)**: Architectural overview and project map.
 - **[PRD](docs/PRD.md)**: Product vision and roadmap.
 - **[Changelog](CHANGELOG.md)**: Latest features and fixes.

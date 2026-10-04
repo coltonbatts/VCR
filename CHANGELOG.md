@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **MCP**: the adapter in `scripts/vcr-mcp-server/` is rewritten as thin typed wrappers over the CLI contract (explicit engine selection and identity, process-group timeouts, no adapter-side defaults, no mandatory LLM). `vcr_render_plan` loses its override parameters.
+- **Docs**: `docs/AGENT_QUICKSTART.md` (the short agent workflow), README/AGENTS reconciled with the contract, a handoff note and the first lower-third proof evidence under `docs/agent-first/`.
+- **Benchmark**: a pre-registered 10-task agent benchmark with a scorer and scripted reference (`docs/agent-benchmark/`). No autonomous-agent runs have been performed.
+- **Installer**: `scripts/install.sh` no longer deletes a working install; the old one is moved aside and restored on any failure.
 - **Verified delivery**: `vcr render`/`build` publish atomically (hidden partial file → conformance check → rename), remove stale sidecars first, and write `*.provenance.json` (engine build, ffmpeg, backend, inputs, raster/decoded/file hashes, determinism scope). `render --json`, `build --json` and `render-frame --json` emit the contract envelope; `render --json` keeps its legacy top-level keys.
 - **`vcr verify` now verifies** resolution, exact frame rate, frame count, duration, container, codec/profile, alpha capability and decoded-pixel transparency, and detects stale, modified and truncated output. **It exits 3 on mismatch** (it used to print only a hash). Legacy `--json` keys preserved.
 - Determinism docs split into scene / raster / decoded+encoded levels; the encoded level depends on the ffmpeg build.
