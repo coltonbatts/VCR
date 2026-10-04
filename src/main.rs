@@ -12,6 +12,8 @@ use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod agent_cli;
+
 use vcr::agent_errors::{
     suggest_fix_for_lint_error, suggest_fix_for_validation_error, AgentErrorReport, AgentErrorType,
     ErrorContext,
@@ -36,7 +38,7 @@ use vcr::asset_catalog::{
 };
 use vcr::chat::{render_chat_video, ChatRenderArgs};
 use vcr::encoding::{FfmpegMode, FfmpegPipe};
-use vcr::error_codes::{find_coded_error, CodedErrorKind};
+use vcr::error_codes::find_coded_error;
 use vcr::font_assets::verify_geist_pixel_bundle;
 use vcr::library::{
     add_asset, list_items, load_registry, verify_registry, LibraryAddRequest, LibraryItemType,
@@ -252,6 +254,11 @@ enum Commands {
             help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
         )]
         set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
     },
     #[command(about = "Check for unreachable layers and warnings")]
     Lint {
@@ -263,6 +270,11 @@ enum Commands {
             help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
         )]
         set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
     },
     #[command(about = "Print resolved layer state at a given frame")]
     Dump {
@@ -278,6 +290,11 @@ enum Commands {
             help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
         )]
         set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
     },
     #[command(about = "List declared params and their defaults")]
     Params {
@@ -414,6 +431,16 @@ enum Commands {
             help = "Write translated YAML output to a file (default: stdout)"
         )]
         output: Option<PathBuf>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
+        #[arg(
+            long = "strict",
+            help = "Exit 6 when normalization has unresolved blockers (default: exit 0; the blocked status is in the output)"
+        )]
+        strict: bool,
     },
     #[command(about = "Chat transcript rendering commands")]
     Chat {
@@ -476,7 +503,13 @@ enum Commands {
         command: LibraryCommands,
     },
     #[command(about = "Check system dependencies (FFmpeg, GPU)")]
-    Doctor,
+    Doctor {
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
+    },
     #[command(about = "Generate frame-hash determinism report")]
     DeterminismReport {
         manifest: PathBuf,
@@ -886,6 +919,23 @@ fn resolve_ascii_stage_options(
 }
 
 impl Commands {
+    /// Whether this invocation asked for a machine-readable document.
+    fn json_requested(&self) -> bool {
+        match self {
+            Self::Render { json, .. }
+            | Self::Verify { json, .. }
+            | Self::Check { json, .. }
+            | Self::Lint { json, .. }
+            | Self::Dump { json, .. }
+            | Self::Params { json, .. }
+            | Self::Explain { json, .. }
+            | Self::Prompt { json, .. }
+            | Self::Doctor { json }
+            | Self::DeterminismReport { json, .. } => *json,
+            _ => false,
+        }
+    }
+
     fn name(&self) -> &'static str {
         match self {
             Self::Render { .. } => "render",
@@ -910,7 +960,7 @@ impl Commands {
             Self::Add { .. } => "add",
             Self::Assets { .. } => "assets",
             Self::Library { .. } => "library",
-            Self::Doctor => "doctor",
+            Self::Doctor { .. } => "doctor",
             Self::DeterminismReport { .. } => "determinism-report",
             Self::Verify { .. } => "verify",
         }
@@ -924,6 +974,7 @@ enum VcrExitCode {
     ManifestValidation = 3,
     MissingDependency = 4,
     Io = 5,
+    Blocked = 6,
 }
 
 impl VcrExitCode {
@@ -947,19 +998,79 @@ fn main() -> ExitCode {
         println!("vcr version {}", version_string());
         return VcrExitCode::Success.to_exit_code();
     }
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => return handle_parse_error(error),
+    };
     let command_name = cli.command.name();
+    let json_mode = cli.command.json_requested();
     match run_cli(cli) {
         Ok(()) => VcrExitCode::Success.to_exit_code(),
         Err(error) => {
             if let Some(exit) = error.downcast_ref::<DeckProcessExit>() {
                 return ExitCode::from(exit.propagated_code() as u8);
             }
+            if let Some(early) = error.downcast_ref::<agent_cli::EarlyExit>() {
+                // The operation already printed its (non-ok) result document.
+                return ExitCode::from(early.0);
+            }
             let exit_code = classify_exit_code(&error);
-            print_cli_error(command_name, &error);
+            if json_mode {
+                let envelope = vcr::agent_contract::Envelope::from_error(command_name, &error);
+                println!("{}", envelope.to_json_line());
+                eprintln!("vcr {command_name}: {}", clean_message(error.to_string()));
+            } else {
+                print_cli_error(command_name, &error);
+            }
             exit_code.to_exit_code()
         }
     }
+}
+
+/// Argument-parsing failures get the same structured contract as every other failure when the
+/// caller asked for JSON (`--json` anywhere in argv, or `VCR_AGENT_MODE`).
+fn handle_parse_error(error: clap::Error) -> ExitCode {
+    use clap::error::ErrorKind;
+    if matches!(
+        error.kind(),
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+    ) {
+        error.exit();
+    }
+    let wants_json = std::env::args().any(|a| a == "--json");
+    let agent_mode = std::env::var("VCR_AGENT_MODE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !(wants_json || agent_mode) {
+        error.exit();
+    }
+    let operation = std::env::args()
+        .skip(1)
+        .find(|a| !a.starts_with('-'))
+        .unwrap_or_else(|| "cli".to_owned());
+    let rendered = error.render().to_string();
+    let message = rendered
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let anyhow_error = anyhow::Error::new(vcr::error_codes::CodedError::usage(
+        "usage.invalid_argument",
+        message,
+    ));
+    let mut envelope = vcr::agent_contract::Envelope::from_error(&operation, &anyhow_error);
+    if let Some(body) = envelope.error.as_mut() {
+        body.recovery.push(format!(
+            "Run `vcr {operation} --help` to see valid arguments."
+        ));
+    }
+    if wants_json {
+        println!("{}", envelope.to_json_line());
+    } else {
+        eprintln!("{}", envelope.to_json_line());
+    }
+    VcrExitCode::Usage.to_exit_code()
 }
 
 fn print_help_with_quick_start() -> Result<()> {
@@ -1028,14 +1139,41 @@ fn run_cli(cli: Cli) -> Result<()> {
             )
             .map(|_| ())
         }
-        Commands::Check { manifest, set } => run_check(&manifest, &set, quiet),
-        Commands::Lint { manifest, set } => run_lint(&manifest, &set, quiet),
+        Commands::Check {
+            manifest,
+            set,
+            json,
+        } => {
+            if json {
+                agent_cli::check(&manifest, &set)
+            } else {
+                run_check(&manifest, &set, quiet)
+            }
+        }
+        Commands::Lint {
+            manifest,
+            set,
+            json,
+        } => {
+            if json {
+                agent_cli::lint_json(&manifest, &set)
+            } else {
+                run_lint(&manifest, &set, quiet)
+            }
+        }
         Commands::Dump {
             manifest,
             frame,
             time,
             set,
-        } => run_dump(&manifest, frame, time, &set, quiet),
+            json,
+        } => {
+            if json {
+                agent_cli::dump_json(&manifest, frame, time, &set)
+            } else {
+                run_dump(&manifest, frame, time, &set, quiet)
+            }
+        }
         Commands::Params { manifest, json } => run_params(&manifest, json),
         Commands::Explain {
             manifest,
@@ -1202,7 +1340,29 @@ fn run_cli(cli: Cli) -> Result<()> {
             text,
             input,
             output,
-        } => run_prompt_translate(text.as_deref(), input.as_deref(), output.as_deref()),
+            json,
+            strict,
+        } => {
+            if json {
+                agent_cli::prompt_json(text.as_deref(), input.as_deref(), output.as_deref(), strict)
+            } else {
+                run_prompt_translate(text.as_deref(), input.as_deref(), output.as_deref())?;
+                if strict {
+                    let raw = match (text.as_deref(), input.as_deref()) {
+                        (Some(t), _) => t.to_owned(),
+                        (None, Some(p)) => fs::read_to_string(p).unwrap_or_default(),
+                        _ => String::new(),
+                    };
+                    if !translate_to_standard_prompt(&raw)?
+                        .unknowns_and_fixes
+                        .is_empty()
+                    {
+                        return Err(anyhow::Error::new(agent_cli::EarlyExit(6)));
+                    }
+                }
+                Ok(())
+            }
+        }
         Commands::Chat { command } => match command {
             ChatCommands::Render {
                 input,
@@ -1356,7 +1516,13 @@ fn run_cli(cli: Cli) -> Result<()> {
                 run_library_list(tag.as_deref(), item_type.map(Into::into))
             }
         },
-        Commands::Doctor => run_doctor(),
+        Commands::Doctor { json } => {
+            if json {
+                agent_cli::doctor_json()
+            } else {
+                run_doctor()
+            }
+        }
         Commands::DeterminismReport {
             manifest,
             frame,
@@ -1806,10 +1972,13 @@ fn print_cli_error(command_name: &str, error: &anyhow::Error) {
             .unwrap_or(false);
 
         if agent_mode {
-            match serde_json::to_string_pretty(&coded.envelope()) {
-                Ok(json) => eprintln!("{json}"),
-                Err(_) => eprintln!("vcr {command_name}: {summary}"),
-            }
+            // One error shape: the contract envelope (it carries the pre-contract
+            // `ok` / `error.{code,message,details}` fields unchanged).
+            let envelope = vcr::agent_contract::Envelope::from_error(command_name, error);
+            eprintln!(
+                "{}",
+                serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| envelope.to_json_line())
+            );
         } else {
             eprintln!("vcr {command_name}: {summary}");
         }
@@ -1860,13 +2029,10 @@ fn print_cli_error(command_name: &str, error: &anyhow::Error) {
             }
         }
 
-        // Emit JSON to stderr
-        if let Ok(json) = report.to_json() {
-            eprintln!("{}", json);
-        } else {
-            // Fallback to regular error if JSON serialization fails
-            eprintln!("vcr {command_name}: {}", report.summary);
-        }
+        // Emit the contract envelope on stderr, with the legacy AgentErrorReport keys
+        // (`error_type`, `summary`, `suggested_fix`, `context`) merged in for old consumers.
+        let envelope = vcr::agent_contract::Envelope::from_error(command_name, error);
+        eprintln!("{}", envelope.to_json_pretty_with_legacy(&report));
     } else {
         // Regular human-readable output
         eprintln!("vcr {command_name}: {summary}");
@@ -1889,77 +2055,13 @@ fn clean_message(value: String) -> String {
 }
 
 fn classify_exit_code(error: &anyhow::Error) -> VcrExitCode {
-    if let Some(coded) = find_coded_error(error) {
-        return match coded.kind {
-            CodedErrorKind::Usage => VcrExitCode::Usage,
-        };
+    match vcr::agent_contract::exit_code_for_error(error) {
+        2 => VcrExitCode::Usage,
+        4 => VcrExitCode::MissingDependency,
+        5 => VcrExitCode::Io,
+        6 => VcrExitCode::Blocked,
+        _ => VcrExitCode::ManifestValidation,
     }
-    if is_missing_dependency_error(error) {
-        return VcrExitCode::MissingDependency;
-    }
-    if is_usage_error(error) {
-        return VcrExitCode::Usage;
-    }
-    if is_io_error(error) {
-        return VcrExitCode::Io;
-    }
-    VcrExitCode::ManifestValidation
-}
-
-fn is_missing_dependency_error(error: &anyhow::Error) -> bool {
-    has_error_message_fragment(error, "ffmpeg was not found on path")
-        || has_error_message_fragment(error, "ffprobe was not found on path")
-        || has_error_message_fragment(error, "curl was not found on path")
-        || has_error_message_fragment(error, "chafa was not found on path")
-        || has_error_message_fragment(error, "missing dependency")
-        || has_error_message_fragment(error, "geist pixel font")
-        || has_error_message_fragment(error, "invalid geist pixel bundle")
-        || has_error_message_fragment(error, "font_asset_hash_mismatch")
-}
-
-fn is_usage_error(error: &anyhow::Error) -> bool {
-    has_error_message_fragment(error, "invalid --set")
-        || has_error_message_fragment(error, "invalid_aspect_preset")
-        || has_error_message_fragment(error, "expected name=value")
-        || has_error_message_fragment(error, "use either --frame or --time")
-        || has_error_message_fragment(error, "use either --end-frame or --frames")
-        || has_error_message_fragment(error, "--time must be")
-        || has_error_message_fragment(error, "--frames must be > 0")
-        || has_error_message_fragment(error, "--interval-ms must be > 0")
-        || has_error_message_fragment(error, "preview --scale must be in")
-        || has_error_message_fragment(error, "invalid .vcrchat format")
-        || has_error_message_fragment(error, "invalid .vcrtxt format")
-        || has_error_message_fragment(error, "empty input script")
-        || has_error_message_fragment(error, "empty input transcript")
-        || has_error_message_fragment(error, "unknown --theme")
-        || has_error_message_fragment(error, "invalid --size")
-        || has_error_message_fragment(error, "invalid --source")
-        || has_error_message_fragment(error, "unsupported ascii-live stream")
-        || has_error_message_fragment(error, "invalid --export-dir")
-        || has_error_message_fragment(error, "--fps must be > 0")
-        || has_error_message_fragment(error, "--duration must be > 0")
-        || has_error_message_fragment(error, "--font-size must be > 0")
-        || has_error_message_fragment(error, "--speed must be > 0")
-        || has_error_message_fragment(error, "start frame")
-        || has_error_message_fragment(error, "out of bounds")
-}
-
-fn is_io_error(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
-        || has_error_message_fragment(error, "failed to read")
-        || has_error_message_fragment(error, "failed to write")
-        || has_error_message_fragment(error, "failed waiting")
-        || has_error_message_fragment(error, "failed to create")
-}
-
-fn has_error_message_fragment(error: &anyhow::Error, fragment: &str) -> bool {
-    let needle = fragment.to_ascii_lowercase();
-    error
-        .chain()
-        .map(|cause| cause.to_string().to_ascii_lowercase())
-        .any(|message| message.contains(&needle))
 }
 
 fn resolve_output_path(
@@ -2993,8 +3095,7 @@ fn run_check(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result
     Ok(())
 }
 
-fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<()> {
-    let manifest = load_manifest_with_overrides(manifest_path, set_values)?;
+fn collect_lint_issues(manifest: &Manifest) -> Result<Vec<agent_cli::LintIssue>> {
     let total_frames = manifest.environment.total_frames();
     let sample_count = total_frames.min(240).clamp(1, 240);
     let sample_step = (total_frames / sample_count).max(1);
@@ -3007,7 +3108,7 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
 
     let mut frame = 0_u32;
     while frame < total_frames {
-        let states = evaluate_manifest_layers_at_frame(&manifest, frame)?;
+        let states = evaluate_manifest_layers_at_frame(manifest, frame)?;
         for state in states {
             if state.visible && state.opacity > 0.0 {
                 visible.insert(state.id, true);
@@ -3016,7 +3117,7 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
         frame = frame.saturating_add(sample_step);
     }
     if total_frames > 1 {
-        let last_states = evaluate_manifest_layers_at_frame(&manifest, total_frames - 1)?;
+        let last_states = evaluate_manifest_layers_at_frame(manifest, total_frames - 1)?;
         for state in last_states {
             if state.visible && state.opacity > 0.0 {
                 visible.insert(state.id, true);
@@ -3049,13 +3150,14 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
                 };
 
                 if is_full_frame {
-                    issues.push((
-                        bottom.id().to_owned(),
-                        format!(
+                    issues.push(agent_cli::LintIssue {
+                        layer: bottom.id().to_owned(),
+                        code: "lint.alpha_blocked",
+                        message: format!(
                             "Layer '{}' is opaque and likely blocks the alpha channel. Consider reducing its opacity if transparency is required for ProRes 4444.",
                             bottom.id()
                         ),
-                    ));
+                    });
                 }
             }
         }
@@ -3064,12 +3166,25 @@ fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<
     for layer in &manifest.layers {
         let id = layer.id();
         if !visible.get(id).copied().unwrap_or(false) {
-            issues.push((
-                id.to_owned(),
-                format!("Layer '{id}' appears unreachable (never visible across sampled frames)."),
-            ));
+            issues.push(agent_cli::LintIssue {
+                layer: id.to_owned(),
+                code: "lint.unreachable_layer",
+                message: format!(
+                    "Layer '{id}' appears unreachable (never visible across sampled frames)."
+                ),
+            });
         }
     }
+
+    Ok(issues)
+}
+
+fn run_lint(manifest_path: &Path, set_values: &[String], quiet: bool) -> Result<()> {
+    let manifest = load_manifest_with_overrides(manifest_path, set_values)?;
+    let issues: Vec<(String, String)> = collect_lint_issues(&manifest)?
+        .into_iter()
+        .map(|issue| (issue.layer, issue.message))
+        .collect();
 
     if issues.is_empty() {
         print_active_params(&manifest, quiet);

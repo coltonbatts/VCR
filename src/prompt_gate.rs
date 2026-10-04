@@ -48,6 +48,16 @@ pub struct PromptTranslation {
     pub unknowns_and_fixes: Vec<UnknownFix>,
     pub assumptions_applied: Vec<String>,
     pub acceptance_checks: Vec<String>,
+    /// Structured form of the specification defaults that were applied (a subset of
+    /// `assumptions_applied`). Defaults only ever cover technical settings, never creative content.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub defaults_applied: Vec<AppliedDefault>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AppliedDefault {
+    pub field: String,
+    pub value: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -145,6 +155,13 @@ pub fn translate_to_standard_prompt(raw: &str) -> Result<PromptTranslation> {
     let mut working = WorkingSpec::default();
     let mut unknowns = Vec::new();
     let mut assumptions = Vec::new();
+    let mut defaults: Vec<AppliedDefault> = Vec::new();
+    let mut note_default = |field: &str, value: serde_json::Value| {
+        defaults.push(AppliedDefault {
+            field: field.to_owned(),
+            value,
+        });
+    };
 
     let parsed_yaml = parse_yaml_like(raw);
     match parsed_yaml {
@@ -177,20 +194,24 @@ pub fn translate_to_standard_prompt(raw: &str) -> Result<PromptTranslation> {
 
     let width = working.render_width.unwrap_or_else(|| {
         assumptions.push("Defaulted resolution width to 1920 because it was missing.".to_owned());
+        note_default("render.resolution.width", serde_json::json!(1920));
         1920
     });
     let height = working.render_height.unwrap_or_else(|| {
         assumptions.push("Defaulted resolution height to 1080 because it was missing.".to_owned());
+        note_default("render.resolution.height", serde_json::json!(1080));
         1080
     });
     let render_fps = working.render_fps.unwrap_or_else(|| {
         assumptions.push("Defaulted render fps to 60 because `render.fps` was missing.".to_owned());
+        note_default("render.fps", serde_json::json!(60));
         60
     });
     let output_fps = working.output_fps.unwrap_or_else(|| {
         assumptions.push(
             "Defaulted output fps to render fps because `output.fps` was missing.".to_owned(),
         );
+        note_default("output.fps", serde_json::json!(render_fps));
         render_fps
     });
 
@@ -237,12 +258,14 @@ pub fn translate_to_standard_prompt(raw: &str) -> Result<PromptTranslation> {
             }
         }
         assumptions.push("Defaulted output type to `video` because it was missing.".to_owned());
+        note_default("output.type", serde_json::json!("video"));
         "video".to_owned()
     });
     output_type.make_ascii_lowercase();
 
     let alpha = working.output_alpha.unwrap_or_else(|| {
         assumptions.push("Defaulted output alpha to false because it was missing.".to_owned());
+        note_default("output.alpha", serde_json::json!(false));
         false
     });
 
@@ -255,6 +278,7 @@ pub fn translate_to_standard_prompt(raw: &str) -> Result<PromptTranslation> {
         assumptions.push(format!(
             "Defaulted output path to `{default_path}` because `output.path` was missing."
         ));
+        note_default("output.path", serde_json::json!(default_path));
         default_path
     });
 
@@ -350,6 +374,7 @@ pub fn translate_to_standard_prompt(raw: &str) -> Result<PromptTranslation> {
 
     let seed = working.seed.unwrap_or_else(|| {
         assumptions.push("Defaulted deterministic seed to 0 because it was missing.".to_owned());
+        note_default("determinism.seed", serde_json::json!(0));
         0
     });
 
@@ -466,6 +491,7 @@ pub fn translate_to_standard_prompt(raw: &str) -> Result<PromptTranslation> {
         unknowns_and_fixes: unknowns,
         assumptions_applied: assumptions,
         acceptance_checks,
+        defaults_applied: defaults,
     })
 }
 

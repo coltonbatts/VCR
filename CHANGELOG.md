@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Agent contract `vcr.agent/1`** (see `docs/AGENT_CONTRACT.md`): one JSON envelope with stable error codes, locations and recovery for `check`, `lint`, `dump`, `doctor` and `prompt` via `--json` (stdout is exactly one line). Argument-parse errors are structured when `--json` is passed. `prompt --json` separates specification defaults (`defaults_applied`) from unspecified creative inputs and reports blockers as `status: blocked`. New exit code 6 (`prompt --strict`). `VCR_AGENT_MODE=1` errors now use the envelope plus the legacy keys.
+
 ## v0.1.2 (2026-02-16)
 
 - **Release Readiness & Documentation**
