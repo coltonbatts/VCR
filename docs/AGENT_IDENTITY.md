@@ -33,7 +33,7 @@ vcr prompt --in ./request.yaml -o ./request.normalized.yaml
 - **Codebase**: Idiomatic Rust with `anyhow` for errors and `serde` for schema.
 - **Backends**: GPU (WGPU/Metal) for performance; Tiny-Skia for bit-identical software verification.
 - **Workflow**: The manifest is the source of truth. Expressions are evaluated per-frame over the timeline `t`.
-- **Sidecars**: Every render must produce a `.metadata.json` documenting frame hashes, parameters, and source attribution.
+- **Sidecars**: Every render must produce a `.metadata.json` documenting frame hashes, parameters, and source attribution. When present, `agent_context` summarizes each layer’s evaluated state (position, opacity, visibility, etc.) at the **last timeline frame** included in that output (for example the final frame of a `vcr build` window, or the requested `--frame` for `render-frame`).
 
 **Active Roadmap Focus (Phase 2)**:
 
@@ -41,6 +41,15 @@ vcr prompt --in ./request.yaml -o ./request.normalized.yaml
 - **Perceptual Metrics**: Moving beyond mean luminance to edge-aware or DCT-based glyph mapping.
 - **Procedural expansion**: Designing noise-field and particle layers that maintain determinism.
 - **ProRes Alpha**: Ensuring the pipeline remains broadcast-ready (ProRes 4444) even for experimental modules.
+- **Agent-native contracts**: Extending prompt normalization, metadata, and planning outputs so agents can inspect and act on VCR state without parsing screenshots or logs.
+- **Direct structured access**: Prioritizing JSON, metadata sidecars, and MCP tools as the stable machine interface for agent workflows.
+
+**Implementation Priorities**:
+
+1. Keep `vcr prompt` as the mandatory normalization gate before manifest authoring.
+2. Keep `unknowns_and_fixes` blocking until explicitly resolved.
+3. Expand render metadata so `agent_context` includes the last-evaluated layer state plus actionable flags like unsupported features and unresolved ambiguities.
+4. Prefer structured planning and preview surfaces over ad hoc text parsing for agent integrations.
 
 **Verification Rule**: Always verify logic against the software backend. Determinism is tested via frame-hash comparisons. If the bit-identity breaks, the implementation is incorrect.
 

@@ -260,8 +260,21 @@ fn ffmpeg_args(
     output_path: &Path,
 ) -> Vec<String> {
     let mut args = ffmpeg_rawvideo_input_args(size, fps);
+    // Match ascii_capture / ascii_stage: stabilize mux + encoder variance across FFmpeg builds.
+    if let Some(i) = args.iter().position(|s| s == "-y") {
+        args.insert(i + 1, "-fflags".to_owned());
+        args.insert(i + 2, "+bitexact".to_owned());
+    }
+    args.push("-flags:v".to_owned());
+    args.push("+bitexact".to_owned());
     args.extend(ffmpeg_prores_output_args(encoding, color_space));
     args.extend(ffmpeg_container_output_args(output_path));
+    args.push("-map_metadata".to_owned());
+    args.push("-1".to_owned());
+    args.push("-metadata".to_owned());
+    args.push("creation_time=1970-01-01T00:00:00Z".to_owned());
+    args.push("-metadata".to_owned());
+    args.push("encoder=VCR".to_owned());
 
     args.push(output_path.to_string_lossy().into_owned());
     args

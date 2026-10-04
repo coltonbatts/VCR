@@ -36,6 +36,9 @@ One-sentence technical restatement of the request.
 
 Confirm VCR can produce this. If not: state limitation, propose valid fallback.
 If unsupported, set remaining sections to `null` and stop.
+For valid manifests, prefer `vcr explain --json` as the preflight source because it reports
+resolved params plus backend compatibility, the recommended backend, unsupported layer IDs/kinds,
+and blocker strings in machine-readable form.
 
 ### 3. render_plan
 

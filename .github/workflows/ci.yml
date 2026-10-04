@@ -39,7 +39,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --all-targets --all-features
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
     name: Regression Tests
@@ -103,3 +103,21 @@ jobs:
         run: |
           cargo build --release --bin vcr
           ./target/release/vcr determinism-report examples/white_on_alpha.vcr --frame 0 --json
+
+  tape-deck:
+    name: Tape Deck Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: vhs-tape-deck/go.mod
+          cache: true
+          cache-dependency-path: vhs-tape-deck/go.sum
+
+      - name: Run Tape Deck Tests
+        working-directory: vhs-tape-deck
+        run: go test ./...

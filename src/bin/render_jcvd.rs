@@ -1,6 +1,5 @@
 use fontdue::{Font, FontSettings};
 use image::{Rgba, RgbaImage};
-use serde_json;
 use std::fs;
 use std::path::Path;
 

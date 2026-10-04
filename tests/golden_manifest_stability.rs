@@ -36,7 +36,9 @@ fn golden_manifest_stability() {
     let result: RenderJsonOutput = serde_json::from_str(json_str).expect("Failed to parse JSON");
 
     let expected_frame_hash = "288b75c64f91afbdf3ea31803f526e8e0677b21cd4a5ede58246d4e5595f70a6";
-    let expected_output_hash = "0a46ddb3e569448c59413b2c4c9153e133f6bed6aac296e677be0240731bea62";
+    // SHA-256 of the MOV on disk. Tied to `encoding::ffmpeg_args` (bitexact + pinned metadata);
+    // bump when that FFmpeg invocation intentionally changes. `frame_hash` above guards the raster path.
+    let expected_output_hash = "17c0d8e762ddb0f5787d6935689bd19e0da340822493863d73e0d7ca67168385";
 
     assert_eq!(
         result.frame_hash, expected_frame_hash,

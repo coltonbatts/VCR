@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: PRD & roadmap
+    url: https://github.com/coltonbatts/VCR/blob/main/docs/PRD.md
+    about: Product vision, phases, and success metrics—read before large feature proposals.
+  - name: Agent workflow (AGENTS.md)
+    url: https://github.com/coltonbatts/VCR/blob/main/AGENTS.md
+    about: How automated tools and agents should use `vcr prompt`, check, and lint.
+  - name: Contributing guide
+    url: https://github.com/coltonbatts/VCR/blob/main/.github/CONTRIBUTING.md
+    about: Local setup, validation commands, and PR expectations.

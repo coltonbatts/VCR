@@ -1,0 +1,36 @@
+environment:
+  resolution:
+    width: 1280
+    height: 720
+  fps: 30
+  duration:
+    frames: 1
+
+layers:
+  - id: bg
+    z_index: 0
+    procedural:
+      kind: gradient
+      start_color: { r: 0.04, g: 0.02, b: 0.12, a: 1.0 }
+      end_color: { r: 0.02, g: 0.08, b: 0.14, a: 1.0 }
+      direction: vertical
+
+  - id: title
+    z_index: 10
+    position: { x: 640, y: 300 }
+    anchor: center
+    text:
+      content: "Hermes Agent × VCR"
+      font_family: "GeistPixel-Line"
+      font_size: 64
+      color: { r: 0.85, g: 0.95, b: 1.0, a: 1.0 }
+
+  - id: subtitle
+    z_index: 10
+    position: { x: 640, y: 400 }
+    anchor: center
+    text:
+      content: "skills · terminal · deterministic motion"
+      font_family: "GeistPixel-Square"
+      font_size: 28
+      color: { r: 0.4, g: 0.75, b: 0.85, a: 0.9 }

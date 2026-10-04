@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use vcr::error_codes::find_coded_error;
 use vcr::renderer::Renderer;
 use vcr::schema::Manifest;
 use vcr::timeline::RenderSceneData;
@@ -46,10 +47,14 @@ layers:
     let mut renderer = match renderer_result {
         Ok(r) => r,
         Err(e) => {
-            let err_str = format!("{e:#}");
-            if err_str.contains("no suitable GPU adapter found")
-                || err_str.contains("software fallback is disabled")
-            {
+            if let Some(coded) = find_coded_error(&e) {
+                if coded.code == "UNSUPPORTED_SOFTWARE_LAYER_TYPES" {
+                    eprintln!("Skipping test: software backend does not support wgpu_shader");
+                    return;
+                }
+            }
+
+            if format!("{e:#}").contains("no suitable GPU adapter found") {
                 eprintln!("Skipping test: no GPU adapter found");
                 return;
             }
