@@ -29,9 +29,14 @@ For people who think code is faster than the Adobe ecosystem.
 
 VCR is designed to be **Agent-First**. It provides:
 
-- **JSON Error Contract**: Set `VCR_AGENT_MODE=1` to get machine-readable error payloads with suggested fixes.
+- **One machine contract (`vcr.agent/1`)**: `--json` on `capabilities`, `prompt`, `check`, `lint`, `explain`, `inspect`, `render`, `verify`, `doctor` prints exactly one JSON document (status, diagnostics, artifacts, typed errors with locations and recovery). See [docs/AGENT_CONTRACT.md](docs/AGENT_CONTRACT.md).
+- **Discoverable**: `vcr capabilities --json --schema` reports what *this installation* can do (layers, fonts, codecs, time units, manifest JSON Schema generated from the engine's types, ffmpeg/GPU availability).
+- **Inspectable**: `vcr inspect` samples the timeline (entrance, hold, exit, ending), writes a labelled contact sheet over an alpha checkerboard, and reports exact layer bounds plus clipping/timing diagnostics.
+- **Verifiable**: `vcr verify` compares the encoded `.mov` with the request (resolution, exact frame rate, frame count, codec/profile, alpha, *decoded* transparency) and detects stale, modified or truncated output. Renders publish atomically and write `*.provenance.json`.
+- **Legacy JSON Error Contract**: `VCR_AGENT_MODE=1` still prints machine-readable errors on stderr (now in the contract envelope plus the old keys).
+- **Quickstart**: [docs/AGENT_QUICKSTART.md](docs/AGENT_QUICKSTART.md): discover → normalize → author → validate/preflight → inspect → revise → render → verify.
 - **Explain Preflight**: `vcr explain --json` reports resolved params plus backend compatibility, the recommended backend, unsupported layer IDs/kinds, and blockers before render.
-- **Deterministic Pipeline**: Agents can reason about frames and pixels without worrying about platform-specific variations.
+- **Scoped determinism**: scene settings are always reproducible; software-backend raster frames are expected identical for the same engine build; encoded file bytes also depend on the ffmpeg build; GPU output is not bit-identical across hardware. Provenance records the conditions.
 - **Structured Manifests**: Declarative YAML makes it easy for LLMs to author and modify complex scenes.
 
 ## Visual-First Development

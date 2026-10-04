@@ -33,12 +33,18 @@ This produces:
 
 ## Agent Workflow
 
-1. Run `vcr prompt`.
+Short version in [docs/AGENT_QUICKSTART.md](docs/AGENT_QUICKSTART.md); machine contract in [docs/AGENT_CONTRACT.md](docs/AGENT_CONTRACT.md).
+
+0. `vcr capabilities --json`: what this installed engine can do and what is usable here (do not guess fields, fonts, codecs, time units or hardware).
+1. `vcr prompt --json`: normalize. `status: "blocked"` means stop and resolve with the requester.
 2. If packs are referenced, run `scripts/pack_contact_sheet.sh` and share item IDs/dimensions.
-3. Resolve or explicitly report entries in `unknowns_and_fixes`.
-4. Author manifest from `normalized_spec` and `standardized_vcr_prompt`.
-5. Validate with `vcr check` and `vcr lint`.
-6. Render with `vcr build`.
+3. Resolve or explicitly report entries in `unknowns_and_fixes`. Never invent text, brand colors or assets.
+4. Author the manifest from `normalized_spec`.
+5. Validate in order: `vcr check --json`, `vcr lint --json`, `vcr explain --json` (backend preflight; `ready` must be true).
+6. `vcr inspect --json`: sampled frames + contact sheet + bounds/timing diagnostics. Revise by layer `id` or declared param, then inspect again.
+7. `vcr render --json` (atomic publish + provenance), then `vcr verify FILE --manifest M [--expect-transparency required] --json`. Verification passing is the definition of delivered.
+
+With `--json`, stdout is exactly one JSON line; read `status`, `diagnostics`, `error.code`; never scrape stderr.
 
 ## Output Contract from `vcr prompt`
 
@@ -47,6 +53,10 @@ This produces:
 - `unknowns_and_fixes`
 - `assumptions_applied`
 - `acceptance_checks`
+
+## Determinism Scope
+
+Scene settings are always reproducible. Software-backend raster frames are expected identical for the same engine build. Decoded/encoded bytes depend on the ffmpeg build (recorded in `*.provenance.json`). GPU output is not bit-identical across hardware. See the contract doc.
 
 ## Determinism Defaults
 

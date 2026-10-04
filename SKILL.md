@@ -23,11 +23,28 @@ VCR (Video Component Renderer) is a headless, deterministic motion graphics comp
 
 ## Quick Start
 
-```bash
-# Normalize natural language (or loose YAML) into an engine-ready prompt bundle
-vcr prompt --text "5s alpha lower third at 60fps output ./renders/lower_third.mov"
+The complete agent workflow is **discover → normalize → author → validate/preflight → inspect → revise → render → verify**. The short, authoritative version is [docs/AGENT_QUICKSTART.md](docs/AGENT_QUICKSTART.md); the machine contract is [docs/AGENT_CONTRACT.md](docs/AGENT_CONTRACT.md). Every step below has a `--json` form that prints exactly one JSON document on stdout (contract `vcr.agent/1`).
 
-# Validate a manifest without rendering
+```bash
+# 0. Ask the installed engine what it can do (fields, layers, fonts, codecs, time units, GPU/ffmpeg)
+vcr capabilities --json [--schema]
+
+# 1. Normalize natural language (or loose YAML) into an engine-ready prompt bundle
+vcr prompt --json --text "5s alpha lower third at 60fps output ./renders/lower_third.mov"
+
+# 2. Validate, lint, and preflight (can THIS machine render it with THIS backend?)
+vcr check scene.vcr --json
+vcr lint scene.vcr --json
+vcr explain scene.vcr --json --backend software      # alias: vcr preflight
+
+# 3. Look at the motion: sampled frames, contact sheet, layer bounds, timing diagnostics
+vcr inspect scene.vcr --json -o renders/scene_inspect
+
+# 4. Render (atomic publish + provenance), then verify the encoded file
+vcr render scene.vcr -o renders/scene.mov --json
+vcr verify renders/scene.mov --manifest scene.vcr --expect-transparency required --json
+
+# Other single-purpose commands
 vcr check scene.vcr
 
 # Render to video
@@ -40,10 +57,10 @@ vcr render-frame scene.vcr --frame 0 -o frame.png
 vcr build scene.vcr --set speed=2.0 --set color=#ff0000
 
 # System health check
-vcr doctor
+vcr doctor --json
 ```
 
-Video and still outputs also write a sidecar `*.metadata.json`. The `agent_context` object (when present) lists each layer’s evaluated position, opacity, visibility, and related fields at the **last timeline frame** included in that output—useful for agent iteration after `build`, `render-frame`, or `preview`.
+Video and still outputs also write a sidecar `*.metadata.json` (the deterministic *scene record*). The `agent_context` object (when present) lists each layer’s evaluated position, opacity, visibility, and related fields at the **last timeline frame only**: it says nothing about entrances, holds or exits. Use `vcr inspect` for temporal evidence. Video renders also write `*.provenance.json` (the *execution record*: engine build, ffmpeg, backend, hashes, inputs, verification); it is written last, so a file without matching provenance must not be treated as a completed export.
 
 ---
 
@@ -89,7 +106,9 @@ vcr prompt --in ./request.yaml -o ./request.normalized.yaml
    - If non-empty, treat as blocking clarification/normalization work.
    - Do not silently invent missing values.
 4. Use `normalized_spec` and `standardized_vcr_prompt` as the source of truth for manifest authoring.
-5. Validate generated manifests with `vcr check`/`vcr lint` before `vcr build`.
+5. Validate generated manifests with `vcr check`, `vcr lint`, and `vcr explain` (backend preflight) before rendering. `check` proves structure only; it does not prove the backend can render the scene.
+6. Run `vcr inspect` and look at the contact sheet. A scene can be schema-valid and still be clipped, mistimed or unreadable; the final-frame `agent_context` cannot show that.
+7. Render with `vcr render`, then run `vcr verify --manifest <scene> [--expect-transparency required]`. A render is not delivered until verification passes. `status: blocked` from `vcr prompt` means stop and resolve the blocker with the requester.
 
 ### Deterministic Defaults Applied by Prompt Gate
 
@@ -434,7 +453,7 @@ struct ShaderUniforms {
 
 Uniform packing: uniforms map to `custom[0].x`, `custom[0].y`, `custom[0].z`, `custom[0].w`, `custom[1].x`, etc. in declaration order. Maximum 8 uniforms.
 
-**Falls back to transparent on software backend.**
+**Software backend: rejected.** A manifest containing `shader` (or `wgpu_shader`, `video`, `lottie`) layers cannot render on the software backend. `vcr render --backend software` fails with `UNSUPPORTED_SOFTWARE_LAYER_TYPES` (exit 2) and `vcr explain --json` reports it as a preflight blocker. The same applies to `post:` and enabled `ascii_post:` (`UNSUPPORTED_SOFTWARE_FEATURES`). Nothing is silently dropped or rendered transparent. Use `--backend gpu` on a machine with a GPU adapter, or remove the layer after confirming with the requester.
 
 ---
 
@@ -1215,8 +1234,8 @@ Before rendering, verify:
 7. **ScalarProperty expressions** use valid function names and reference defined params.
 8. **Modulator sources** in layer bindings must reference modulators defined at the top level.
 9. **Group parents** must reference defined group IDs. No cycles.
-10. **Post-processing** is GPU-only. Use `--backend gpu` or `auto`.
-11. **Shader layers** are GPU-only. Software backend renders them transparent.
+10. **Post-processing** is GPU-only. The software backend refuses it (`UNSUPPORTED_SOFTWARE_FEATURES`); use `--backend gpu`.
+11. **Shader / wgpu_shader / video / lottie layers** are GPU-only. The software backend refuses them (`UNSUPPORTED_SOFTWARE_LAYER_TYPES`).
 12. **Duration in frames** must not exceed 100,000.
 13. **Resolution** per dimension must not exceed 8192.
 
@@ -1234,11 +1253,11 @@ Any typo in a YAML key will cause a parse error. `colour` instead of `color` wil
 
 ### 3. Shader Layers are GPU-Only
 
-Custom shader layers render as transparent on the software backend. Always use `--backend gpu` or `auto` for shader content.
+Custom shader layers cannot render on the software backend; the render fails with a typed error instead of producing a transparent layer. Use `--backend gpu` (or `auto` on a machine with a GPU adapter). `vcr explain --json` tells you before you render.
 
 ### 4. Post-Processing is GPU-Only
 
-The `post:` pipeline requires the GPU backend. It will be skipped on software.
+The `post:` pipeline requires the GPU backend. The software backend refuses a manifest that has it (it would otherwise be ignored). `vcr explain --json` reports `backend.software_ignores_feature`.
 
 ### 5. Image Paths Must Be Relative
 
@@ -1264,9 +1283,21 @@ Only four easing curves: `linear`, `ease_in`, `ease_out`, `ease_in_out`. For mor
 
 `"speed is ${speed}"` will fail. Use `"${speed}"` alone, or reference params directly in expressions: `"t * speed"`.
 
-### 11. Procedural Shapes Fill the Layer Area
+### 11. Procedural Shapes Fill the Layer Area, and Their Geometry Is Normalized
 
-Procedural primitives are rendered to a texture the size of the full canvas. Position, scale, and rotation on the layer transform the entire texture.
+Procedural primitives are rendered to a texture the size of the full canvas. Position, scale, and rotation on the layer transform the entire texture. Shape geometry (`center`, `size`, `radius`, `p0..p2`, `start`/`end`, `thickness`) is **normalized 0..1 of canvas width/height** (`corner_radius` and radii scale with width), not pixels. A `rounded_rect` written in pixels draws nothing and still passes `check`/`lint`; `vcr inspect` reports `layer.renders_nothing`.
+
+### 13. Unknown `font_family` Silently Falls Back
+
+Only the GeistPixel families are bundled (`vcr capabilities --json` → `fonts.families`). Any other name renders in `GeistPixel-Line`. `vcr explain --json` flags it as `text.font_family_fallback`; do not assume the requested typeface was used.
+
+### 14. Text Layers Do Not Wrap and Can Exceed the Canvas
+
+Text is laid out on one line (hard line breaks only). Long copy is clipped by the canvas edge; `vcr inspect` reports `layout.touches_canvas_edge` when content is within a few pixels of an edge.
+
+### 15. Layer `start_time` Does Not Shift Keyframes
+
+Keyframes and expressions use the layer's *local* frame, `(global_frame + time_offset*fps) * time_scale`. A layer with `start_time: 2.0` whose keyframes begin at `start_frame: 0` starts its animation at global frame 0 (while hidden); set `time_offset` to `-start_time` to start the animation when the layer appears.
 
 ### 12. Time Variables
 
@@ -1296,11 +1327,15 @@ project/
 
 ## Determinism Contract
 
-Same manifest + same params + same seed + same backend = identical frame bytes.
+Three levels, with different guarantees (details and the conditions to compare are in `*.provenance.json`):
 
-- **Software backend**: Bitwise identical on the same machine and toolchain.
-- **GPU backend**: Not guaranteed bit-exact across different hardware/drivers.
-- Use `vcr determinism-report scene.vcr --frame 0` to get a frame hash for verification.
+1. **Scene and settings**: the same manifest + params + seed resolve to the same settings (`resolved_manifest_hash`, `manifest_hash`). Always reproducible.
+2. **Raster frames** (`hashes.raster_frames_sha256`, the pre-encode RGBA of every frame):
+   - **Software backend**: expected identical for the same engine build, including across machines (the repo's golden frame hash matches on macOS and Linux).
+   - **GPU backend**: not guaranteed across different hardware, drivers or OS.
+3. **Decoded and encoded bytes** (`hashes.decoded_frames_sha256`, `hashes.output_file_sha256`): identical only for the same **ffmpeg build** and arguments. The same raster frames encoded by a different ffmpeg produce a different `.mov` (observed: ffmpeg 6.1.1 on Linux vs the repo's golden macOS hash). Compare `toolchain.ffmpeg` before treating a file-hash difference as a defect.
+
+Use `vcr determinism-report scene.vcr --frame 0` for a single frame hash, and compare `*.provenance.json` between runs for the full picture.
 
 ---
 
@@ -1308,7 +1343,7 @@ Same manifest + same params + same seed + same backend = identical frame bytes.
 
 VCR requires:
 
-- **FFmpeg** in PATH (for video encoding)
+- **FFmpeg and ffprobe** in PATH (video encoding; ffprobe is also required for output verification)
 - **Rust stable toolchain** (for building from source)
 - **GPU** (macOS Metal) for GPU backend, shader layers, and post-processing
 
