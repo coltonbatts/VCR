@@ -1,0 +1,30 @@
+# Scripted REFERENCE solution for T02. Three centered titles, fade in/hold/out, 120 frames @30.
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 30
+  duration: 4.0
+layers:
+  - id: backdrop
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.04, g: 0.04, b: 0.06, a: 1.0 }
+  - id: act1
+    z_index: 1
+    anchor: center
+    position: { x: 640, y: 360 }
+    opacity: "smoothstep(0.0, 8.0, t) * (1.0 - smoothstep(30.0, 38.0, t))"
+    text: { content: "ACT ONE", font_family: "GeistPixel-Line", font_size: 80, color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 } }
+  - id: act2
+    z_index: 1
+    anchor: center
+    position: { x: 640, y: 360 }
+    opacity: "smoothstep(40.0, 48.0, t) * (1.0 - smoothstep(70.0, 78.0, t))"
+    text: { content: "ACT TWO", font_family: "GeistPixel-Line", font_size: 80, color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 } }
+  - id: act3
+    z_index: 1
+    anchor: center
+    position: { x: 640, y: 360 }
+    opacity: "smoothstep(80.0, 88.0, t) * (1.0 - smoothstep(104.0, 112.0, t))"
+    text: { content: "ACT THREE", font_family: "GeistPixel-Line", font_size: 80, color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 } }

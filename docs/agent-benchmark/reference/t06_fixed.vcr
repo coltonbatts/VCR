@@ -1,0 +1,18 @@
+# Scripted REFERENCE solution for T06: same words, two lines at a size that fits with margins.
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 30
+  duration: 3.0
+layers:
+  - id: backdrop
+    z_index: 0
+    procedural: { kind: solid_color, color: { r: 0.10, g: 0.10, b: 0.12, a: 1.0 } }
+  - id: headline_a
+    z_index: 2
+    position: { x: 96, y: 260 }
+    text: { content: "QUARTERLY RESULTS", font_family: "GeistPixel-Line", font_size: 56, color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 } }
+  - id: headline_b
+    z_index: 2
+    position: { x: 96, y: 340 }
+    text: { content: "EXCEEDED EVERY FORECAST", font_family: "GeistPixel-Line", font_size: 56, color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 } }

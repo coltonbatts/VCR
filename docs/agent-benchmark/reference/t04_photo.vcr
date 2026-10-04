@@ -1,0 +1,22 @@
+# Scripted REFERENCE solution for T04. Supplied photo full-frame, caption on a translucent strip.
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 30
+  duration: 2.0
+layers:
+  - id: photo
+    z_index: 0
+    image: { path: assets_pool/photo_placeholder.png }
+  - id: caption_strip
+    z_index: 1
+    procedural:
+      kind: rounded_rect
+      center: { x: 0.5, y: 0.8833 }       # px y 596..676, x 48..1232 (inside 4% margin)
+      size: { x: 0.925, y: 0.1111 }
+      corner_radius: 0.004
+      color: { r: 0.02, g: 0.03, b: 0.05, a: 0.62 }
+  - id: caption
+    z_index: 2
+    position: { x: 72, y: 614 }
+    text: { content: "Harbor at dawn", font_family: "GeistPixel-Line", font_size: 48, color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 } }

@@ -1,0 +1,17 @@
+# References a client logo that exists nowhere in the workspace.
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 30
+  duration: 2.0
+layers:
+  - id: backdrop
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.08, g: 0.08, b: 0.1, a: 1.0 }
+  - id: client_logo
+    z_index: 1
+    position: { x: 384, y: 104 }
+    image:
+      path: assets/client_logo.png

@@ -1,0 +1,25 @@
+# Scripted REFERENCE solution for T03. The supplied logo is used as-is (path to the pool copy).
+version: 1
+environment:
+  resolution: { width: 1280, height: 720 }
+  fps: 30
+  duration: 3.0
+layers:
+  - id: backdrop
+    z_index: 0
+    procedural:
+      kind: solid_color
+      color: { r: 0.05, g: 0.06, b: 0.09, a: 1.0 }
+  - id: logo
+    z_index: 1
+    anchor: center
+    position: { x: 640, y: 290 }
+    scale: [0.6, 0.6]
+    opacity: "smoothstep(0.0, 20.0, t)"
+    image: { path: assets_pool/logo_mark.png }
+  - id: wordmark
+    z_index: 2
+    anchor: center
+    position: { x: 640, y: 560 }
+    opacity: "smoothstep(30.0, 50.0, t)"
+    text: { content: "NORTHWIND", font_family: "GeistPixel-Line", font_size: 64, color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 } }
