@@ -3570,7 +3570,7 @@ fn run_preview(
     if let Some(overrides) = ascii_overrides {
         scene = scene.with_ascii_overrides(overrides.clone());
     }
-    let mut renderer = create_renderer(&preview_environment, &manifest.layers, scene, backend)?;
+    let mut renderer = create_renderer(&manifest.environment, &manifest.layers, scene, backend)?;
     let layout_elapsed = layout_start.elapsed();
 
     progress_log(
@@ -3622,6 +3622,7 @@ fn run_preview(
         for frame_index in window.frame_indices() {
             let render_start = Instant::now();
             let rgba = renderer.render_frame_rgba(frame_index)?;
+            let rgba = downscale_to_preview(rgba, &manifest.environment, &preview_environment);
             render_elapsed += render_start.elapsed();
 
             let encode_start = Instant::now();
@@ -3646,6 +3647,7 @@ fn run_preview(
         for frame_index in window.frame_indices() {
             let render_start = Instant::now();
             let rgba = renderer.render_frame_rgba(frame_index)?;
+            let rgba = downscale_to_preview(rgba, &manifest.environment, &preview_environment);
             render_elapsed += render_start.elapsed();
 
             let encode_start = Instant::now();
@@ -3717,7 +3719,7 @@ fn run_preview_sample_frames(
     if let Some(overrides) = ascii_overrides {
         scene = scene.with_ascii_overrides(overrides.clone());
     }
-    let mut renderer = create_renderer(&preview_environment, &manifest.layers, scene, backend)?;
+    let mut renderer = create_renderer(&manifest.environment, &manifest.layers, scene, backend)?;
     let layout_elapsed = layout_start.elapsed();
 
     progress_log(
@@ -3746,6 +3748,7 @@ fn run_preview_sample_frames(
     for frame_index in &frame_indices {
         let render_start = Instant::now();
         let rgba = renderer.render_frame_rgba(*frame_index)?;
+        let rgba = downscale_to_preview(rgba, &manifest.environment, &preview_environment);
         render_elapsed += render_start.elapsed();
 
         let encode_start = Instant::now();
@@ -4650,6 +4653,23 @@ fn save_rgba_png(path: &Path, width: u32, height: u32, rgba: Vec<u8>) -> Result<
     image
         .save(path)
         .with_context(|| format!("failed to write png {}", path.display()))
+}
+
+/// Previews must show the whole composition at a smaller size. Layers are laid out in the
+/// original pixel coordinates, so render at full resolution and downscale; rendering directly into
+/// a smaller canvas would crop the top-left of the scene.
+fn downscale_to_preview(rgba: Vec<u8>, full: &Environment, preview: &Environment) -> Vec<u8> {
+    let (w, h) = (full.resolution.width, full.resolution.height);
+    let (pw, ph) = (preview.resolution.width, preview.resolution.height);
+    if (w, h) == (pw, ph) {
+        return rgba;
+    }
+    match RgbaImage::from_raw(w, h, rgba) {
+        Some(img) => {
+            image::imageops::resize(&img, pw, ph, image::imageops::FilterType::Triangle).into_raw()
+        }
+        None => Vec::new(),
+    }
 }
 
 fn scaled_environment(environment: &Environment, scale: f32) -> Environment {

@@ -685,3 +685,50 @@ fn ascii_capture_invalid_aspect_emits_typed_error_envelope() {
         Value::String("INVALID_ASPECT_PRESET".to_owned())
     );
 }
+
+#[test]
+fn preview_scale_keeps_the_whole_composition() {
+    // Regression: `preview --scale` used to render layers at their original pixel coordinates
+    // into a smaller canvas, i.e. a cropped top-left view instead of a scaled composition.
+    let dir = tempdir().expect("tempdir");
+    write_manifest(
+        &dir.path().join("c.vcr"),
+        "version: 1\nenvironment:\n  resolution: { width: 400, height: 200 }\n  fps: 10\n  duration: { frames: 2 }\nlayers:\n  - id: t\n    position: { x: 200, y: 100 }\n    anchor: center\n    text:\n      content: \"HELLO\"\n      font_size: 60\n",
+    );
+    let output = run_vcr(
+        dir.path(),
+        &[
+            "--backend",
+            "software",
+            "preview",
+            "c.vcr",
+            "--scale",
+            "0.5",
+            "-o",
+            "pv/",
+            "--frames",
+            "2",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let img = image::open(dir.path().join("pv/sample_000000.png"))
+        .expect("sample frame")
+        .to_rgba8();
+    assert_eq!((img.width(), img.height()), (200, 100));
+    // At full size the text spans x 108..291 (centred at 200). Scaled by 0.5 it must span about
+    // 54..146: entirely inside the 200px preview, not cut off at x=200.
+    let xs: Vec<u32> = img
+        .enumerate_pixels()
+        .filter(|(_, _, p)| p[3] > 0)
+        .map(|(x, _, _)| x)
+        .collect();
+    let (min, max) = (*xs.iter().min().unwrap(), *xs.iter().max().unwrap());
+    assert!(
+        max < 160 && min > 40,
+        "preview should be a scaled composition, got x {min}..{max}"
+    );
+}
