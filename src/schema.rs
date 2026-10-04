@@ -8,7 +8,7 @@ use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize};
 pub type Parameters = BTreeMap<String, f32>;
 pub type ModulatorMap = BTreeMap<String, ModulatorDefinition>;
 
-const DEFAULT_MANIFEST_VERSION: u32 = 1;
+pub const DEFAULT_MANIFEST_VERSION: u32 = 1;
 const DEFAULT_ENV_ATTACK: f32 = 12.0;
 const DEFAULT_ENV_DECAY: f32 = 24.0;
 const MAX_RESOLUTION: u32 = 8192;
@@ -54,7 +54,7 @@ pub struct ParamDefinition {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     #[serde(skip)]
@@ -85,7 +85,7 @@ pub struct Manifest {
     pub manifest_hash: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Environment {
     pub resolution: Resolution,
@@ -97,7 +97,9 @@ pub struct Environment {
     pub encoding: EncodingConfig,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ProResProfile {
     Proxy,
@@ -126,7 +128,9 @@ impl ProResProfile {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ProResEncoder {
     #[default]
@@ -143,7 +147,7 @@ impl ProResEncoder {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProResQuantMat {
     Auto,
@@ -167,7 +171,9 @@ impl ProResQuantMat {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ColorRange {
     #[default]
@@ -184,7 +190,7 @@ impl ColorRange {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EncodingConfig {
     #[serde(default)]
@@ -355,7 +361,7 @@ impl Environment {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ColorSpace {
     #[serde(alias = "rec709", alias = "rec_709")]
@@ -382,14 +388,14 @@ impl ColorSpace {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Resolution {
     pub width: u32,
     pub height: u32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum Duration {
     Seconds(f32),
@@ -467,7 +473,7 @@ impl TimingControls {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModulatorDefinition {
     pub expression: ScalarExpression,
@@ -484,7 +490,7 @@ impl ModulatorDefinition {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, Default, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModulatorWeights {
     #[serde(default)]
@@ -528,7 +534,7 @@ impl ModulatorWeights {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModulatorBinding {
     pub source: String,
@@ -560,7 +566,7 @@ impl ModulatorBinding {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Group {
     pub id: String,
@@ -686,7 +692,7 @@ impl Group {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Anchor {
     #[default]
@@ -694,7 +700,7 @@ pub enum Anchor {
     Center,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LayerCommon {
     pub id: String,
@@ -823,7 +829,7 @@ pub enum Layer {
     Lottie(LottieLayer),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct LayerWire {
     #[serde(flatten)]
@@ -848,6 +854,33 @@ struct LayerWire {
     sequence: Option<SequenceSource>,
     #[serde(default)]
     lottie: Option<LottieSource>,
+}
+
+impl Layer {
+    /// Stable kind label used by discovery, preflight and inspection output.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Layer::Asset(_) => "asset",
+            Layer::Image(_) => "image",
+            Layer::Video(_) => "video",
+            Layer::Procedural(_) => "procedural",
+            Layer::Shader(_) => "shader",
+            Layer::WgpuShader(_) => "wgpu_shader",
+            Layer::Text(_) => "text",
+            Layer::Ascii(_) => "ascii",
+            Layer::Sequence(_) => "sequence",
+            Layer::Lottie(_) => "lottie",
+        }
+    }
+}
+
+impl schemars::JsonSchema for Layer {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Layer".into()
+    }
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <LayerWire as schemars::JsonSchema>::json_schema(generator)
+    }
 }
 
 impl<'de> Deserialize<'de> for Layer {
@@ -1020,7 +1053,7 @@ fn layer_wgpu_source_label() -> &'static str {
     "`wgpu_shader`,"
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AsciiLayer {
     #[serde(flatten)]
@@ -1041,7 +1074,7 @@ impl AsciiLayer {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AsciiSource {
     pub grid: AsciiGrid,
@@ -1152,14 +1185,14 @@ impl AsciiSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AsciiGrid {
     pub rows: u32,
     pub columns: u32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AsciiCellMetrics {
     pub width: u32,
@@ -1172,7 +1205,7 @@ fn default_pixel_aspect_ratio() -> f32 {
     1.0
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AsciiFontVariant {
     GeistPixelLine,
@@ -1182,7 +1215,7 @@ pub enum AsciiFontVariant {
     GeistPixelTriangle,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AsciiCellOverride {
     pub row: u32,
@@ -1246,7 +1279,7 @@ impl AsciiCellOverride {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AsciiReveal {
     RowMajor {
@@ -1280,7 +1313,7 @@ impl AsciiReveal {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, Default, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AsciiRevealDirection {
     #[default]
@@ -1288,7 +1321,7 @@ pub enum AsciiRevealDirection {
     Reverse,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextLayer {
     #[serde(flatten)]
@@ -1306,7 +1339,7 @@ impl TextLayer {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextSource {
     pub content: String,
@@ -1337,7 +1370,7 @@ fn default_text_color() -> ColorRgba {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AssetLayer {
     #[serde(flatten)]
@@ -1345,7 +1378,7 @@ pub struct AssetLayer {
     pub source_path: PathBuf,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LottieLayer {
     #[serde(flatten)]
@@ -1362,7 +1395,7 @@ impl LottieLayer {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LottieSource {
     pub path: PathBuf,
@@ -1377,7 +1410,7 @@ impl AssetLayer {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImageLayer {
     #[serde(flatten)]
@@ -1394,13 +1427,13 @@ impl ImageLayer {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImageSource {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VideoLayer {
     #[serde(flatten)]
@@ -1417,13 +1450,13 @@ impl VideoLayer {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VideoSource {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct SequenceLayer {
     #[serde(flatten)]
     pub common: LayerCommon,
@@ -1452,7 +1485,7 @@ impl SequenceLayer {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SequenceSource {
     /// Directory containing frame images (relative to manifest directory).
@@ -1480,7 +1513,7 @@ impl SequenceSource {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProceduralLayer {
     #[serde(flatten)]
@@ -1488,7 +1521,7 @@ pub struct ProceduralLayer {
     pub procedural: ProceduralSource,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ShaderLayer {
     #[serde(flatten)]
@@ -1496,7 +1529,7 @@ pub struct ShaderLayer {
     pub shader: ShaderSource,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ShaderSource {
     #[serde(default)]
@@ -1527,7 +1560,7 @@ impl ShaderLayer {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WgpuShaderLayer {
     #[serde(flatten)]
@@ -1535,7 +1568,7 @@ pub struct WgpuShaderLayer {
     pub wgpu_shader: WgpuShaderSource,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WgpuShaderSource {
     pub shader_path: PathBuf,
@@ -1545,7 +1578,7 @@ pub struct WgpuShaderSource {
     pub time_mode: WgpuShaderTimeMode,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, Default, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WgpuShaderTimeMode {
     #[default]
@@ -1579,7 +1612,7 @@ impl ProceduralLayer {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProceduralSource {
     SolidColor {
@@ -1713,7 +1746,7 @@ impl ProceduralSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, Default, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GradientDirection {
     #[default]
@@ -1721,7 +1754,7 @@ pub enum GradientDirection {
     Vertical,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ColorRgba {
     pub r: f32,
@@ -1787,25 +1820,35 @@ impl AnimatableColor {
     }
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+#[schemars(rename = "AnimatableColor")]
+struct AnimatableColorWire {
+    r: ScalarProperty,
+    g: ScalarProperty,
+    b: ScalarProperty,
+    #[serde(default = "default_alpha_property")]
+    a: ScalarProperty,
+}
+
+fn default_alpha_property() -> ScalarProperty {
+    ScalarProperty::Static(1.0)
+}
+
+impl schemars::JsonSchema for AnimatableColor {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "AnimatableColor".into()
+    }
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <AnimatableColorWire as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
 impl<'de> Deserialize<'de> for AnimatableColor {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        struct ColorFields {
-            r: ScalarProperty,
-            g: ScalarProperty,
-            b: ScalarProperty,
-            #[serde(default = "default_alpha_property")]
-            a: ScalarProperty,
-        }
-
-        fn default_alpha_property() -> ScalarProperty {
-            ScalarProperty::Static(1.0)
-        }
-
-        let fields = ColorFields::deserialize(deserializer)?;
+        let fields = AnimatableColorWire::deserialize(deserializer)?;
         Ok(AnimatableColor {
             r: fields.r,
             g: fields.g,
@@ -1832,18 +1875,27 @@ pub struct Vec2 {
     pub y: f32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Vec2Object {
     x: f32,
     y: f32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 enum Vec2Repr {
     Object(Vec2Object),
     Array([f32; 2]),
+}
+
+impl schemars::JsonSchema for Vec2 {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Vec2".into()
+    }
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <Vec2Repr as schemars::JsonSchema>::json_schema(generator)
+    }
 }
 
 impl<'de> Deserialize<'de> for Vec2 {
@@ -1871,7 +1923,7 @@ impl<'de> Deserialize<'de> for Vec2 {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum PropertyValue<T> {
     Static(T),
@@ -1913,7 +1965,7 @@ impl Default for PropertyValue<Vec2> {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum ScalarProperty {
     Static(f32),
@@ -1977,6 +2029,18 @@ impl ScalarExpression {
             .map_err(|error| anyhow!("invalid expression '{}': {error}", self.source))?;
         validate_number("expression result", value)?;
         Ok(value)
+    }
+}
+
+impl schemars::JsonSchema for ScalarExpression {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ScalarExpression".into()
+    }
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "description": "Expression over time/params, e.g. `sin(t * 2) * 100`. Parsed and validated at load time; see capabilities.expression."
+        })
     }
 }
 
@@ -2285,7 +2349,7 @@ impl<'a> ExpressionParser<'a> {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KeyValue<T> {
     pub start_frame: u32,
@@ -2314,7 +2378,7 @@ impl<T: Clone + Interpolate> KeyValue<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, Default, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EasingCurve {
     #[default]
@@ -2434,6 +2498,54 @@ pub fn validate_manifest_manifest_level(manifest: &Manifest) -> Result<()> {
 
     Ok(())
 }
+
+/// Expression functions: `(name, accepted argument counts, summary)`. Authoritative for
+/// discovery (`vcr capabilities`); `expression_function_table_matches_evaluator` fails if the
+/// evaluator below gains or loses a function without this table being updated.
+pub const EXPRESSION_FUNCTIONS: &[(&str, &str, &str)] = &[
+    ("clamp", "3", "clamp(x, min, max)"),
+    ("lerp", "3", "lerp(a, b, t) linear interpolation"),
+    (
+        "smoothstep",
+        "3",
+        "smoothstep(edge0, edge1, x) hermite 0..1",
+    ),
+    (
+        "easeinout",
+        "1",
+        "easeinout(x) smooth ease of x clamped to 0..1",
+    ),
+    ("step", "2", "step(edge, x) -> 1 when x >= edge else 0"),
+    ("fract", "1", "fractional part"),
+    ("floor", "1", "floor"),
+    ("ceil", "1", "ceil"),
+    ("round", "1", "round"),
+    ("saw", "1-2", "saw(x[, frequency]) sawtooth 0..1"),
+    ("tri", "1-2", "tri(x[, frequency]) triangle 0..1"),
+    (
+        "random",
+        "1",
+        "random(n) deterministic hash noise 0..1 using manifest seed",
+    ),
+    (
+        "glitch",
+        "1-2",
+        "glitch(t[, intensity]) seeded sparse bursts",
+    ),
+    ("sin", "1", "sine (radians)"),
+    ("cos", "1", "cosine (radians)"),
+    ("abs", "1", "absolute value"),
+    (
+        "noise1d",
+        "1-2",
+        "noise1d(x[, seed_offset]) smooth seeded noise -1..1",
+    ),
+    (
+        "env",
+        "1 or 3",
+        "env(time[, attack, decay]) attack/decay envelope",
+    ),
+];
 
 fn evaluate_function(
     name: &str,
@@ -2728,14 +2840,14 @@ fn validate_number(label: &str, value: f32) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// A single post-processing effect entry in the manifest `post:` array.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct PostEffect {
     #[serde(flatten)]
     pub kind: PostEffectKind,
 }
 
 /// Discriminated union of supported post-processing shaders.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "shader", rename_all = "snake_case")]
 pub enum PostEffectKind {
     Passthrough,
@@ -2774,7 +2886,7 @@ const DEFAULT_ASCII_POST_RAMP: &str = " .:-=+*#%@";
 /// When enabled, the composited frame is analyzed at terminal-cell resolution,
 /// luminance is mapped to glyph indices, and a debug grayscale visualization
 /// is rendered as the final output.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AsciiPostConfig {
     #[serde(default)]
@@ -3494,5 +3606,36 @@ ascii_post:
             .unwrap()
             .validate()
             .expect("disabled ascii_post should skip validation");
+    }
+}
+
+#[cfg(test)]
+mod expression_table_tests {
+    use super::EXPRESSION_FUNCTIONS;
+
+    #[test]
+    fn expression_function_table_matches_evaluator() {
+        let source = include_str!("schema.rs");
+        let start = source.find("fn evaluate_function(").expect("evaluator");
+        let end = source[start..].find("fn expect_arity").expect("end") + start;
+        let body = &source[start..end];
+        let mut in_code: Vec<String> = body
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                let rest = line.strip_prefix('"')?;
+                let (name, tail) = rest.split_once('"')?;
+                tail.trim_start()
+                    .starts_with("=> {")
+                    .then(|| name.to_owned())
+            })
+            .collect();
+        in_code.sort();
+        let mut in_table: Vec<String> = EXPRESSION_FUNCTIONS
+            .iter()
+            .map(|(name, _, _)| (*name).to_owned())
+            .collect();
+        in_table.sort();
+        assert_eq!(in_code, in_table, "update EXPRESSION_FUNCTIONS");
     }
 }

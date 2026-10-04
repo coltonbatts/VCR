@@ -27,6 +27,12 @@ VCR (Video Component Renderer) is a headless, deterministic motion graphics comp
 # Normalize natural language (or loose YAML) into an engine-ready prompt bundle
 vcr prompt --text "5s alpha lower third at 60fps output ./renders/lower_third.mov"
 
+# Ask the installed engine what it can do (fields, layers, fonts, codecs, time units, GPU/ffmpeg)
+vcr capabilities --json            # add --schema for the manifest JSON Schema
+
+# Sample the timeline: contact sheet + clipping/timing diagnostics (see docs/AGENT_CONTRACT.md)
+vcr inspect scene.vcr --json -o renders/scene_inspect
+
 # Validate a manifest without rendering
 vcr check scene.vcr
 
@@ -1272,6 +1278,10 @@ Only four easing curves: `linear`, `ease_in`, `ease_out`, `ease_in_out`. For mor
 
 Procedural primitives are rendered to a texture the size of the full canvas. Position, scale, and rotation on the layer transform the entire texture.
 
+### 11b. Procedural Geometry Is Normalized
+
+`center`, `size`, `radius`, `p0..p2`, `start`/`end` and `thickness` on procedural shapes are **0–1 fractions of canvas width/height** (`corner_radius` and radii scale with width), not pixels. A `rounded_rect` written in pixels draws nothing and still passes `check` and `lint`; `vcr inspect` reports `layer.renders_nothing`.
+
 ### 12. Time Variables
 
 - `start_time` / `end_time` are in **seconds**
@@ -1280,6 +1290,14 @@ Procedural primitives are rendered to a texture the size of the full canvas. Pos
 - `t` in expressions is in **frames**
 
 ---
+
+### 14. Text Layers Do Not Wrap and Can Exceed the Canvas
+
+Text is laid out on one line (hard line breaks only). Long copy is cut by the canvas edge; `vcr inspect` reports `layout.touches_canvas_edge` when content is within a few pixels of an edge.
+
+### 15. Layer `start_time` Does Not Shift Keyframes
+
+Keyframes and expressions use the layer's *local* frame, `(global_frame + time_offset*fps) * time_scale`. A layer with `start_time: 2.0` whose keyframes begin at `start_frame: 0` starts animating at global frame 0 (while still hidden). Set `time_offset: -2.0` to start the animation when the layer appears.
 
 ## File Structure Conventions
 

@@ -11,6 +11,7 @@ use vcr::agent_contract::{
     ArtifactRef, Basis, Diagnostic, Envelope, Location, Severity, Status, EXIT_BLOCKED,
     EXIT_MISSING_DEPENDENCY,
 };
+use vcr::inspect::{self, DiagnosticConfig};
 
 #[derive(Debug)]
 pub(super) struct EarlyExit(pub u8);
@@ -52,7 +53,7 @@ fn manifest_summary(manifest: &Manifest, path: &Path) -> Value {
             "prores_profile": profile.to_ffmpeg_profile(),
             "alpha_capable_profile": profile.supports_alpha(),
         },
-        "layers": manifest.layers.iter().map(|l| json!({"id": l.id(), "z_index": l.z_index()})).collect::<Vec<_>>(),
+        "layers": manifest.layers.iter().map(|l| json!({"id": l.id(), "kind": l.kind(), "z_index": l.z_index()})).collect::<Vec<_>>(),
         "params": manifest.resolved_params,
         "overrides": manifest.applied_param_overrides,
     })
@@ -175,6 +176,60 @@ pub(super) fn doctor_json() -> Result<()> {
         envelope = envelope.with_exit(EXIT_MISSING_DEPENDENCY);
     }
     finish(envelope)
+}
+
+// ───────────────────────────── capabilities
+
+pub(super) fn capabilities(include_schema: bool, json_out: bool) -> Result<()> {
+    let runtime = vcr::preflight::probe_runtime();
+    let commands = Cli::command()
+        .get_subcommands()
+        .map(|sub| {
+            json!({
+                "name": sub.get_name(),
+                "about": sub.get_about().map(|a| a.to_string()),
+                "json": sub.get_arguments().any(|a| a.get_id() == "json"),
+            })
+        })
+        .collect::<Vec<_>>();
+    let result = vcr::capabilities::discover(&runtime, commands, include_schema);
+    if json_out {
+        return finish(Envelope::ok("capabilities", result));
+    }
+    let engine = vcr::agent_contract::EngineIdentity::current();
+    println!(
+        "vcr {} contract {}",
+        engine.display_version(),
+        vcr::agent_contract::CONTRACT_VERSION
+    );
+    println!(
+        "software backend: usable | gpu: {}",
+        if runtime.gpu.available {
+            "usable"
+        } else {
+            "unavailable"
+        }
+    );
+    println!(
+        "ffmpeg: {} | ffprobe: {} | fonts: {}",
+        if runtime.ffmpeg.available {
+            "ok"
+        } else {
+            "MISSING"
+        },
+        if runtime.ffprobe.available {
+            "ok"
+        } else {
+            "MISSING"
+        },
+        if runtime.fonts.bundle_ok {
+            "ok"
+        } else {
+            "INVALID"
+        }
+    );
+    println!("Run `vcr capabilities --json [--schema]` for the full machine-readable contract.");
+    Ok(())
 }
 
 // ───────────────────────────── prompt ─────────────────────────────
@@ -312,12 +367,226 @@ pub(super) fn dump_json(
             "frame": selected,
             "time_seconds": f64::from(selected) / f64::from(fps),
             "time_rational": format!("{selected}/{fps}"),
-            "layers": states.iter().map(|s| json!({
-                "id": s.id, "z_index": s.z_index, "visible": s.visible && s.opacity > 0.0,
-                "position": {"x": s.position.x, "y": s.position.y},
-                "scale": {"x": s.scale.x, "y": s.scale.y},
-                "rotation_degrees": s.rotation_degrees, "opacity": s.opacity,
-            })).collect::<Vec<_>>(),
+            "layers": states.iter().map(layer_state_json).collect::<Vec<_>>(),
         }),
     ))
+}
+
+fn layer_state_json(s: &vcr::timeline::LayerDebugState) -> Value {
+    json!({
+        "id": s.id, "z_index": s.z_index, "visible": s.visible && s.opacity > 0.0,
+        "position": {"x": s.position.x, "y": s.position.y},
+        "scale": {"x": s.scale.x, "y": s.scale.y},
+        "rotation_degrees": s.rotation_degrees, "opacity": s.opacity,
+    })
+}
+
+// ───────────────────────────── inspect ─────────────────────────────
+
+pub(super) struct InspectArgs {
+    pub samples: usize,
+    pub output_dir: PathBuf,
+    pub preview_width: u32,
+    pub safe_margin: f64,
+}
+
+pub(super) fn inspect(
+    manifest_path: &Path,
+    set: &[String],
+    args: &InspectArgs,
+    backend: BackendArg,
+    ascii_overrides: Option<&AsciiRuntimeOverrides>,
+    json_out: bool,
+) -> Result<()> {
+    if !(0.0..0.5).contains(&args.safe_margin) {
+        bail!(
+            "--safe-margin must be in [0, 0.5), got {}",
+            args.safe_margin
+        );
+    }
+    if args.samples == 0 {
+        bail!("--samples must be > 0");
+    }
+    let manifest = load_manifest_with_overrides(manifest_path, set)?;
+    let env = manifest.environment.clone();
+    let (width, height) = (env.resolution.width, env.resolution.height);
+    let timeline = inspect::build_timeline(&manifest)?;
+    let points = inspect::plan_samples(&timeline, args.samples);
+    let config = DiagnosticConfig {
+        safe_margin: args.safe_margin,
+        fps: env.fps,
+    };
+
+    fs::create_dir_all(&args.output_dir).with_context(|| {
+        format!(
+            "failed to create inspect directory {}",
+            args.output_dir.display()
+        )
+    })?;
+
+    let mut scene = RenderSceneData::from_manifest(&manifest);
+    if let Some(o) = ascii_overrides {
+        scene = scene.with_ascii_overrides(o.clone());
+    }
+    let mut renderer = create_renderer(&env, &manifest.layers, scene, backend)?;
+    let backend_name = renderer.backend_name().to_owned();
+
+    // One isolated renderer per layer: exact per-layer pixel bounds for any layer type.
+    const MAX_SOLO_LAYERS: usize = 32;
+    let mut limits = vec![
+        "layer bounds are measured from each layer rendered alone, so they are exact for the pixels drawn (not an estimate of layout intent)".to_owned(),
+        "layer-state motion detection does not see changes inside a layer (procedural colour, text, sequence frames); evenly spaced samples cover those".to_owned(),
+        "this reports mechanical facts; whether the design is readable, balanced or on-brief is a judgment for review of the contact sheet".to_owned(),
+    ];
+    let mut solo: Vec<(String, Option<Renderer>)> = Vec::new();
+    for layer in manifest.layers.iter().take(MAX_SOLO_LAYERS) {
+        let mut single = manifest.clone();
+        single.layers = vec![layer.clone()];
+        let single_scene = RenderSceneData::from_manifest(&single);
+        let made = create_renderer(&env, &single.layers, single_scene, backend).ok();
+        if made.is_none() {
+            limits.push(format!(
+                "layer '{}' could not be rendered in isolation; no bounds reported",
+                layer.id()
+            ));
+        }
+        solo.push((layer.id().to_owned(), made));
+    }
+    if manifest.layers.len() > MAX_SOLO_LAYERS {
+        limits.push(format!(
+            "only the first {MAX_SOLO_LAYERS} layers were measured in isolation"
+        ));
+    }
+
+    let preview_w = args.preview_width.min(width).max(1);
+    let preview_h = ((u64::from(height) * u64::from(preview_w)) / u64::from(width)).max(1) as u32;
+    let precision = f64::from(width) / f64::from(preview_w);
+
+    let mut diagnostics = inspect::timeline_diagnostics(&timeline, &config);
+    let mut samples_json = Vec::new();
+    let mut artifacts = Vec::new();
+    let mut tiles = Vec::new();
+    for point in &points {
+        let rgba = renderer.render_frame_rgba(point.frame)?;
+        let stats = inspect::pixel_stats(&rgba, width, height);
+        let small = inspect::downscale_rgba(rgba, width, height, preview_w, preview_h);
+        let png = args
+            .output_dir
+            .join(format!("sample_{:06}.png", point.frame));
+        save_rgba_png(&png, preview_w, preview_h, small.clone())?;
+        artifacts.push(
+            ArtifactRef::new("preview_frame", &png).at_frame(point.frame, point.time_seconds),
+        );
+        if let Some(img) = RgbaImage::from_raw(preview_w, preview_h, small) {
+            tiles.push((img, point.frame, point.time_seconds));
+        }
+
+        let states = evaluate_manifest_layers_at_frame(&manifest, point.frame)?;
+        let mut layer_bounds = Vec::new();
+        for state in states.iter().filter(|s| s.visible && s.opacity > 0.0) {
+            let Some((_, Some(r))) = solo.iter_mut().find(|(id, _)| *id == state.id) else {
+                continue;
+            };
+            let solo_rgba = r.render_frame_rgba(point.frame)?;
+            let lstats = inspect::pixel_stats(&solo_rgba, width, height);
+            diagnostics.extend(inspect::bounds_diagnostics(
+                &state.id,
+                point.frame,
+                point.phase,
+                &lstats,
+                &config,
+                1.0,
+            ));
+            layer_bounds.push(json!({"id": state.id, "bbox": lstats.alpha_bbox, "edge_touch": lstats.edge_touch, "covered_fraction": lstats.covered_fraction}));
+        }
+        samples_json.push(json!({
+            "frame": point.frame, "time_seconds": point.time_seconds, "time_rational": point.time_rational,
+            "phase": point.phase, "roles": point.roles,
+            "preview": png.display().to_string(),
+            "layers": states.iter().map(layer_state_json).collect::<Vec<_>>(),
+            "layer_bounds": layer_bounds,
+            "pixels": stats,
+        }));
+    }
+
+    // Small-text heuristic (approximate): font_size × evaluated scale versus canvas height.
+    for layer in &manifest.layers {
+        if let Layer::Text(t) = layer {
+            let min_px = 0.022 * f32::from(height as u16);
+            let mut seen_scale = None;
+            for point in &points {
+                if let Some(s) = evaluate_manifest_layers_at_frame(&manifest, point.frame)?
+                    .into_iter()
+                    .find(|s| s.id == t.common.id && s.visible && s.opacity > 0.0)
+                {
+                    seen_scale = Some(s.scale.y.abs().max(s.scale.x.abs()));
+                    if t.text.font_size * s.scale.y.abs() >= min_px {
+                        seen_scale = None;
+                        break;
+                    }
+                }
+            }
+            if let Some(scale) = seen_scale {
+                diagnostics.push(
+                    Diagnostic::new(Severity::Warning, "inspect", "text.small", format!("text layer '{}' renders at about {:.0}px tall at its largest sampled scale ({:.2}); below ~2.2% of canvas height", t.common.id, t.text.font_size * scale, scale))
+                        .at(Location::layer(t.common.id.clone())).basis(Basis::Approximate)
+                        .recover("Judgment call: confirm legibility against the brief's delivery size."),
+                );
+            }
+        }
+    }
+
+    let sheet = inspect::contact_sheet(&tiles, 3, 320.min(preview_w));
+    let sheet_path = args.output_dir.join("contact_sheet.png");
+    sheet
+        .save(&sheet_path)
+        .with_context(|| format!("failed to write {}", sheet_path.display()))?;
+    artifacts.insert(0, ArtifactRef::new("contact_sheet", &sheet_path));
+
+    let blocking = diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error || d.severity == Severity::Blocker);
+    let warned = diagnostics.iter().any(|d| d.severity == Severity::Warning);
+    let result = json!({
+        "manifest": manifest_summary(&manifest, manifest_path),
+        "backend": {"name": backend_name, "reason": renderer.backend_reason()},
+        "timeline": timeline,
+        "samples": samples_json,
+        "contact_sheet": {"path": sheet_path.display().to_string(), "columns": 3, "order": points.iter().map(|p| p.frame).collect::<Vec<_>>()},
+        "preview": {"width": preview_w, "height": preview_h, "downscale_from": [width, height], "bounds_precision_px": 1.0, "preview_precision_px": precision},
+        "summary": {"errors": blocking, "warnings": warned, "diagnostic_count": diagnostics.len()},
+        "revise_with": "edit the layer by its stable `id` in the manifest, or change declared params with --set name=value; then run `vcr inspect` again",
+        "limits": limits,
+    });
+    let mut envelope = Envelope::new(
+        "inspect",
+        if blocking { Status::Failed } else { Status::Ok },
+    )
+    .with_result(result)
+    .with_diagnostics(diagnostics)
+    .with_artifacts(artifacts);
+    // Keep a copy of the document next to the images.
+    let doc_path = args.output_dir.join("inspection.json");
+    fs::write(&doc_path, envelope.to_json_line())
+        .with_context(|| format!("failed to write {}", doc_path.display()))?;
+    envelope
+        .artifacts
+        .push(ArtifactRef::new("inspection", &doc_path));
+    if json_out {
+        return finish(envelope);
+    }
+    println!(
+        "Inspected {} samples -> {}",
+        points.len(),
+        args.output_dir.display()
+    );
+    println!("Contact sheet: {}", sheet_path.display());
+    for d in &envelope.diagnostics {
+        println!("[{:?}] {}: {}", d.severity, d.code, d.message);
+    }
+    if blocking {
+        Err(anyhow::Error::new(EarlyExit(3)))
+    } else {
+        Ok(())
+    }
 }

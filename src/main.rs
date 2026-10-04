@@ -519,6 +519,63 @@ enum Commands {
         )]
         json: bool,
     },
+    #[command(
+        about = "Describe what this installed engine can do and what is usable on this machine"
+    )]
+    Capabilities {
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
+        #[arg(
+            long = "schema",
+            help = "Include the manifest JSON Schema (generated from the engine's types)"
+        )]
+        schema: bool,
+    },
+    #[command(
+        about = "Sample the timeline, render evidence frames and a contact sheet, and report layer state, bounds and timing diagnostics"
+    )]
+    Inspect {
+        manifest: PathBuf,
+        #[arg(
+            long = "samples",
+            default_value_t = 12,
+            help = "Maximum sampled frames"
+        )]
+        samples: usize,
+        #[arg(
+            short = 'o',
+            long = "output-dir",
+            help = "Directory for sample PNGs, contact_sheet.png and inspection.json (default: renders/<manifest>_inspect)"
+        )]
+        output_dir: Option<PathBuf>,
+        #[arg(
+            long = "preview-width",
+            default_value_t = 960,
+            help = "Width of written sample images; measurements are always taken at full resolution"
+        )]
+        preview_width: u32,
+        #[arg(
+            long = "safe-margin",
+            default_value_t = 0.05,
+            help = "Safe-area margin as a fraction of each edge"
+        )]
+        safe_margin: f64,
+        #[arg(
+            long = "set",
+            value_name = "NAME=VALUE",
+            action = clap::ArgAction::Append,
+            help = "Override a manifest param at runtime."
+        )]
+        set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
+    },
     #[command(about = "Generate frame-hash determinism report")]
     DeterminismReport {
         manifest: PathBuf,
@@ -940,6 +997,8 @@ impl Commands {
             | Self::Explain { json, .. }
             | Self::Prompt { json, .. }
             | Self::Doctor { json }
+            | Self::Capabilities { json, .. }
+            | Self::Inspect { json, .. }
             | Self::DeterminismReport { json, .. } => *json,
             _ => false,
         }
@@ -970,6 +1029,8 @@ impl Commands {
             Self::Assets { .. } => "assets",
             Self::Library { .. } => "library",
             Self::Doctor { .. } => "doctor",
+            Self::Capabilities { .. } => "capabilities",
+            Self::Inspect { .. } => "inspect",
             Self::DeterminismReport { .. } => "determinism-report",
             Self::Verify { .. } => "verify",
         }
@@ -1526,6 +1587,49 @@ fn run_cli(cli: Cli) -> Result<()> {
                 run_library_list(tag.as_deref(), item_type.map(Into::into))
             }
         },
+        Commands::Capabilities { json, schema } => agent_cli::capabilities(schema, json),
+        Commands::Inspect {
+            manifest,
+            samples,
+            output_dir,
+            preview_width,
+            safe_margin,
+            set,
+            json,
+        } => {
+            let dir = match output_dir {
+                Some(dir) => {
+                    if dir.is_absolute()
+                        || dir
+                            .components()
+                            .any(|c| matches!(c, std::path::Component::ParentDir))
+                    {
+                        bail!(
+                            "Absolute or '..' output paths are restricted for security. Got: {}",
+                            dir.display()
+                        );
+                    }
+                    dir
+                }
+                None => {
+                    let stem = manifest.file_stem().unwrap_or_default().to_string_lossy();
+                    PathBuf::from("renders").join(format!("{stem}_inspect"))
+                }
+            };
+            agent_cli::inspect(
+                &manifest,
+                &set,
+                &agent_cli::InspectArgs {
+                    samples,
+                    output_dir: dir,
+                    preview_width,
+                    safe_margin,
+                },
+                cli.backend,
+                ascii_overrides.as_ref(),
+                json,
+            )
+        }
         Commands::Doctor { json } => {
             if json {
                 agent_cli::doctor_json()

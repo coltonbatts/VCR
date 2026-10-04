@@ -88,6 +88,7 @@ fn check_success_reports_resolved_settings() {
     assert_eq!(env["duration_rational"], "6/10");
     assert_eq!(env["alpha_capable_profile"], true);
     assert_eq!(d["result"]["layers"][0]["id"], "dot");
+    assert_eq!(d["result"]["layers"][0]["kind"], "procedural");
 }
 
 #[test]
@@ -447,4 +448,209 @@ fn requesting_gpu_without_adapter_is_a_preflight_blocker() {
         assert_eq!(b["ready"], false);
         assert_eq!(b["checks"][0]["code"], "backend.gpu_unavailable");
     }
+}
+
+const CLIP_SCENE: &str = r#"version: 1
+environment:
+  resolution: { width: 320, height: 180 }
+  fps: 10
+  duration: { frames: 20 }
+params:
+  x_offset:
+    type: float
+    default: 0.0
+    min: -400.0
+    max: 400.0
+layers:
+  - id: title
+    pos_x: "40 + x_offset"
+    pos_y: 60
+    text:
+      content: "CLIPPED TITLE TEXT"
+      font_size: 24
+"#;
+
+#[test]
+fn capabilities_are_derived_and_distinguish_compiled_from_usable() {
+    let dir = TempDir::new().unwrap();
+    let out = vcr(dir.path(), &["capabilities", "--json", "--schema"]);
+    assert_eq!(out.status.code(), Some(0));
+    let d = doc(&out);
+    let r = &d["result"];
+    assert_eq!(r["manifest"]["supported_versions"][0], 1);
+    // layers: derived list, with backend requirements
+    let layers = r["layers"].as_array().unwrap();
+    let shader = layers.iter().find(|l| l["kind"] == "shader").unwrap();
+    assert_eq!(shader["requires_gpu"], true);
+    assert_eq!(shader["compiled_backends"], serde_json::json!(["gpu"]));
+    let text = layers.iter().find(|l| l["kind"] == "text").unwrap();
+    assert_eq!(text["usable_here"], true);
+    // schema is real and strict
+    let schema = &r["manifest"]["schema"];
+    assert_eq!(schema["additionalProperties"], false);
+    assert!(schema["properties"]["layers"].is_object());
+    // time units are explicit
+    assert!(r["time"]["expression_t"]
+        .as_str()
+        .unwrap()
+        .contains("frame"));
+    assert!(r["time"]["layer_start_time_end_time"]
+        .as_str()
+        .unwrap()
+        .contains("seconds"));
+    assert!(r["expression"]["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["name"] == "smoothstep"));
+    assert!(r["encoding"]["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p == "prores4444"));
+    assert_eq!(r["runtime"]["software_backend_available"], true);
+    // exit-code table is part of the contract
+    assert!(d["result"]["contract"]["exit_codes"]["6"].is_string());
+    // commands list says which support --json
+    let cmds = r["cli"]["commands"].as_array().unwrap();
+    for name in [
+        "check",
+        "lint",
+        "doctor",
+        "prompt",
+        "verify",
+        "inspect",
+        "render",
+        "capabilities",
+    ] {
+        let c = cmds
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap_or_else(|| panic!("{name}"));
+        if name != "capabilities" {
+            assert_eq!(c["json"], true, "{name} supports --json");
+        }
+    }
+}
+
+#[test]
+fn inspect_detects_clipping_and_a_targeted_param_revision_fixes_it() {
+    let dir = TempDir::new().unwrap();
+    write(dir.path(), "clip.vcr", CLIP_SCENE);
+    let run = |extra: &[&str], out: &str| -> Value {
+        let mut args = vec![
+            "--backend",
+            "software",
+            "inspect",
+            "clip.vcr",
+            "--json",
+            "-o",
+            out,
+            "--samples",
+            "4",
+        ];
+        args.extend_from_slice(extra);
+        doc(&vcr(dir.path(), &args))
+    };
+    let clipped = run(&["--set", "x_offset=120"], "ins_bad");
+    let d = clipped["diagnostics"].as_array().unwrap();
+    let hit = d
+        .iter()
+        .find(|x| x["code"] == "layout.touches_canvas_edge")
+        .expect("clipping detected");
+    assert_eq!(hit["location"]["layer"], "title");
+    assert_eq!(hit["severity"], "warning");
+    assert_eq!(hit["basis"], "exact");
+    assert!(hit["message"].as_str().unwrap().contains("right"));
+    assert!(clipped["result"]["revise_with"]
+        .as_str()
+        .unwrap()
+        .contains("--set"));
+
+    // Revise one declared parameter; nothing else is rebuilt.
+    let fixed = run(&["--set", "x_offset=0"], "ins_ok");
+    assert!(
+        !fixed["diagnostics"].as_array().map_or(false, |a| a
+            .iter()
+            .any(|x| x["code"] == "layout.touches_canvas_edge")),
+        "{:?}",
+        fixed["diagnostics"]
+    );
+
+    // Evidence: frame indices and PNG names agree; contact sheet exists; first and last sampled.
+    let samples = fixed["result"]["samples"].as_array().unwrap();
+    assert_eq!(samples.first().unwrap()["frame"], 0);
+    assert_eq!(samples.last().unwrap()["frame"], 19);
+    for s in samples {
+        let frame = s["frame"].as_u64().unwrap();
+        let rel = s["preview"].as_str().unwrap();
+        assert!(rel.ends_with(&format!("sample_{frame:06}.png")), "{rel}");
+        assert!(dir.path().join(rel).exists());
+        assert_eq!(s["time_rational"], format!("{frame}/10"));
+    }
+    let sheet = fixed["result"]["contact_sheet"]["path"].as_str().unwrap();
+    assert!(dir.path().join(sheet).exists());
+    let roles: Vec<&str> = fixed["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["role"].as_str().unwrap())
+        .collect();
+    assert!(
+        roles.contains(&"contact_sheet")
+            && roles.contains(&"preview_frame")
+            && roles.contains(&"inspection")
+    );
+}
+
+const MISTIMED: &str = r#"version: 1
+environment:
+  resolution: { width: 160, height: 90 }
+  fps: 10
+  duration: { frames: 30 }
+params:
+  exit_start:
+    type: float
+    default: 20.0
+    min: 1.0
+    max: 100.0
+layers:
+  - id: box
+    opacity: "1.0 - clamp((t - exit_start) / 20.0, 0.0, 1.0)"
+    procedural:
+      kind: rounded_rect
+      center: { x: 0.5, y: 0.5 }
+      size: { x: 0.4, y: 0.3 }
+      corner_radius: 0.0
+      color: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+"#;
+
+#[test]
+fn inspect_detects_a_cut_off_exit_and_timing_param_fixes_it() {
+    let dir = TempDir::new().unwrap();
+    write(dir.path(), "m.vcr", MISTIMED);
+    let codes = |extra: &[&str], out: &str| -> Vec<String> {
+        let mut args = vec![
+            "--backend",
+            "software",
+            "inspect",
+            "m.vcr",
+            "--json",
+            "-o",
+            out,
+        ];
+        args.extend_from_slice(extra);
+        let d = doc(&vcr(dir.path(), &args));
+        d["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["code"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    // exit begins at frame 20 and needs 20 frames, but the clip ends at frame 29: still moving.
+    assert!(codes(&[], "a").contains(&"timing.motion_on_last_frame".to_owned()));
+    assert!(
+        !codes(&["--set", "exit_start=5"], "b").contains(&"timing.motion_on_last_frame".to_owned())
+    );
 }
