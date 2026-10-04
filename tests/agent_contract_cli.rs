@@ -26,6 +26,20 @@ layers:
       color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
 "#;
 
+const SMALL_OPAQUE: &str = r#"version: 1
+environment:
+  resolution: { width: 64, height: 36 }
+  fps: 10
+  duration: { frames: 6 }
+  encoding:
+    prores_profile: prores4444
+layers:
+  - id: bg
+    procedural:
+      kind: solid_color
+      color: { r: 0.1, g: 0.2, b: 0.3, a: 1.0 }
+"#;
+
 fn have(tool: &str) -> bool {
     Command::new(tool)
         .arg("-version")
@@ -652,5 +666,384 @@ fn inspect_detects_a_cut_off_exit_and_timing_param_fixes_it() {
     assert!(codes(&[], "a").contains(&"timing.motion_on_last_frame".to_owned()));
     assert!(
         !codes(&["--set", "exit_start=5"], "b").contains(&"timing.motion_on_last_frame".to_owned())
+    );
+}
+
+#[test]
+fn render_is_atomic_complete_and_verifiable() {
+    if !need_ffmpeg() {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    write(dir.path(), "a.vcr", SMALL_ALPHA);
+    let out = vcr(
+        dir.path(),
+        &[
+            "--backend",
+            "software",
+            "render",
+            "a.vcr",
+            "-o",
+            "out.mov",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let d = doc(&out);
+    assert_eq!(d["operation"], "render");
+    // legacy top-level keys still present and equal to the structured result
+    for key in [
+        "manifest",
+        "backend",
+        "frame_count",
+        "frame_hash",
+        "output_hash",
+        "duration_ms",
+    ] {
+        assert!(d.get(key).is_some(), "legacy key {key}");
+        assert_eq!(d[key], d["result"][key]);
+    }
+    assert_eq!(d["frame_count"], 6);
+    let roles: Vec<&str> = d["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(roles, vec!["output", "metadata", "provenance"]);
+    for a in d["artifacts"].as_array().unwrap() {
+        assert!(dir.path().join(a["path"].as_str().unwrap()).exists());
+        assert_eq!(a["sha256"].as_str().unwrap().len(), 64);
+    }
+    // no partial files left behind
+    let stray: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().contains(".partial-"))
+        .collect();
+    assert!(stray.is_empty());
+
+    // provenance: producer identity, three hash levels, toolchain, determinism scope
+    let prov: Value =
+        serde_json::from_slice(&fs::read(dir.path().join("out.mov.provenance.json")).unwrap())
+            .unwrap();
+    assert_eq!(prov["status"], "complete");
+    assert_eq!(prov["engine"]["version"], d["engine"]["version"]);
+    assert_eq!(prov["backend"]["name"], "CPU");
+    assert_eq!(prov["hashes"]["output_file_sha256"], d["output_hash"]);
+    assert_eq!(prov["hashes"]["raster_frames_sha256"], d["frame_hash"]);
+    assert_eq!(
+        prov["hashes"]["decoded_frames_sha256"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
+    assert!(prov["toolchain"]["ffmpeg"]
+        .as_str()
+        .unwrap()
+        .contains("ffmpeg"));
+    assert!(prov["determinism"]["levels"]["encoded_file_bytes"]
+        .as_str()
+        .unwrap()
+        .contains("ffmpeg"));
+
+    // the scene record stays free of machine-specific data
+    let meta: Value =
+        serde_json::from_slice(&fs::read(dir.path().join("out.mov.metadata.json")).unwrap())
+            .unwrap();
+    assert!(meta.get("manifest_path").is_none());
+
+    // verify against the manifest: all checks pass; transparency measured on decoded pixels
+    let v = vcr(
+        dir.path(),
+        &[
+            "verify",
+            "out.mov",
+            "--manifest",
+            "a.vcr",
+            "--expect-transparency",
+            "required",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        v.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&v.stdout)
+    );
+    let vd = doc(&v);
+    let media = &vd["result"]["media"];
+    assert_eq!(media["passed"], true);
+    assert_eq!(media["probe"]["packet_count"], 6);
+    assert_eq!(media["probe"]["r_frame_rate"], "10/1");
+    assert!(
+        media["transparency"]["frames_with_transparency"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert_eq!(vd["result"]["freshness"]["fresh"], true);
+    // verifier vs producer are distinct fields
+    assert!(vd["result"]["producer"]["version"].is_string());
+    assert!(vd["result"]["verifier"]["version"].is_string());
+    // legacy verify keys
+    assert_eq!(vd["hash"], d["output_hash"]);
+}
+
+#[test]
+fn verify_detects_wrong_contract_stale_modified_and_lost_transparency() {
+    if !need_ffmpeg() {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    write(dir.path(), "a.vcr", SMALL_ALPHA);
+    write(dir.path(), "opaque.vcr", SMALL_OPAQUE);
+    let r = vcr(
+        dir.path(),
+        &[
+            "--backend",
+            "software",
+            "render",
+            "a.vcr",
+            "-o",
+            "out.mov",
+            "--json",
+        ],
+    );
+    assert_eq!(r.status.code(), Some(0));
+    let codes = |o: &Output| -> Vec<String> {
+        doc(o)["diagnostics"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|d| d["severity"] == "error")
+                    .map(|d| d["code"].as_str().unwrap().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    // wrong frame count / fps / resolution expectations
+    let o = vcr(
+        dir.path(),
+        &[
+            "verify",
+            "out.mov",
+            "--expect-frames",
+            "7",
+            "--expect-fps",
+            "24",
+            "--expect-width",
+            "65",
+            "--json",
+        ],
+    );
+    assert_eq!(o.status.code(), Some(3));
+    let c = codes(&o);
+    for want in [
+        "verify.frame_count_mismatch",
+        "verify.frame_rate_mismatch",
+        "verify.resolution_mismatch",
+    ] {
+        assert!(c.contains(&want.to_owned()), "{want} in {c:?}");
+    }
+
+    // wrong codec/profile
+    let o = vcr(
+        dir.path(),
+        &[
+            "verify",
+            "out.mov",
+            "--expect-codec",
+            "h264",
+            "--expect-profile",
+            "HQ",
+            "--json",
+        ],
+    );
+    let c = codes(&o);
+    assert!(
+        c.contains(&"verify.codec_mismatch".to_owned())
+            && c.contains(&"verify.profile_mismatch".to_owned()),
+        "{c:?}"
+    );
+
+    // stale: current manifest params differ from what was rendered
+    write(
+        dir.path(),
+        "a2.vcr",
+        &SMALL_ALPHA.replace("radius: 0.2", "radius: 0.3"),
+    );
+    let o = vcr(
+        dir.path(),
+        &["verify", "out.mov", "--manifest", "a2.vcr", "--json"],
+    );
+    assert!(codes(&o).contains(&"verify.stale_artifact".to_owned()));
+
+    // lost transparency: an opaque render fails `--expect-transparency required`, while an
+    // alpha-capable pix_fmt alone still passes `alpha_capable`
+    let r = vcr(
+        dir.path(),
+        &[
+            "--backend",
+            "software",
+            "render",
+            "opaque.vcr",
+            "-o",
+            "opaque.mov",
+            "--json",
+        ],
+    );
+    assert_eq!(r.status.code(), Some(0));
+    let o = vcr(
+        dir.path(),
+        &[
+            "verify",
+            "opaque.mov",
+            "--expect-transparency",
+            "required",
+            "--expect-alpha-capable",
+            "true",
+            "--json",
+        ],
+    );
+    assert_eq!(o.status.code(), Some(3));
+    let d = doc(&o);
+    let checks = d["result"]["media"]["checks"].as_array().unwrap();
+    let status = |id: &str| checks.iter().find(|c| c["id"] == id).unwrap()["status"].clone();
+    assert_eq!(status("alpha_capable"), "pass");
+    assert_eq!(status("transparency"), "fail");
+    // ...and the same opaque file satisfies an opaque expectation
+    let o = vcr(
+        dir.path(),
+        &[
+            "verify",
+            "opaque.mov",
+            "--expect-transparency",
+            "none",
+            "--json",
+        ],
+    );
+    assert_eq!(o.status.code(), Some(0));
+
+    // modified after render (bytes differ from provenance)
+    let mut bytes = fs::read(dir.path().join("out.mov")).unwrap();
+    let mid = bytes.len() / 2;
+    bytes[mid] ^= 0xff;
+    fs::write(dir.path().join("out.mov"), bytes).unwrap();
+    let o = vcr(dir.path(), &["verify", "out.mov", "--json"]);
+    assert_eq!(o.status.code(), Some(3));
+    assert!(codes(&o).contains(&"verify.modified_since_render".to_owned()));
+
+    // truncated = unreadable media, reported as a failed result (not an operation error)
+    let full = fs::read(dir.path().join("opaque.mov")).unwrap();
+    fs::write(dir.path().join("trunc.mov"), &full[..full.len() / 3]).unwrap();
+    let o = vcr(dir.path(), &["verify", "trunc.mov", "--json"]);
+    assert_eq!(o.status.code(), Some(3));
+    let d = doc(&o);
+    assert_eq!(d["status"], "failed");
+    assert!(codes(&o).contains(&"verify.unreadable_media".to_owned()));
+}
+
+#[test]
+fn failed_render_publishes_nothing_and_keeps_prior_artifact_intact() {
+    if !need_ffmpeg() {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    write(dir.path(), "a.vcr", SMALL_ALPHA);
+    let ok = vcr(
+        dir.path(),
+        &[
+            "--backend",
+            "software",
+            "render",
+            "a.vcr",
+            "-o",
+            "out.mov",
+            "--json",
+        ],
+    );
+    assert_eq!(ok.status.code(), Some(0));
+    let before = fs::read(dir.path().join("out.mov")).unwrap();
+    // A manifest that cannot render (shader on software) targeting the same output.
+    write(
+        dir.path(),
+        "s.vcr",
+        &SMALL_ALPHA.replace(
+            "    procedural:\n      kind: circle\n      center: { x: 0.5, y: 0.5 }\n      radius: 0.2\n      color: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }",
+            "    shader:\n      fragment: \"fn main() {}\"",
+        ),
+    );
+    let bad = vcr(
+        dir.path(),
+        &[
+            "--backend",
+            "software",
+            "render",
+            "s.vcr",
+            "-o",
+            "out.mov",
+            "--json",
+        ],
+    );
+    assert_ne!(bad.status.code(), Some(0));
+    assert_eq!(doc(&bad)["status"], "error");
+    assert_eq!(
+        fs::read(dir.path().join("out.mov")).unwrap(),
+        before,
+        "prior artifact untouched"
+    );
+    let stray = fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| e.file_name().to_string_lossy().contains(".partial-"));
+    assert!(!stray);
+}
+
+#[test]
+fn repeated_software_renders_agree_at_every_hash_level() {
+    if !need_ffmpeg() {
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    write(dir.path(), "a.vcr", SMALL_ALPHA);
+    for name in ["one.mov", "two.mov"] {
+        let o = vcr(
+            dir.path(),
+            &[
+                "--backend",
+                "software",
+                "render",
+                "a.vcr",
+                "-o",
+                name,
+                "--json",
+            ],
+        );
+        assert_eq!(o.status.code(), Some(0));
+    }
+    let load = |n: &str| -> Value {
+        serde_json::from_slice(&fs::read(dir.path().join(format!("{n}.provenance.json"))).unwrap())
+            .unwrap()
+    };
+    let (a, b) = (load("one.mov"), load("two.mov"));
+    for level in [
+        "raster_frames_sha256",
+        "decoded_frames_sha256",
+        "output_file_sha256",
+    ] {
+        assert_eq!(a["hashes"][level], b["hashes"][level], "{level}");
+    }
+    assert_eq!(
+        fs::read(dir.path().join("one.mov.metadata.json")).unwrap(),
+        fs::read(dir.path().join("two.mov.metadata.json")).unwrap()
     );
 }

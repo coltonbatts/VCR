@@ -225,6 +225,53 @@ enum Commands {
         output_file: PathBuf,
         #[arg(long = "json")]
         json: bool,
+        #[arg(
+            long = "manifest",
+            value_name = "MANIFEST",
+            help = "Derive expectations (resolution, fps, frame count) from this manifest and detect stale output"
+        )]
+        manifest: Option<PathBuf>,
+        #[arg(
+            long = "set",
+            value_name = "NAME=VALUE",
+            action = clap::ArgAction::Append,
+            help = "Param overrides used with --manifest"
+        )]
+        set: Vec<String>,
+        #[arg(long = "expect-width")]
+        expect_width: Option<u32>,
+        #[arg(long = "expect-height")]
+        expect_height: Option<u32>,
+        #[arg(long = "expect-fps")]
+        expect_fps: Option<u32>,
+        #[arg(long = "expect-frames")]
+        expect_frames: Option<u32>,
+        #[arg(long = "expect-container", help = "e.g. mov")]
+        expect_container: Option<String>,
+        #[arg(long = "expect-codec", help = "e.g. prores")]
+        expect_codec: Option<String>,
+        #[arg(
+            long = "expect-profile",
+            help = "ffprobe profile token, e.g. 4444 or HQ"
+        )]
+        expect_profile: Option<String>,
+        #[arg(long = "expect-alpha-capable")]
+        expect_alpha_capable: Option<bool>,
+        #[arg(
+            long = "expect-transparency",
+            help = "required|none|any: measured on decoded pixels"
+        )]
+        expect_transparency: Option<String>,
+        #[arg(
+            long = "decode-frames",
+            help = "Decode at most N evenly spread frames for the transparency check (default: all)"
+        )]
+        decode_frames: Option<String>,
+        #[arg(
+            long = "require-provenance",
+            help = "Fail when no <file>.provenance.json exists"
+        )]
+        require_provenance: bool,
     },
     #[command(about = "Render a manifest to ProRes .mov video")]
     Build {
@@ -244,6 +291,11 @@ enum Commands {
             help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
         )]
         set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
     },
     #[command(about = "Validate a manifest without rendering")]
     Check {
@@ -374,6 +426,11 @@ enum Commands {
             help = "Override a manifest param at runtime. Repeat flag for multiple overrides."
         )]
         set: Vec<String>,
+        #[arg(
+            long = "json",
+            help = "Emit one machine-readable JSON document (contract vcr.agent/1) on stdout"
+        )]
+        json: bool,
     },
     #[command(about = "Render a range of frames to PNG sequence")]
     RenderFrames {
@@ -997,6 +1054,8 @@ impl Commands {
             | Self::Explain { json, .. }
             | Self::Prompt { json, .. }
             | Self::Doctor { json }
+            | Self::Build { json, .. }
+            | Self::RenderFrame { json, .. }
             | Self::Capabilities { json, .. }
             | Self::Inspect { json, .. }
             | Self::DeterminismReport { json, .. } => *json,
@@ -1074,6 +1133,7 @@ fn main() -> ExitCode {
     };
     let command_name = cli.command.name();
     let json_mode = cli.command.json_requested();
+    agent_cli::set_json_mode(json_mode);
     match run_cli(cli) {
         Ok(()) => VcrExitCode::Success.to_exit_code(),
         Err(error) => {
@@ -1181,7 +1241,41 @@ fn run_cli(cli: Cli) -> Result<()> {
                 quiet,
             )
         }
-        Commands::Verify { output_file, json } => run_verify(&output_file, json),
+        Commands::Verify {
+            output_file,
+            json,
+            manifest,
+            set,
+            expect_width,
+            expect_height,
+            expect_fps,
+            expect_frames,
+            expect_container,
+            expect_codec,
+            expect_profile,
+            expect_alpha_capable,
+            expect_transparency,
+            decode_frames,
+            require_provenance,
+        } => agent_cli::verify(
+            &output_file,
+            &agent_cli::VerifyArgs {
+                manifest,
+                set,
+                expect_width,
+                expect_height,
+                expect_fps,
+                expect_frames,
+                expect_container,
+                expect_codec,
+                expect_profile,
+                expect_alpha_capable,
+                expect_transparency,
+                decode_frames,
+                require_provenance,
+            },
+            json,
+        ),
         Commands::Build {
             manifest,
             output,
@@ -1189,6 +1283,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             end_frame,
             frames,
             set,
+            json,
         } => {
             let output = resolve_output_path(&manifest, output, "mov", None, quiet)?;
             let frame_window = FrameWindowArgs {
@@ -1196,7 +1291,8 @@ fn run_cli(cli: Cli) -> Result<()> {
                 end_frame,
                 frames,
             };
-            run_build(
+            let started = Instant::now();
+            let result = run_build(
                 &manifest,
                 &output,
                 frame_window,
@@ -1205,9 +1301,19 @@ fn run_cli(cli: Cli) -> Result<()> {
                 ascii_overrides,
                 cli.backend,
                 ffmpeg_mode,
-                quiet,
-            )
-            .map(|_| ())
+                quiet || json,
+            )?;
+            if json {
+                let envelope = agent_cli::build_envelope(
+                    "build",
+                    &manifest,
+                    &output,
+                    &result,
+                    started.elapsed().as_millis() as u64,
+                );
+                return agent_cli::finish(envelope);
+            }
+            Ok(())
         }
         Commands::Check {
             manifest,
@@ -1328,6 +1434,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             frame,
             output,
             set,
+            json,
         } => {
             let output = resolve_output_path(
                 &manifest,
@@ -1343,8 +1450,33 @@ fn run_cli(cli: Cli) -> Result<()> {
                 &set,
                 ascii_overrides.as_ref(),
                 cli.backend,
-                quiet,
-            )
+                quiet || json,
+            )?;
+            if json {
+                let meta = metadata_sidecar_for_file(&output);
+                let manifest_loaded = load_manifest_with_overrides(&manifest, &set)?;
+                let fps = manifest_loaded.environment.fps;
+                let envelope = vcr::agent_contract::Envelope::ok(
+                    "render-frame",
+                    serde_json::json!({
+                        "manifest": manifest.display().to_string(),
+                        "manifest_hash": manifest_loaded.manifest_hash,
+                        "frame": frame,
+                        "time_seconds": f64::from(frame) / f64::from(fps),
+                        "time_rational": format!("{frame}/{fps}"),
+                        "width": manifest_loaded.environment.resolution.width,
+                        "height": manifest_loaded.environment.resolution.height,
+                    }),
+                )
+                .with_artifacts(vec![
+                    vcr::agent_contract::ArtifactRef::new("frame", &output)
+                        .with_digest(&output)
+                        .at_frame(frame, f64::from(frame) / f64::from(fps)),
+                    vcr::agent_contract::ArtifactRef::new("metadata", &meta).with_digest(&meta),
+                ]);
+                return agent_cli::finish(envelope);
+            }
+            Ok(())
         }
         Commands::RenderFrames {
             manifest,
@@ -3676,6 +3808,7 @@ pub struct BuildResult {
     pub backend_name: String,
     pub frame_count: u32,
     pub frame_hash: String,
+    pub verification: serde_json::Value,
 }
 
 fn run_build(
@@ -3736,7 +3869,18 @@ fn run_build(
             renderer.backend_reason()
         ),
     );
-    let ffmpeg = FfmpegPipe::spawn_with_mode(&manifest.environment, output_path, ffmpeg_mode)?;
+    // Atomic publication: encode to a hidden sibling, verify it, then rename into place. A failed
+    // or interrupted render never leaves a half-written file at `output_path`, and sidecars that
+    // described the previous artifact are removed up front so an old file cannot pass as new.
+    vcr::provenance::invalidate_sidecars(output_path);
+    vcr::provenance::sweep_stale_partials(output_path);
+    if let Some(parent) = output_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create output directory {}", parent.display()))?;
+    }
+    let partial_path = vcr::provenance::partial_path_for(output_path);
+    let mut partial_guard = vcr::provenance::PartialGuard::new(partial_path.clone());
+    let ffmpeg = FfmpegPipe::spawn_with_mode(&manifest.environment, &partial_path, ffmpeg_mode)?;
     let mut render_elapsed = Duration::ZERO;
     let mut encode_elapsed = Duration::ZERO;
     let mut frame_hasher = Sha256::new();
@@ -3753,7 +3897,11 @@ fn run_build(
 
         if frame_index % manifest.environment.fps == 0 {
             if !quiet {
-                println!("rendered frame {}/{}", offset + 1, window.count);
+                agent_cli::human_line(format_args!(
+                    "rendered frame {}/{}",
+                    offset + 1,
+                    window.count
+                ));
             }
         }
     }
@@ -3761,8 +3909,46 @@ fn run_build(
     let frame_hash = format!("{:x}", frame_hasher.finalize());
 
     ffmpeg.finish()?;
-    verify_encoded_output_conformance(output_path, &manifest.environment, quiet)?;
-    println!("Wrote {}", output_path.display());
+    verify_encoded_output_conformance(&partial_path, &manifest.environment, quiet)?;
+
+    // Requested-vs-encoded contract, checked on the unpublished file.
+    let profile = manifest.environment.encoding.prores_profile;
+    let expectations = vcr::media_verify::Expectations {
+        width: Some(manifest.environment.resolution.width),
+        height: Some(manifest.environment.resolution.height),
+        fps: Some(manifest.environment.fps),
+        frame_count: Some(window.count),
+        container: Some("mov".to_owned()),
+        codec: Some("prores".to_owned()),
+        profile: Some(profile.to_ffmpeg_profile().to_owned()),
+        alpha_capable: Some(profile.supports_alpha()),
+        transparency: vcr::media_verify::TransparencyExpectation::Any,
+    };
+    let media = vcr::media_verify::verify_media(&partial_path, &expectations, Some(8))?;
+    if !media.passed {
+        let failed = media
+            .checks
+            .iter()
+            .filter(|c| c.status == vcr::media_verify::CheckStatus::Fail)
+            .map(|c| {
+                format!(
+                    "{}: expected {:?}, observed {:?}",
+                    c.id, c.expected, c.observed
+                )
+            })
+            .collect::<Vec<_>>();
+        bail!(
+            "output conformance check failed for {}:\n- {}",
+            output_path.display(),
+            failed.join("\n- ")
+        );
+    }
+
+    fs::rename(&partial_path, output_path)
+        .with_context(|| format!("failed to write {}", output_path.display()))?;
+    partial_guard.disarm();
+    agent_cli::human_line(format_args!("Wrote {}", output_path.display()));
+
     let metadata_path = metadata_sidecar_for_file(output_path);
     let agent_frame = (window.count > 0).then(|| window.start_frame + window.count - 1);
     emit_render_metadata(
@@ -3774,7 +3960,72 @@ fn run_build(
         window,
         agent_frame,
     )?;
-    println!("Wrote {}", metadata_path.display());
+    agent_cli::human_line(format_args!("Wrote {}", metadata_path.display()));
+
+    // Execution record, written last: its presence with a matching output hash marks completion.
+    let output_sha = vcr::agent_contract::sha256_file(output_path)
+        .with_context(|| format!("failed to hash {}", output_path.display()))?;
+    let decoded_sha = vcr::provenance::decoded_frames_sha256(output_path).ok();
+    let manifest_file_sha = vcr::agent_contract::sha256_file(manifest_path).ok();
+    let verification_doc = serde_json::json!({
+        "expectations": {
+            "width": expectations.width, "height": expectations.height, "fps": expectations.fps,
+            "frame_count": expectations.frame_count, "container": expectations.container,
+            "codec": expectations.codec, "profile": expectations.profile,
+            "alpha_capable": expectations.alpha_capable,
+        },
+        "media": media,
+        "note": "produced at render time on the unpublished file; run `vcr verify` for a fresh, full-frame check",
+    });
+    let provenance_doc = vcr::provenance::Provenance {
+        schema: vcr::provenance::PROVENANCE_SCHEMA,
+        status: "complete",
+        engine: vcr::agent_contract::EngineIdentity::current(),
+        toolchain: BTreeMap::from([
+            ("ffmpeg", vcr::provenance::ffmpeg_version_line()),
+            ("ffmpeg_mode", Some(format!("{ffmpeg_mode:?}"))),
+        ]),
+        backend: serde_json::json!({
+            "name": renderer.backend_name(),
+            "reason": renderer.backend_reason(),
+            "requested": backend_label(backend),
+        }),
+        manifest: serde_json::json!({
+            "path": manifest_path.display().to_string(),
+            "file_sha256": manifest_file_sha,
+            "resolved_manifest_hash": manifest.manifest_hash,
+            "params": manifest.resolved_params,
+            "overrides": manifest.applied_param_overrides,
+            "seed": manifest.seed,
+        }),
+        inputs: vcr::provenance::collect_inputs(&manifest),
+        window: serde_json::json!({
+            "start_frame": window.start_frame, "frame_count": window.count,
+            "fps": manifest.environment.fps,
+            "width": manifest.environment.resolution.width,
+            "height": manifest.environment.resolution.height,
+            "encoding_profile": profile.to_ffmpeg_profile(),
+        }),
+        output: serde_json::json!({
+            "path": output_path.display().to_string(),
+            "sha256": output_sha,
+            "bytes": fs::metadata(output_path).map(|m| m.len()).ok(),
+        }),
+        hashes: serde_json::json!({
+            "raster_frames_sha256": frame_hash,
+            "decoded_frames_sha256": decoded_sha,
+            "output_file_sha256": output_sha,
+        }),
+        determinism: vcr::provenance::determinism_statement(renderer.backend_name(), manifest.seed),
+        verification: verification_doc.clone(),
+        sidecars: serde_json::json!({ "metadata": metadata_path.display().to_string() }),
+    };
+    let provenance_path = vcr::provenance::provenance_path_for(output_path);
+    let payload =
+        serde_json::to_string_pretty(&provenance_doc).context("failed to encode provenance")?;
+    vcr::provenance::atomic_write(&provenance_path, format!("{payload}\n").as_bytes())?;
+    agent_cli::human_line(format_args!("Wrote {}", provenance_path.display()));
+
     print_timing_summary(
         quiet,
         RenderTimingSummary {
@@ -3788,25 +4039,8 @@ fn run_build(
         backend_name: renderer.backend_name().to_string(),
         frame_count: window.count,
         frame_hash,
+        verification: verification_doc,
     })
-}
-
-#[derive(Serialize)]
-pub struct RenderJsonOutput {
-    pub manifest: PathBuf,
-    pub backend: String,
-    pub frame_count: u32,
-    pub frame_hash: String,
-    pub output_hash: String,
-    pub duration_ms: u64,
-}
-
-#[derive(Serialize)]
-pub struct VerifyJsonOutput {
-    pub file_path: PathBuf,
-    pub hash: String,
-    pub tool_version: String,
-    pub backend: Option<String>,
 }
 
 fn run_render(
@@ -3838,48 +4072,21 @@ fn run_render(
     )?;
 
     if json {
-        let mut hasher = Sha256::new();
-        let mut file = std::fs::File::open(output_path)?;
-        std::io::copy(&mut file, &mut hasher)?;
-        let output_hash = format!("{:x}", hasher.finalize());
-
-        let output = RenderJsonOutput {
+        let elapsed = start_time.elapsed().as_millis() as u64;
+        let envelope =
+            agent_cli::build_envelope("render", manifest_path, output_path, &build_result, elapsed);
+        let output_hash = vcr::agent_contract::sha256_file(output_path)?;
+        let legacy = agent_cli::RenderLegacy {
             manifest: manifest_path.to_path_buf(),
             backend: build_result.backend_name,
             frame_count: build_result.frame_count,
             frame_hash: build_result.frame_hash,
             output_hash,
-            duration_ms: start_time.elapsed().as_millis() as u64,
+            duration_ms: elapsed,
         };
-        println!("{}", serde_json::to_string(&output).unwrap());
+        return agent_cli::finish_render(envelope, legacy);
     } else if determinism_report {
         run_determinism_report(manifest_path, 0, set_values, false)?;
-    }
-    Ok(())
-}
-
-fn run_verify(output_file: &Path, json: bool) -> Result<()> {
-    if !output_file.exists() {
-        bail!("file not found: {}", output_file.display());
-    }
-    let mut hasher = Sha256::new();
-    let mut file = std::fs::File::open(output_file)?;
-    std::io::copy(&mut file, &mut hasher)?;
-    let hash = format!("{:x}", hasher.finalize());
-    let version = version_string();
-
-    if json {
-        let output = VerifyJsonOutput {
-            file_path: output_file.to_path_buf(),
-            hash: hash.clone(),
-            tool_version: version.clone(),
-            backend: None,
-        };
-        println!("{}", serde_json::to_string(&output).unwrap());
-    } else {
-        println!("Path: {}", output_file.display());
-        println!("Hash: {}", hash);
-        println!("Version: {}", version);
     }
     Ok(())
 }
@@ -4288,7 +4495,7 @@ fn run_render_frame(
     )?;
     let encode_elapsed = encode_start.elapsed();
 
-    println!("Wrote {}", output_path.display());
+    agent_cli::human_line(format_args!("Wrote {}", output_path.display()));
     let window = FrameWindow {
         start_frame: frame_index,
         count: 1,
@@ -4303,7 +4510,7 @@ fn run_render_frame(
         window,
         Some(frame_index),
     )?;
-    println!("Wrote {}", metadata_path.display());
+    agent_cli::human_line(format_args!("Wrote {}", metadata_path.display()));
     print_timing_summary(
         quiet,
         RenderTimingSummary {

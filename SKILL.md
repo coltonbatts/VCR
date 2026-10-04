@@ -42,6 +42,9 @@ vcr build scene.vcr -o output.mov
 # Render a single frame to PNG
 vcr render-frame scene.vcr --frame 0 -o frame.png
 
+# Verify the encoded file against the manifest (decoded-pixel transparency, staleness, provenance)
+vcr verify output.mov --manifest scene.vcr --expect-transparency required --json
+
 # Render with parameter overrides
 vcr build scene.vcr --set speed=2.0 --set color=#ff0000
 
@@ -49,7 +52,7 @@ vcr build scene.vcr --set speed=2.0 --set color=#ff0000
 vcr doctor
 ```
 
-Video and still outputs also write a sidecar `*.metadata.json`. The `agent_context` object (when present) lists each layer’s evaluated position, opacity, visibility, and related fields at the **last timeline frame** included in that output—useful for agent iteration after `build`, `render-frame`, or `preview`.
+Video and still outputs also write a sidecar `*.metadata.json`. The `agent_context` object (when present) lists each layer’s evaluated position, opacity, visibility, and related fields at the **last timeline frame only**: it says nothing about entrances, holds or exits (use `vcr inspect` for that). Video renders also write `*.provenance.json` (the *execution record*: engine build, ffmpeg, backend, hashes, inputs, verification). It is written last, so a file without matching provenance must not be treated as a completed export.
 
 ---
 
@@ -1318,11 +1321,13 @@ project/
 
 ## Determinism Contract
 
-Same manifest + same params + same seed + same backend = identical frame bytes.
+Three levels, with different guarantees (`*.provenance.json` records the conditions for each):
 
-- **Software backend**: Bitwise identical on the same machine and toolchain.
-- **GPU backend**: Not guaranteed bit-exact across different hardware/drivers.
-- Use `vcr determinism-report scene.vcr --frame 0` to get a frame hash for verification.
+1. **Scene and settings**: the same manifest + params + seed resolve to the same settings (`manifest_hash`). Always reproducible.
+2. **Raster frames** (`hashes.raster_frames_sha256`, pre-encode RGBA of every frame): software backend expected identical for the same engine build, including across machines (the repo's golden frame hash matches on macOS and Linux). GPU backend: not guaranteed across hardware, drivers or OS.
+3. **Decoded and encoded bytes** (`hashes.decoded_frames_sha256`, `hashes.output_file_sha256`): identical only for the same **ffmpeg build** and arguments. Compare `toolchain.ffmpeg` before treating a file-hash difference as a defect.
+
+Use `vcr determinism-report scene.vcr --frame 0` for a single frame hash, and compare `*.provenance.json` between runs for the full picture.
 
 ---
 
@@ -1330,7 +1335,7 @@ Same manifest + same params + same seed + same backend = identical frame bytes.
 
 VCR requires:
 
-- **FFmpeg** in PATH (for video encoding)
+- **FFmpeg and ffprobe** in PATH (video encoding; ffprobe also verifies the encoded output on every build)
 - **Rust stable toolchain** (for building from source)
 - **GPU** (macOS Metal) for GPU backend, shader layers, and post-processing
 
