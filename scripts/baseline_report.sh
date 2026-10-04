@@ -65,7 +65,7 @@ to_cli_path() {
 extract_timing_line() {
   local log="$1"
   local line
-  line="$(printf '%s\n' "$log" | rg "^\[VCR\] timing" -N | tail -n1 || true)"
+  line="$(printf '%s\n' "$log" | grep -E '^\[VCR\] timing' | tail -n1 || true)"
   printf '%s' "$line"
 }
 
@@ -94,7 +94,18 @@ for i in "${!CASES[@]}"; do
   png_out="$OUT_DIR/${stem}_f${frame}_${backend}.png"
   png_out_cli="$(to_cli_path "$png_out")"
 
-  render_output="$($BIN --backend "$backend" render-frame "$manifest_abs" --frame "$frame" -o "$png_out_cli" 2>&1)"
+  # The software backend refuses manifest features it cannot honor (post, ascii_post) instead of
+  # silently dropping them. That refusal is a result worth recording, not a script failure; any
+  # other render error still aborts the report.
+  status="rendered"
+  if ! render_output="$($BIN --backend "$backend" render-frame "$manifest_abs" --frame "$frame" -o "$png_out_cli" 2>&1)"; then
+    if [[ "$render_output" == *UNSUPPORTED_SOFTWARE_* ]]; then
+      status="unsupported_on_software"
+    else
+      printf '%s\n' "$render_output" >&2
+      exit 1
+    fi
+  fi
   timing_line="$(extract_timing_line "$render_output")"
   parse_ms="$(extract_timing_field "$timing_line" "parse")"
   layout_ms="$(extract_timing_field "$timing_line" "layout")"
@@ -103,7 +114,7 @@ for i in "${!CASES[@]}"; do
   total_ms="$(extract_timing_field "$timing_line" "total")"
 
   frame_hash=""
-  if [[ "$backend" == "software" ]]; then
+  if [[ "$backend" == "software" && "$status" == "rendered" ]]; then
     hash_json="$($BIN determinism-report "$manifest_abs" --frame "$frame" --json)"
     frame_hash="$(extract_json_field "$hash_json" "frame_hash")"
   fi
@@ -123,6 +134,7 @@ for i in "${!CASES[@]}"; do
   printf '      "manifest": "%s",\n' "$(json_escape "$manifest")" >> "$REPORT_PATH"
   printf '      "frame": %s,\n' "$frame" >> "$REPORT_PATH"
   printf '      "requested_backend": "%s",\n' "$(json_escape "$backend")" >> "$REPORT_PATH"
+  printf '      "status": "%s",\n' "$status" >> "$REPORT_PATH"
   printf '      "actual_backend": "%s",\n' "$(json_escape "$actual_backend")" >> "$REPORT_PATH"
   printf '      "timing_line": "%s",\n' "$(json_escape "$timing_line")" >> "$REPORT_PATH"
   printf '      "timing_parse": "%s",\n' "$(json_escape "$parse_ms")" >> "$REPORT_PATH"

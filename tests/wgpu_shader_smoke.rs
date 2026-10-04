@@ -68,7 +68,7 @@ layers:
 
     assert_eq!(rgba.len(), 64 * 64 * 4);
     assert!(
-        rgba.chunks_exact(4).any(|px| px[3] > 0),
+        rgba.as_chunks::<4>().0.iter().any(|px| px[3] > 0),
         "expected at least one non-transparent pixel"
     );
 }

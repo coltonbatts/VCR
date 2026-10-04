@@ -600,7 +600,7 @@ mod implementation {
     }
 
     fn apply_white_matte_to_transparent(rgba: &mut [u8]) {
-        for pixel in rgba.chunks_exact_mut(4) {
+        for pixel in rgba.as_chunks_mut::<4>().0 {
             if pixel[3] == 0 {
                 pixel[0] = 255;
                 pixel[1] = 255;

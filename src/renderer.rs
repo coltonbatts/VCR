@@ -3407,7 +3407,7 @@ fn f32_to_channel(value: f32) -> u8 {
 }
 
 fn premultiply_rgba_in_place(bytes: &mut [u8]) {
-    for pixel in bytes.chunks_exact_mut(4) {
+    for pixel in bytes.as_chunks_mut::<4>().0 {
         let alpha = pixel[3] as u16;
         pixel[0] = ((pixel[0] as u16 * alpha + 127) / 255) as u8;
         pixel[1] = ((pixel[1] as u16 * alpha + 127) / 255) as u8;
@@ -3416,7 +3416,7 @@ fn premultiply_rgba_in_place(bytes: &mut [u8]) {
 }
 
 fn unpremultiply_rgba_in_place(bytes: &mut [u8]) {
-    for pixel in bytes.chunks_exact_mut(4) {
+    for pixel in bytes.as_chunks_mut::<4>().0 {
         let alpha = pixel[3];
         if alpha == 0 {
             pixel[0] = 0;

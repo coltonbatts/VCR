@@ -97,6 +97,12 @@ jobs:
           echo "  ╚═══╝   ╚═════╝╚═╝  ╚═╝"
           echo "VCR DETERMINISM VERIFICATION INITIALIZED"
 
+      - name: Install FFmpeg
+        # The determinism tests encode real .mov files; without ffmpeg they fail to enqueue frames.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 

@@ -361,20 +361,15 @@ impl Environment {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ColorSpace {
     #[serde(alias = "rec709", alias = "rec_709")]
+    #[default]
     Rec709,
     #[serde(alias = "rec2020", alias = "rec_2020")]
     Rec2020,
     DisplayP3,
-}
-
-impl Default for ColorSpace {
-    fn default() -> Self {
-        Self::Rec709
-    }
 }
 
 impl ColorSpace {

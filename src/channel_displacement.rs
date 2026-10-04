@@ -291,7 +291,7 @@ mod tests {
         let width = 16;
         let height = 9;
         let mut frame = make_test_frame(width, height);
-        let alpha_before: Vec<u8> = frame.chunks_exact(4).map(|px| px[3]).collect();
+        let alpha_before: Vec<u8> = frame.as_chunks::<4>().0.iter().map(|px| px[3]).collect();
 
         let node = SeedLockedChannelDisplacement {
             seed: 0xDEAD_BEEF_CAFE_BABE,
@@ -301,7 +301,7 @@ mod tests {
         node.apply(&mut frame, width, height)
             .expect("displacement should succeed");
 
-        let alpha_after: Vec<u8> = frame.chunks_exact(4).map(|px| px[3]).collect();
+        let alpha_after: Vec<u8> = frame.as_chunks::<4>().0.iter().map(|px| px[3]).collect();
         assert_eq!(alpha_before, alpha_after);
     }
 
@@ -332,7 +332,7 @@ mod tests {
         let width = 8;
         let height = 4;
         let mut frame = vec![10_u8; width * height * 4];
-        for px in frame.chunks_exact_mut(4) {
+        for px in frame.as_chunks_mut::<4>().0 {
             px[3] = 255;
         }
         let baseline = frame.clone();

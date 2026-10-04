@@ -293,7 +293,7 @@ pub fn measure_transparency(
             Err(error) => bail!("failed reading decoded frames: {error}"),
         }
         let (mut min_alpha, mut partial, mut zero) = (255u8, 0u64, 0u64);
-        for pixel in buffer.chunks_exact(4) {
+        for pixel in buffer.as_chunks::<4>().0 {
             let alpha = pixel[3];
             if alpha < 255 {
                 partial += 1;
