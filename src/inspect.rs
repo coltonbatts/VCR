@@ -297,7 +297,7 @@ pub fn pixel_stats(rgba: &[u8], width: u32, height: u32) -> PixelStats {
     let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
     let mut covered = 0u64;
     let mut transparent = false;
-    for (index, pixel) in rgba.chunks_exact(4).enumerate() {
+    for (index, pixel) in rgba.as_chunks::<4>().0.iter().enumerate() {
         let alpha = pixel[3];
         if alpha < 255 {
             transparent = true;

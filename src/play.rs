@@ -193,12 +193,10 @@ pub fn run_play(manifest_path: &Path, args: PlayArgs) -> Result<()> {
                                 total_frames,
                             );
                         }
-                        WindowEvent::Resized(size) => {
-                            if size.width > 0 && size.height > 0 {
-                                surface_config.width = size.width;
-                                surface_config.height = size.height;
-                                surface.configure(&gpu_context.device, &surface_config);
-                            }
+                        WindowEvent::Resized(size) if size.width > 0 && size.height > 0 => {
+                            surface_config.width = size.width;
+                            surface_config.height = size.height;
+                            surface.configure(&gpu_context.device, &surface_config);
                         }
                         _ => {}
                     }

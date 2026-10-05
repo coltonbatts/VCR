@@ -394,7 +394,7 @@ fn render_into_aspect_canvas(
     if source_width == 0 {
         bail!("source width must be > 0");
     }
-    if source_rgba.len() % 4 != 0 {
+    if !source_rgba.len().is_multiple_of(4) {
         bail!("source RGBA buffer length must be divisible by 4");
     }
     let source_pixels = (source_rgba.len() / 4) as u32;
@@ -1271,7 +1271,7 @@ impl AsciiFrameRasterizer {
     fn render(&mut self, frame: &AsciiFrame) -> Vec<u8> {
         let mut rgba = vec![0_u8; (self.pixel_width * self.pixel_height * 4) as usize];
         let alpha_byte = (self.bg_alpha * 255.0).clamp(0.0, 255.0) as u8;
-        for pixel in rgba.chunks_exact_mut(4) {
+        for pixel in rgba.as_chunks_mut::<4>().0 {
             pixel[3] = alpha_byte;
         }
 
